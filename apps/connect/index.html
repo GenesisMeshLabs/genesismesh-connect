@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Genesis Mesh Connect</title>
+  <link rel="icon" type="image/png" href="/brand/favicon.png" />
+  <script type="module" src="/src/main.ts" defer></script>
+</head>
+<body>
+<main>
+  <header><div class="brand"><img class="brand-logo" src="/brand/logo.svg" alt="" width="88" height="56" /><span>GENESIS MESH LABS</span></div><span class="tag">SPIKE A</span></header>
+  <h1>Connect</h1>
+  <p class="intro">A first connection between your devices.</p>
+  <p class="notice">Transport diagnostic only. Genesis Mesh identity checks and file access come next.</p>
+  <section aria-labelledby="device-heading">
+    <h2 id="device-heading">1. Start this device</h2>
+    <label for="mode">Connection mode</label>
+    <select id="mode">
+      <option value="local">Local network · no public relays</option>
+      <option value="public_relay">Public relay · remote connectivity test</option>
+    </select>
+    <p class="hint">Public relay mode uses Iroh's public infrastructure. Endpoint details are exchanged manually.</p>
+    <div class="actions"><button id="start">Start endpoint</button><button id="stop" class="secondary" disabled>Stop</button></div>
+    <p id="status" role="status">Stopped</p>
+    <label for="own-ticket">This device's ticket</label>
+    <textarea id="own-ticket" readonly spellcheck="false" rows="3" placeholder="Start to generate a ticket"></textarea>
+    <button id="select-ticket" class="secondary" disabled>Select ticket</button>
+    <p class="hint">Copy this ticket to the other device. Restarting creates a new endpoint identity and ticket.</p>
+  </section>
+  <section aria-labelledby="probe-heading">
+    <h2 id="probe-heading">2. Try the other device</h2>
+    <form id="probe-form">
+      <label for="peer-ticket">Other device's ticket</label>
+      <textarea id="peer-ticket" required spellcheck="false" rows="3" maxlength="16384" placeholder="Paste the ticket from your other device"></textarea>
+      <label for="message">Diagnostic message</label>
+      <input id="message" value="Connect hello" required maxlength="1024" />
+      <button id="send" disabled>Send probe</button>
+    </form>
+    <pre id="result" aria-live="polite">No probe sent.</pre>
+  </section>
+</main>
+</body>
+</html>

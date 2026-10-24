@@ -1,0 +1,22 @@
+# Local planning, research and working notes
+/temp/
+
+# Private runtime state and local authority configuration
+/local/
+.env
+.env.*
+!.env.example
+
+# Generated build output
+/target/
+**/node_modules/
+/dist/
+**/dist/
+**/gen/schemas/
+**/gen/apple/
+**/gen/apple/build/
+
+# Local tooling and editor output
+*.log
+.DS_Store
+Thumbs.db

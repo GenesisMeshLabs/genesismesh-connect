@@ -1,0 +1,14 @@
+[package]
+name = "connect-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Genesis Mesh Connect portable application core; transport feasibility spike"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+iroh.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

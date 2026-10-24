@@ -1,0 +1,23 @@
+[workspace]
+members = ["crates/connect-core", "apps/connect/src-tauri"]
+default-members = ["crates/connect-core"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+
+[workspace.dependencies]
+anyhow = "1"
+iroh = { version = "=1.4.1", default-features = false, features = ["tls-ring"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "signal"] }
+
+# Keep this spike's Windows build output modest.
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0
