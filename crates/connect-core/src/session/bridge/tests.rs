@@ -507,7 +507,7 @@ async fn settings_come_only_from_the_authenticated_host_and_name_its_endpoints()
     let wrong_identity = SessionIdentity::new(f.server.clone(), f.server_cert.clone())?;
     assert!(
         client.settings(wrong_identity, f.trust()?).await.is_err(),
-        "Only the selected device receives settings"
+        "The host's own identity is not an approved device and receives nothing"
     );
     assert!(http.requests.lock().unwrap().is_empty());
     bridge.close().await;

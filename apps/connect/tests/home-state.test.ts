@@ -64,7 +64,7 @@ test("breadcrumbs preserve Unicode names and return explicit parent paths", () =
 
 test("the connection summary says what this device uses and who chose it", () => {
   assert.equal(connectionSummary(null), "");
-  const network = { own: null, network_computer: true } as const;
+  const network = { own: null, network_computer: true, guided: true } as const;
   assert.match(
     connectionSummary({ ...network, network: "public_relays", effective: "public_relays" }),
     /from anywhere/,
@@ -79,6 +79,7 @@ test("the connection summary says what this device uses and who chose it", () =>
       own: null,
       effective: "local_network",
       network_computer: false,
+      guided: true,
     }),
     /network computer keeps every device/,
   );
@@ -88,6 +89,7 @@ test("the connection summary says what this device uses and who chose it", () =>
       own: "local_network",
       effective: "local_network",
       network_computer: false,
+      guided: true,
     }),
     /This device connects only on the local network.*also allows public relays/,
   );

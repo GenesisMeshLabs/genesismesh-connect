@@ -23,6 +23,8 @@ let invitation = "",
   expiresAt = 0,
   approval = "";
 let downloadId = "";
+// A connection choice being made is not replaced by the next status poll.
+let connectionDirty = false;
 let folderPath: string[] = [];
 let page: FilePage | null = null,
   files: FileEntry[] = [];
@@ -62,6 +64,8 @@ function show(next: string) {
     visible(name, name === next);
 }
 function selectView(next: string) {
+  // An unsaved connection choice is dropped when leaving Settings.
+  if (next !== "settings") connectionDirty = false;
   for (const name of ["files", "devices", "settings"])
     visible(`view-${name}`, name === next);
   for (const button of document.querySelectorAll<HTMLElement>("[data-view]"))
@@ -177,23 +181,23 @@ function render(status: HomeStatus) {
     selectView("files");
   }
 }
-// A choice being made is not replaced by the next status poll.
-let connectionDirty = false;
 function renderConnection(status: HomeStatus) {
-  const connection = status.configured ? status.connection : null;
+  // Advanced profiles keep their local-mode sessions and have no setting.
+  const connection =
+    status.configured && status.connection?.guided ? status.connection : null;
   visible("connection-card", !!connection);
   if (!connection) return;
   text("connection-summary", connectionSummary(connection));
   visible("connection-owner", connection.network_computer);
-  visible("connection-device", !connection.network_computer);
+  // A private network already keeps every device on the local network.
+  visible(
+    "connection-device",
+    !connection.network_computer && connection.network === "public_relays",
+  );
   if (busy || connectionDirty) return;
   el<HTMLInputElement>("connection-public").checked = connection.network === "public_relays";
   el<HTMLInputElement>("connection-local").checked = connection.network === "local_network";
-  const localOnly = el<HTMLInputElement>("connection-local-only");
-  localOnly.checked = connection.effective === "local_network";
-  // A private network already keeps this device on the local network.
-  localOnly.disabled = connection.network === "local_network";
-  el<HTMLButtonElement>("save-device-connection").disabled = localOnly.disabled;
+  el<HTMLInputElement>("connection-local-only").checked = connection.own === "local_network";
 }
 function renderDevices(status: HomeStatus) {
   const list = el("saved-devices");

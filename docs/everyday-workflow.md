@@ -85,14 +85,19 @@ from this device**), never looser. Changing the setting keeps every pairing
 and identity; nothing is paired again.
 
 In private mode, devices find each other through saved addresses and, on
-Windows, macOS, Linux and Android, local network discovery (mDNS). iPhones rely
-on saved addresses until Connect has Apple's multicast entitlement. Guided
-devices reuse their listening port after a restart, so saved addresses stay
-valid; if another program has taken the port, a new one is used and devices on
-other platforms find it through discovery. Desktops also ask the router to open
-a port (UPnP, NAT-PMP, PCP), which can improve direct connections; on macOS the
-router probe may show a local network prompt. Your own relay on an always-on
-server, for private connections away from home, is planned.
+Windows, macOS, Linux and Android, local network discovery (mDNS). Discovery
+runs under both settings, so a device that has not yet heard of a switch to
+private still finds its network computer on the same network. iPhones rely on
+saved addresses until Connect has Apple's multicast entitlement. Guided devices
+reuse their listening port after a restart, so saved addresses stay valid; if
+another program has taken the port, a new one is used and devices with
+discovery find it.
+
+Under public relays only, a desktop's own endpoints ask the router to open a
+port (UPnP, NAT-PMP, PCP), which can improve direct connections; on macOS the
+router probe may show a local network prompt. Private mode never asks the
+router to open an internet-facing port. Your own relay on an always-on server,
+for private connections away from home, is planned.
 
 ## Share and browse
 

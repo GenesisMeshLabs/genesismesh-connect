@@ -30,7 +30,8 @@ are under the ignored `temp/` directory.
   [choose how devices connect](everyday-workflow.md#choose-how-devices-connect).
   Local network discovery (mDNS) is built for Windows, macOS, Linux and Android;
   iOS needs Apple's multicast entitlement first and uses saved addresses.
-  Router port mapping (UPnP, NAT-PMP, PCP) is built for desktops only.
+  Router port mapping (UPnP, NAT-PMP, PCP) is built for desktops only and used
+  only by their own endpoints under public relays.
 - New sharing hosts get separate sovereign identities and executor namespaces.
   Existing `connect-host` profiles remain usable. Collection policy selectors
   match the collection so unrelated folders do not veto one another.

@@ -19,6 +19,7 @@ export interface ConnectionStatus {
   own: Connectivity | null;
   effective: Connectivity;
   network_computer: boolean;
+  guided: boolean;
 }
 /** One plain sentence for Settings: what this device uses, and who chose it. */
 export function connectionSummary(connection: ConnectionStatus | null) {

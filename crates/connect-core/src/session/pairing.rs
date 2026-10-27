@@ -128,11 +128,11 @@ impl PairHost {
         let endpoint = connectivity
             .ready(
                 connectivity
-                    .builder(false)
+                    .builder(crate::connectivity::Role::Plain)
                     .alpns(vec![Protocol::Pair.alpn().to_vec()])
                     .bind()
                     .await?,
-                false,
+                crate::connectivity::Role::Plain,
                 DEADLINE,
                 "Pairing relay is unavailable; try again",
             )
@@ -479,7 +479,7 @@ impl PairClient {
         card.validate()?;
         valid_name(&name)?;
         let endpoint = crate::Connectivity::of_destination(&card.endpoint)
-            .builder(false)
+            .builder(crate::connectivity::Role::Plain)
             .bind()
             .await?;
         let outcome = timeout(Duration::from_secs(25), async {

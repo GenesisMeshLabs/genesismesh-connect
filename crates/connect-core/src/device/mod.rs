@@ -78,6 +78,8 @@ pub struct ConnectivityStatus {
     pub effective: Connectivity,
     /// Whether this device holds the network's setting.
     pub network_computer: bool,
+    /// Guided profiles follow the setting; advanced profiles keep local mode.
+    pub guided: bool,
 }
 
 fn connectivity_of(vault: &Vault) -> Connectivity {
@@ -111,6 +113,8 @@ pub struct DeviceController {
     state_directory: std::path::PathBuf,
     sharing: Option<Arc<Share>>,
     pairing: Option<Arc<crate::session::pairing::PairHost>>,
+    /// When this device last asked its network computer for its settings.
+    settings_checked: Option<std::time::Instant>,
 }
 
 impl DeviceController {
@@ -185,6 +189,7 @@ impl DeviceController {
             state_directory: path.to_owned(),
             sharing: None,
             pairing: None,
+            settings_checked: None,
         })
     }
 
@@ -238,6 +243,7 @@ impl DeviceController {
                 own: self.vault.own_connectivity(),
                 effective: self.connectivity(),
                 network_computer: self.network_computer(),
+                guided: self.vault.consumer_mode(),
             },
         })
     }
@@ -282,11 +288,17 @@ impl DeviceController {
         }
         self.stop().await;
         self.vault.save_own_connectivity(own)?;
-        self.rebuild_bridge_client()?;
+        self.rebuild_bridge_client().await?;
+        self.reopen_sharing()?;
         self.reconnect_saved().await
     }
 
-    fn rebuild_bridge_client(&mut self) -> Result<()> {
+    /// Replace the authority client after its route or setting changed,
+    /// closing the old endpoint first.
+    async fn rebuild_bridge_client(&mut self) -> Result<()> {
+        if let Some(old) = self.bridge_client.take() {
+            old.close().await;
+        }
         self.bridge_client = self
             .vault
             .bridge_route()
@@ -296,30 +308,35 @@ impl DeviceController {
         Ok(())
     }
 
+    /// A sharing host asks for decisions through the authority client, so it
+    /// reopens with the current one. Sessions must be stopped.
+    fn reopen_sharing(&mut self) -> Result<()> {
+        let config = self.sharing.as_ref().map(|share| share.config().clone());
+        if config.is_some() {
+            self.configure_sharing(config)?;
+        }
+        Ok(())
+    }
+
     /// Accept the network computer's authenticated answer: fresh addresses for
-    /// the same endpoints, and its connection setting. Returns whether this
-    /// device's own connections must reopen under a different setting.
-    fn accept_settings(&mut self, settings: NetworkSettings) -> Result<bool> {
+    /// the same endpoints, and its connection setting, in one write. An answer
+    /// naming another endpoint is ignored as a whole. Returns whether this
+    /// device's connections must reopen: a different effective setting, or a
+    /// new authority route for a sharing host.
+    async fn accept_settings(&mut self, settings: NetworkSettings) -> Result<bool> {
         let before = self.connectivity();
-        if let Some(host) = self.vault.bridge_route().map(|r| r.host_node.clone()) {
-            let previous = self.vault.bridge_route().map(|r| r.ticket.clone());
-            self.vault.refresh_route(settings.authority_ticket)?;
-            if self.vault.bridge_route().map(|r| r.ticket.clone()) != previous {
-                self.rebuild_bridge_client()?;
-            }
-            if let Some(ticket) = settings.session_ticket {
-                self.vault.refresh_peer_ticket(&host, ticket)?;
-            }
-        }
-        if self.vault.network_connectivity() != settings.connectivity {
-            self.vault
-                .save_network_connectivity(settings.connectivity)?;
-        }
+        let Ok(route_changed) = self.vault.apply_network_answer(
+            settings.authority_ticket,
+            settings.session_ticket,
+            settings.connectivity,
+        ) else {
+            return Ok(false);
+        };
         let changed = self.connectivity() != before;
-        if changed {
-            self.rebuild_bridge_client()?;
+        if route_changed || changed {
+            self.rebuild_bridge_client().await?;
         }
-        Ok(changed)
+        Ok(changed || (route_changed && self.sharing.is_some()))
     }
 
     pub async fn enroll(&mut self, invite: &str) -> Result<()> {
@@ -557,21 +574,32 @@ impl DeviceController {
     /// addresses. An older or unreachable computer leaves everything as it is:
     /// this answer never affects trust, only how this device reaches others.
     async fn follow_network(&mut self, trust: crate::session::TrustSnapshot) -> Result<()> {
-        if !self.vault.consumer_mode() {
+        // File operations refresh trust too; one answer per refresh interval.
+        if !self.vault.consumer_mode()
+            || self
+                .settings_checked
+                .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(25))
+        {
             return Ok(());
         }
         let (Some(client), Some(device)) = (self.bridge_client.clone(), self.device.as_ref())
         else {
             return Ok(());
         };
-        let Ok(settings) = client.settings(device.session_identity()?, trust).await else {
+        let identity = device.session_identity()?;
+        self.settings_checked = Some(std::time::Instant::now());
+        let Ok(settings) = client.settings(identity, trust).await else {
             return Ok(());
         };
-        if self.accept_settings(settings)? && self.endpoint.is_some() {
+        if self.accept_settings(settings).await? {
+            let running = self.endpoint.is_some();
             self.stop().await;
-            let outcome = self.refresh_inner(true).await;
-            self.record_outcome(&outcome);
-            outcome?;
+            self.reopen_sharing()?;
+            if running {
+                let outcome = self.refresh_inner(true).await;
+                self.record_outcome(&outcome);
+                outcome?;
+            }
         }
         Ok(())
     }
@@ -838,7 +866,11 @@ mod tests {
             device.status()?.connectivity.effective,
             Connectivity::PublicRelays
         );
-        assert!(device.accept_settings(settings(host, 7001, Connectivity::LocalNetwork))?);
+        assert!(
+            device
+                .accept_settings(settings(host, 7001, Connectivity::LocalNetwork))
+                .await?
+        );
         let status = device.status()?;
         assert_eq!(status.connectivity.network, Connectivity::LocalNetwork);
         assert_eq!(status.connectivity.effective, Connectivity::LocalNetwork);
@@ -849,14 +881,16 @@ mod tests {
             "Fresh addresses for the same endpoint replace the saved ones"
         );
         assert!(
-            !device.accept_settings(settings(host, 7001, Connectivity::LocalNetwork))?,
+            !device
+                .accept_settings(settings(host, 7001, Connectivity::LocalNetwork))
+                .await?,
             "An unchanged answer reopens nothing"
         );
         let other = iroh::SecretKey::generate().public();
         assert!(
-            device
+            !device
                 .accept_settings(settings(other, 7002, Connectivity::PublicRelays))
-                .is_err()
+                .await?
         );
         assert_eq!(
             device.status()?.connectivity.network,
@@ -882,7 +916,11 @@ mod tests {
             Connectivity::LocalNetwork,
             "A looser device choice never widens a private network"
         );
-        assert!(device.accept_settings(settings(host, 7001, Connectivity::PublicRelays))?);
+        assert!(
+            device
+                .accept_settings(settings(host, 7001, Connectivity::PublicRelays))
+                .await?
+        );
         assert_eq!(
             device.status()?.connectivity.effective,
             Connectivity::PublicRelays
@@ -894,6 +932,38 @@ mod tests {
             device.status()?.connectivity.effective,
             Connectivity::LocalNetwork,
             "A device may stay stricter than a public network"
+        );
+        // A valid route with a session address for another endpoint is still
+        // refused as a whole: nothing is partly applied.
+        let session = |id: iroh::EndpointId| {
+            serde_json::to_string(&serde_json::json!({
+                "version": 1,
+                "endpoint": iroh::EndpointAddr::new(id).with_ip_addr(([192, 0, 2, 2], 7100).into()),
+            }))
+            .unwrap()
+        };
+        let computer = iroh::SecretKey::generate().public();
+        let host_node = STANDARD.encode([9; 32]);
+        device.vault.save_peer(host_node.clone())?;
+        device.vault.save_pairing(PairedDevice {
+            name: "Home computer".into(),
+            node: host_node,
+            ticket: session(computer),
+        })?;
+        let mut mixed = settings(host, 7003, Connectivity::PublicRelays);
+        mixed.session_ticket = Some(session(other));
+        assert!(!device.accept_settings(mixed).await?);
+        assert_eq!(
+            device.vault.bridge_route().map(|r| r.ticket.clone()),
+            Some(authority_ticket(host, 7001))
+        );
+        assert_eq!(
+            device.status()?.connectivity.network,
+            Connectivity::PublicRelays
+        );
+        assert_eq!(
+            device.paired_device().map(|p| p.ticket.clone()),
+            Some(session(computer))
         );
         drop(device);
         let reopened = DeviceController::open(&path)?;

@@ -60,9 +60,15 @@ impl AuthorityBridge {
         };
         own_credential(&credentials)?;
         let state = watch::channel(Some(Arc::new(credentials))).0;
+        // Only a guided device's saved transport is announced and port-mapped.
+        let role = if transport.is_some() {
+            crate::connectivity::Role::Host
+        } else {
+            crate::connectivity::Role::Plain
+        };
         let (key, port) = transport.map_or((None, None), |t| (Some(t.key), t.port));
         let endpoint = connectivity
-            .bind(port, |builder| {
+            .bind(role, port, |builder| {
                 let builder = builder.alpns(vec![
                     Protocol::Authority.alpn().to_vec(),
                     Protocol::Enrollment.alpn().to_vec(),
@@ -76,7 +82,7 @@ impl AuthorityBridge {
         let endpoint = connectivity
             .ready(
                 endpoint,
-                true,
+                role,
                 DEADLINE,
                 "Authority relay did not become ready",
             )

@@ -230,9 +230,15 @@ impl SessionEndpoint {
             protocols.push(wire::Protocol::Browse.alpn().to_vec());
             protocols.push(wire::Protocol::NestedDownload.alpn().to_vec());
         }
+        // Only a guided device's saved transport is announced and port-mapped.
+        let role = if transport.is_some() {
+            crate::connectivity::Role::Host
+        } else {
+            crate::connectivity::Role::Plain
+        };
         let (key, port) = transport.map_or((None, None), |t| (Some(t.key), t.port));
         let endpoint = connectivity
-            .bind(port, |builder| {
+            .bind(role, port, |builder| {
                 let builder = builder.alpns(protocols.clone());
                 match &key {
                     Some(key) => builder.secret_key(key.clone()),
@@ -243,7 +249,7 @@ impl SessionEndpoint {
         let endpoint = connectivity
             .ready(
                 endpoint,
-                true,
+                role,
                 DEADLINE,
                 "Connection relay did not become ready",
             )

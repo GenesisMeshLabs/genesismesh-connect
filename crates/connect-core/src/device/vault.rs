@@ -319,46 +319,56 @@ impl Vault {
     ) -> Result<()> {
         self.update(|record| record.own_connectivity = connectivity)
     }
-    /// Fresh addresses for the saved authority route, from an authenticated
-    /// answer. Only the same endpoint may replace the saved one.
-    pub fn refresh_route(&mut self, ticket: String) -> Result<()> {
-        let Some(route) = self.record.bridge_route.clone() else {
-            return Ok(());
-        };
-        ensure!(
-            crate::session::bridge::endpoint_of(&ticket)?
-                == crate::session::bridge::endpoint_of(&route.ticket)?,
-            "The authority address names another endpoint"
-        );
-        if route.ticket == ticket {
-            return Ok(());
+    /// Apply the network computer's authenticated answer in one write: fresh
+    /// addresses for the saved authority route and for the computer's saved
+    /// session, and its connection setting. If either address names another
+    /// endpoint, the whole answer is refused and nothing changes. Returns
+    /// whether the authority route changed.
+    pub fn apply_network_answer(
+        &mut self,
+        authority_ticket: String,
+        session_ticket: Option<String>,
+        connectivity: crate::Connectivity,
+    ) -> Result<bool> {
+        let route = self.record.bridge_route.clone();
+        if let Some(route) = &route {
+            ensure!(
+                crate::session::bridge::endpoint_of(&authority_ticket)?
+                    == crate::session::bridge::endpoint_of(&route.ticket)?,
+                "The authority address names another endpoint"
+            );
+        }
+        let host = route.as_ref().map(|r| r.host_node.clone());
+        let saved = host
+            .as_ref()
+            .and_then(|host| self.record.peers.iter().find(|p| &p.node == host))
+            .map(|p| p.ticket.clone());
+        if let (Some(ticket), Some(saved)) = (&session_ticket, &saved) {
+            ensure!(
+                crate::session::ticket_endpoint(ticket)? == crate::session::ticket_endpoint(saved)?,
+                "The device address names another endpoint"
+            );
+        }
+        let route_changed = route.as_ref().is_some_and(|r| r.ticket != authority_ticket);
+        let session = session_ticket.filter(|ticket| saved.as_ref().is_some_and(|s| s != ticket));
+        if !route_changed && session.is_none() && self.record.network_connectivity == connectivity {
+            return Ok(false);
         }
         self.update(|record| {
-            record.bridge_route = Some(BridgeRoute { ticket, ..route });
-        })
-    }
-    /// Fresh addresses for a saved device, from an authenticated answer. Only
-    /// the same endpoint may replace the saved one.
-    pub fn refresh_peer_ticket(&mut self, node: &str, ticket: String) -> Result<()> {
-        let Some(peer) = self.record.peers.iter().find(|p| p.node == node).cloned() else {
-            return Ok(());
-        };
-        ensure!(
-            crate::session::ticket_endpoint(&ticket)?
-                == crate::session::ticket_endpoint(&peer.ticket)?,
-            "The device address names another endpoint"
-        );
-        if peer.ticket == ticket {
-            return Ok(());
-        }
-        self.update(|record| {
-            for saved in record.peers.iter_mut().filter(|p| p.node == node) {
-                saved.ticket = ticket.clone();
+            if route_changed && let Some(route) = record.bridge_route.as_mut() {
+                route.ticket = authority_ticket;
             }
-            if let Some(paired) = record.paired.as_mut().filter(|p| p.node == node) {
-                paired.ticket = ticket.clone();
+            if let (Some(ticket), Some(host)) = (&session, &host) {
+                for peer in record.peers.iter_mut().filter(|p| &p.node == host) {
+                    peer.ticket = ticket.clone();
+                }
+                if let Some(paired) = record.paired.as_mut().filter(|p| &p.node == host) {
+                    paired.ticket = ticket.clone();
+                }
             }
-        })
+            record.network_connectivity = connectivity;
+        })?;
+        Ok(route_changed)
     }
     pub fn consumer_mode(&self) -> bool {
         self.record.consumer_mode

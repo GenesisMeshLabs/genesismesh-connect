@@ -1,7 +1,10 @@
 //! How devices find and reach each other. This never decides what they may do:
 //! Genesis Mesh still authenticates every node and authorizes every operation.
 use anyhow::Result;
-use iroh::{Endpoint, EndpointAddr, RelayMode, endpoint::presets};
+use iroh::{
+    Endpoint, EndpointAddr, RelayMode,
+    endpoint::{PortmapperConfig, presets},
+};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -40,65 +43,86 @@ impl Connectivity {
         }
     }
 
-    /// `findable` endpoints publish their addresses (n0 address lookup, or
-    /// local network discovery) so saved devices can reach them after an
-    /// address change. Temporary pairing endpoints are never published.
-    pub(crate) fn builder(self, findable: bool) -> iroh::endpoint::Builder {
+    /// Relays only under public relays. n0 address lookup only for endpoints
+    /// that reach or are reached by saved devices. A router port mapping only
+    /// for a guided device's own endpoints under public relays: private mode
+    /// never opens an internet-facing port.
+    pub(crate) fn builder(self, role: Role) -> iroh::endpoint::Builder {
         let base = Endpoint::builder(presets::Minimal);
-        match self {
-            Self::PublicRelays if findable => {
-                base.preset(presets::N0).relay_mode(RelayMode::Default)
-            }
-            Self::PublicRelays => base.relay_mode(RelayMode::Default),
-            Self::LocalNetwork => base.relay_mode(RelayMode::Disabled),
-        }
+        let base = if self.uses_relays() && role != Role::Plain {
+            base.preset(presets::N0)
+        } else {
+            base
+        };
+        base.relay_mode(if self.uses_relays() {
+            RelayMode::Default
+        } else {
+            RelayMode::Disabled
+        })
+        .portmapper_config(if self.uses_relays() && role == Role::Host {
+            PortmapperConfig::default()
+        } else {
+            PortmapperConfig::Disabled
+        })
     }
 
-    /// Bind a findable endpoint, on its previous IPv4 port when one is saved,
-    /// so devices that only know saved addresses still reach it after a
-    /// restart. A port now taken by another program falls back to a new one.
+    /// Bind on the previous IPv4 port when one is saved, so devices that only
+    /// know saved addresses still reach it after a restart. A port now taken
+    /// by another program falls back to a new one.
     pub(crate) async fn bind(
         self,
+        role: Role,
         port: Option<u16>,
         configure: impl Fn(iroh::endpoint::Builder) -> iroh::endpoint::Builder,
     ) -> Result<Endpoint> {
         if let Some(port) = port.filter(|port| *port != 0)
-            && let Ok(builder) = configure(self.builder(true))
+            && let Ok(builder) = configure(self.builder(role))
                 .bind_addr(std::net::SocketAddr::from(([0, 0, 0, 0], port)))
             && let Ok(endpoint) = builder.bind().await
         {
             return Ok(endpoint);
         }
-        Ok(configure(self.builder(true)).bind().await?)
+        Ok(configure(self.builder(role)).bind().await?)
     }
 
-    /// Wait for a relay when one is used, and add local network discovery to a
-    /// findable endpoint where the platform allows it. Discovery is best
-    /// effort: saved addresses still work without it.
+    /// Wait for a relay when one is used, then add local network discovery.
     pub(crate) async fn ready(
         self,
         endpoint: Endpoint,
-        findable: bool,
+        role: Role,
         deadline: Duration,
         unavailable: &'static str,
     ) -> Result<Endpoint> {
-        if self.uses_relays() {
-            if timeout(deadline, endpoint.online()).await.is_err() {
-                endpoint.close().await;
-                anyhow::bail!(unavailable);
-            }
-        } else if findable {
-            self.discover_locally(&endpoint);
+        if self.uses_relays() && timeout(deadline, endpoint.online()).await.is_err() {
+            endpoint.close().await;
+            anyhow::bail!(unavailable);
         }
+        discover(&endpoint, role);
         Ok(endpoint)
     }
+}
 
-    /// Find (and be found by) devices on the local network, for the private
-    /// setting. Public relays use n0 address lookup instead.
-    pub(crate) fn discover_locally(self, endpoint: &Endpoint) {
-        if self == Self::LocalNetwork {
-            add_local_discovery(endpoint);
-        }
+/// What an endpoint is for, which decides what it publishes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Role {
+    /// A guided device's own session or bridge endpoint, which saved devices
+    /// dial: announced on the local network under either setting.
+    Host,
+    /// A guided device dialing its network computer: looks it up on the local
+    /// network under either setting, without announcing itself.
+    Client,
+    /// Pairing, advanced profiles and tests: no lookup or discovery.
+    Plain,
+}
+
+/// Local network discovery runs under both settings, so a device that has not
+/// yet learned of a switch to private still finds its network computer.
+/// Discovery is best effort: saved addresses still work without it.
+pub(crate) fn discover(endpoint: &Endpoint, role: Role) {
+    match role {
+        Role::Host => add_local_discovery(endpoint, true),
+        Role::Client => add_local_discovery(endpoint, false),
+        Role::Plain => {}
     }
 }
 
@@ -123,12 +147,13 @@ pub struct Transport {
     target_os = "linux",
     target_os = "android"
 ))]
-fn add_local_discovery(endpoint: &Endpoint) {
+fn add_local_discovery(endpoint: &Endpoint, advertise: bool) {
     // iOS needs Apple's multicast entitlement first, so it relies on saved
     // addresses. A network without multicast leaves the endpoint unchanged.
     if let (Ok(lookup), Ok(services)) = (
         iroh_mdns_address_lookup::MdnsAddressLookup::builder()
             .service_name("gmconnect1")
+            .advertise(advertise)
             .build(endpoint.id()),
         endpoint.address_lookup(),
     ) {
@@ -142,7 +167,7 @@ fn add_local_discovery(endpoint: &Endpoint) {
     target_os = "linux",
     target_os = "android"
 )))]
-fn add_local_discovery(_: &Endpoint) {}
+fn add_local_discovery(_: &Endpoint, _: bool) {}
 
 #[cfg(test)]
 mod tests {
@@ -162,6 +187,29 @@ mod tests {
             LocalNetwork,
             "A looser device preference must not widen a private network"
         );
+    }
+
+    #[tokio::test]
+    async fn only_a_guided_public_host_maps_a_router_port_or_uses_relays() -> Result<()> {
+        // Private mode never relays or asks the router to open a port; the
+        // builder must not even configure them.
+        for role in [Role::Host, Role::Client, Role::Plain] {
+            let endpoint = Connectivity::LocalNetwork.builder(role).bind().await?;
+            assert!(endpoint.addr().relay_urls().next().is_none(), "{role:?}");
+            endpoint.close().await;
+        }
+        let builder = format!("{:?}", Connectivity::LocalNetwork.builder(Role::Host));
+        assert!(builder.contains("portmapper_config: Disabled"), "{builder}");
+        let builder = format!("{:?}", Connectivity::PublicRelays.builder(Role::Client));
+        assert!(builder.contains("portmapper_config: Disabled"), "{builder}");
+        let builder = format!("{:?}", Connectivity::PublicRelays.builder(Role::Plain));
+        assert!(builder.contains("portmapper_config: Disabled"), "{builder}");
+        let builder = format!("{:?}", Connectivity::PublicRelays.builder(Role::Host));
+        assert!(
+            !builder.contains("portmapper_config: Disabled"),
+            "{builder}"
+        );
+        Ok(())
     }
 
     #[test]

@@ -24,6 +24,8 @@ pub struct BridgeAuthority {
     route: BridgeRoute,
     pub(super) destination: EndpointAddr,
     connectivity: crate::Connectivity,
+    /// Guided devices look their network computer up on the local network.
+    guided: bool,
     endpoint: Arc<OnceCell<Endpoint>>,
     pub(super) outgoing: Arc<Semaphore>,
 }
@@ -47,16 +49,28 @@ impl BridgeAuthority {
             route,
             connectivity: crate::Connectivity::of_destination(&ticket.endpoint),
             destination: ticket.endpoint,
+            guided: false,
             endpoint: Arc::new(OnceCell::new()),
             outgoing: Arc::new(Semaphore::new(2)),
         })
     }
 
+    /// A guided device's client: the device's own setting, and local
+    /// network lookups of its network computer.
     pub fn with_connectivity(self, connectivity: crate::Connectivity) -> Self {
         Self {
             connectivity,
+            guided: true,
             endpoint: Arc::new(OnceCell::new()),
             ..self
+        }
+    }
+
+    /// Close this client's endpoint, shared with its clones, before a
+    /// replacement takes over.
+    pub async fn close(&self) {
+        if let Some(endpoint) = self.endpoint.get() {
+            endpoint.close().await;
         }
     }
 
@@ -67,8 +81,11 @@ impl BridgeAuthority {
     pub(super) async fn endpoint(&self) -> Result<&Endpoint> {
         self.endpoint
             .get_or_try_init(|| async {
-                let endpoint = self.connectivity.builder(true).bind().await?;
-                self.connectivity.discover_locally(&endpoint);
+                let role = crate::connectivity::Role::Client;
+                let endpoint = self.connectivity.builder(role).bind().await?;
+                if self.guided {
+                    crate::connectivity::discover(&endpoint, role);
+                }
                 Ok(endpoint)
             })
             .await
