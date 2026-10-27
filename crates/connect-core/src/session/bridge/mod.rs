@@ -71,6 +71,9 @@ enum Operation {
     Spaces,
     ShareSpace,
     UnshareSpace,
+    /// Inbox Spaces, listed apart: apps from before inboxes refuse a kind
+    /// they do not know, and never ask for these.
+    Inboxes,
 }
 
 /// A Space as a device learns it from its network computer: another device's

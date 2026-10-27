@@ -17,8 +17,10 @@ use std::{
 
 pub use super::download::{MAX_FILE_BYTES, MAX_WINDOW_BYTES, MIN_WINDOW_BYTES};
 const MAX_HEADER: usize = 512 * 1024;
-/// Unfinished files an inbox keeps for its senders, and their total size.
+/// Unfinished files an inbox keeps for its senders, for one sender, and their
+/// total size.
 const MAX_STAGED: usize = 4;
+const MAX_STAGED_PER_SENDER: usize = 2;
 const MAX_STAGED_BYTES: u64 = 2 * MAX_FILE_BYTES;
 /// An unfinished file nobody continues is dropped after this long.
 const STAGED_FOR: Duration = Duration::from_secs(600);
@@ -177,6 +179,11 @@ impl Incoming {
         let mut entries = self.entries.lock().expect("incoming files");
         entries.retain(|_, entry| entry.touched.elapsed() < STAGED_FOR);
         if let Some(entry) = entries.get_mut(token) {
+            // Checked again here: a window that waited its turn may have been
+            // overtaken by one for the same offset.
+            if entry.peer != peer || entry.received != request.offset {
+                return Err(Refusal::Denied);
+            }
             entry.touched = Instant::now();
             let mut file = entry.file.reopen().map_err(|_| Refusal::Busy)?;
             file.seek(SeekFrom::Start(request.offset))
@@ -187,7 +194,11 @@ impl Incoming {
             return Err(Refusal::Denied);
         }
         let staged: u64 = entries.values().map(|entry| entry.size).sum();
-        if entries.len() >= MAX_STAGED || staged.saturating_add(request.size) > MAX_STAGED_BYTES {
+        let own = entries.values().filter(|entry| entry.peer == peer).count();
+        if entries.len() >= MAX_STAGED
+            || own >= MAX_STAGED_PER_SENDER
+            || staged.saturating_add(request.size) > MAX_STAGED_BYTES
+        {
             return Err(Refusal::Busy);
         }
         let file = tempfile::NamedTempFile::new_in(&self.directory).map_err(|_| Refusal::Busy)?;
@@ -210,9 +221,19 @@ impl Incoming {
     }
     /// Record a verified window and the file's hash after it. The finished
     /// file leaves staging with its whole digest.
-    fn received(&self, token: &str, bytes: u64, hash: Sha256) -> Result<Option<(Staged, String)>> {
+    fn received(
+        &self,
+        token: &str,
+        offset: u64,
+        bytes: u64,
+        hash: Sha256,
+    ) -> Result<Option<(Staged, String)>> {
         let mut entries = self.entries.lock().expect("incoming files");
         let entry = entries.get_mut(token).context("This transfer expired")?;
+        ensure!(
+            entry.received == offset,
+            "This window does not continue its file"
+        );
         entry.received += bytes;
         entry.hash = hash;
         if entry.received < entry.size {
@@ -279,8 +300,15 @@ async fn receive_header(recv: &mut RecvStream) -> Result<Header> {
         genesis_mesh_sdk::parse_strict_json(std::str::from_utf8(&bytes)?)?,
     )?)
 }
-/// Refuse a window: no bytes are read, nothing is staged.
-async fn refuse(connection: &Connection, mut send: SendStream, header: Header) -> Result<()> {
+/// Refuse a window: no bytes are read, nothing is staged, and the inbox's
+/// turn is given up before waiting for the sender to hang up.
+async fn refuse(
+    connection: &Connection,
+    mut send: SendStream,
+    header: Header,
+    turn: Option<tokio::sync::OwnedSemaphorePermit>,
+) -> Result<()> {
+    drop(turn);
     send_header(&mut send, &header).await?;
     send.finish()?;
     connection.closed().await;
@@ -391,29 +419,31 @@ pub(in crate::session) async fn serve(
     let sender = credentials.expected_node.clone();
     // An unknown inbox is refused like any other denial.
     let Some(share) = shares.inbox(&request.collection_id) else {
-        return refuse(connection, send, Header::Denied).await;
+        return refuse(connection, send, Header::Denied, None).await;
     };
     let token = match validate(&request)
         .and_then(|()| share.incoming.admit(&sender, &request))
         .and_then(|()| share.incoming.token(&sender, &request))
     {
         Ok(token) => token,
-        Err(_) => return refuse(connection, send, Header::Denied).await,
+        Err(_) => return refuse(connection, send, Header::Denied, None).await,
     };
     // Windows from several senders take turns.
-    let Ok(Ok(_permit)) = timeout(WAIT_FOR_TURN, share.budget.clone().acquire_owned()).await else {
-        return refuse(connection, send, Header::Busy).await;
+    let Ok(Ok(turn)) = timeout(WAIT_FOR_TURN, share.budget.clone().acquire_owned()).await else {
+        return refuse(connection, send, Header::Busy, None).await;
     };
     let Ok(decided) = share
         .decide_incoming(credentials, &peer, &request, &token)
         .await
     else {
-        return refuse(connection, send, Header::Denied).await;
+        return refuse(connection, send, Header::Denied, Some(turn)).await;
     };
     let (mut file, mut whole) = match share.incoming.claim(&sender, &token, &request) {
         Ok(claimed) => claimed,
-        Err(Refusal::Denied) => return refuse(connection, send, Header::Denied).await,
-        Err(Refusal::Busy) => return refuse(connection, send, Header::Busy).await,
+        Err(Refusal::Denied) => {
+            return refuse(connection, send, Header::Denied, Some(turn)).await;
+        }
+        Err(Refusal::Busy) => return refuse(connection, send, Header::Busy, Some(turn)).await,
     };
     let staged = async {
         send_header(
@@ -472,10 +502,14 @@ pub(in crate::session) async fn serve(
             Utc::now(),
         )?;
         file.sync_data()?;
-        let finished = share.incoming.received(&token, expected as u64, whole)?;
+        let finished = share
+            .incoming
+            .received(&token, request.offset, expected as u64, whole)?;
         Ok::<_, anyhow::Error>((sent, finished))
     }
     .await;
+    // The next window may start while this one saves and confirms.
+    drop(turn);
     let (sent, finished) = match staged {
         Ok(staged) => staged,
         Err(error) => {
@@ -483,43 +517,54 @@ pub(in crate::session) async fn serve(
             return Err(error);
         }
     };
-    let mut saved_as = None;
-    if let Some((mut finished, digest)) = finished {
-        // The whole file must be what the sender declared before it is saved.
-        ensure!(
-            digest == finished.sha256 && finished.file.as_file().metadata()?.len() == finished.size,
-            "The file did not match its digest and was not saved"
-        );
-        let directory = share.directory.clone();
-        saved_as = Some(
-            tokio::task::spawn_blocking(move || {
-                let name = finished.file_name.clone();
-                directory.commit(&name, finished.file.as_file_mut())
-            })
-            .await??,
-        );
-    }
-    let confirmation = super::receipt(
-        &credentials.identity,
-        &decided.intent,
-        &decided.decision,
-        phase(&request),
-        serde_json::to_value(&sent)?,
-    )?;
-    share.persist(
-        &json!({"receipt":confirmation,"intent":decided.intent,"decision":decided.decision,
+    // A window the sender cannot learn the outcome of ends its file, so
+    // nothing waits in staging for a window that will not come.
+    let confirmed = async {
+        let mut saved_as = None;
+        if let Some((mut finished, digest)) = finished {
+            // The whole file must be what the sender declared before it is saved.
+            ensure!(
+                digest == finished.sha256
+                    && finished.file.as_file().metadata()?.len() == finished.size,
+                "The file did not match its digest and was not saved"
+            );
+            let directory = share.directory.clone();
+            saved_as = Some(
+                tokio::task::spawn_blocking(move || {
+                    let name = finished.file_name.clone();
+                    directory.commit(&name, finished.file.as_file_mut())
+                })
+                .await??,
+            );
+        }
+        let confirmation = super::receipt(
+            &credentials.identity,
+            &decided.intent,
+            &decided.decision,
+            phase(&request),
+            serde_json::to_value(&sent)?,
+        )?;
+        share.persist(
+            &json!({"receipt":confirmation,"intent":decided.intent,"decision":decided.decision,
         "attestation":decided.attestation,"host_certificate":credentials.identity.certificate,
         "peer_certificate":peer,"saved_as":saved_as}),
-    )?;
-    write_frame(
-        &mut send,
-        &Confirmation {
-            receipt: confirmation,
-            saved_as,
-        },
-    )
-    .await?;
-    send.finish()?;
+        )?;
+        write_frame(
+            &mut send,
+            &Confirmation {
+                receipt: confirmation,
+                saved_as,
+            },
+        )
+        .await?;
+        send.finish()?;
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if confirmed.is_err() {
+        share.incoming.forget(&token);
+    }
+    confirmed?;
     connection.closed().await;
     Ok(())
 }
@@ -649,4 +694,105 @@ pub(in crate::session) async fn transmit(
         done: phase(request) == "received",
         saved_as: confirmation.saved_as,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(token: Option<&str>, offset: u64, size: u64) -> Request {
+        Request {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            collection_id: "inbox".into(),
+            file_name: "photo.jpg".into(),
+            size,
+            sha256: "0".repeat(64),
+            token: token.map(str::to_owned),
+            offset,
+            length: MIN_WINDOW_BYTES,
+        }
+    }
+
+    #[test]
+    fn staging_follows_its_file_in_order_and_within_its_limits() -> Result<()> {
+        let state = tempfile::tempdir()?;
+        let incoming = Incoming::open(state.path())?;
+        assert!(
+            Arc::ptr_eq(&incoming, &Incoming::open(state.path())?),
+            "Reopening an inbox keeps the files arriving in it"
+        );
+        let size = 3 * u64::from(MIN_WINDOW_BYTES);
+        let first = request(None, 0, size);
+        let token = incoming.token("phone", &first)?;
+        let (_, hash) = incoming
+            .claim("phone", &token, &first)
+            .ok()
+            .context("claim")?;
+        assert!(
+            incoming
+                .received(&token, 0, u64::from(MIN_WINDOW_BYTES), hash)?
+                .is_none()
+        );
+        // A window must continue exactly where the file stands, for its sender.
+        let stale = request(Some(&token), 0, size);
+        assert!(incoming.token("phone", &stale).is_err());
+        assert!(matches!(
+            incoming.claim("phone", &token, &stale),
+            Err(Refusal::Denied)
+        ));
+        let next = request(Some(&token), u64::from(MIN_WINDOW_BYTES), size);
+        assert!(incoming.token("tablet", &next).is_err());
+        assert!(matches!(
+            incoming.claim("tablet", &token, &next),
+            Err(Refusal::Denied)
+        ));
+        assert!(incoming.claim("phone", &token, &next).is_ok());
+        assert!(
+            incoming
+                .received(&token, 0, u64::from(MIN_WINDOW_BYTES), Sha256::new())
+                .is_err(),
+            "A window recorded at the wrong offset is refused"
+        );
+        // One sender keeps at most two unfinished files; the inbox, four.
+        let other = incoming.token("phone", &request(None, 0, 10))?;
+        assert!(
+            incoming
+                .claim("phone", &other, &request(None, 0, 10))
+                .is_ok()
+        );
+        let third = incoming.token("phone", &request(None, 0, 10))?;
+        assert!(matches!(
+            incoming.claim("phone", &third, &request(None, 0, 10)),
+            Err(Refusal::Busy)
+        ));
+        for sender in ["tablet", "laptop"] {
+            let token = incoming.token(sender, &request(None, 0, 10))?;
+            let _ = incoming.claim(sender, &token, &request(None, 0, 10));
+        }
+        let full = incoming.token("watch", &request(None, 0, 10))?;
+        assert!(matches!(
+            incoming.claim("watch", &full, &request(None, 0, 10)),
+            Err(Refusal::Busy)
+        ));
+        // An abandoned file goes, and its window is refused after that.
+        incoming
+            .entries
+            .lock()
+            .unwrap()
+            .get_mut(&token)
+            .context("entry")?
+            .touched = Instant::now() - STAGED_FOR;
+        assert!(incoming.token("phone", &next).is_err());
+        assert!(matches!(
+            incoming.claim("phone", &token, &next),
+            Err(Refusal::Denied)
+        ));
+        // Each sender has its own budget of new files.
+        for _ in 0..8 {
+            incoming.admit("phone", &request(None, 0, 10))?;
+        }
+        assert!(incoming.admit("phone", &request(None, 0, 10)).is_err());
+        assert!(incoming.admit("tablet", &request(None, 0, 10)).is_ok());
+        Ok(())
+    }
 }

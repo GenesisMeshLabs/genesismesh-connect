@@ -109,9 +109,12 @@ impl Collection {
         Ok((files, next))
     }
     /// Save a verified incoming file under `file_name`, or "name (2).ext" and
-    /// so on when that exists: an existing file is never replaced. The name is
-    /// taken exclusively and written through that handle only. Returns the
-    /// name used.
+    /// so on when that exists: an existing file is never replaced. The bytes
+    /// go to a hidden file first and get their name by a hard link, which
+    /// fails rather than replace anything, so a partly written file is never
+    /// seen under the real name. Where the filesystem has no hard links (FAT
+    /// or exFAT drives), the name is reserved exclusively and written through.
+    /// Returns the name used.
     pub fn commit(&self, file_name: &str, source: &mut std::fs::File) -> Result<String> {
         use std::io::{Seek, SeekFrom};
         name(file_name)?;
@@ -119,15 +122,11 @@ impl Collection {
             Some((stem, extension)) if !stem.is_empty() => (stem, Some(extension)),
             _ => (file_name, None),
         };
-        let mut create = OpenOptions::new();
-        create
-            .write(true)
-            .create_new(true)
-            .follow(FollowSymlinks::No);
-        for index in 1..=99 {
-            let candidate = if index == 1 {
-                file_name.to_owned()
-            } else {
+        let candidates: Vec<String> = (1..=99)
+            .filter_map(|index| {
+                if index == 1 {
+                    return Some(file_name.to_owned());
+                }
                 // Long names give up characters for the number, never the
                 // extension.
                 let suffix = match extension {
@@ -136,23 +135,57 @@ impl Collection {
                 };
                 let mut stem = stem.to_owned();
                 while stem.len() + suffix.len() > 128 && stem.pop().is_some() {}
-                format!("{}{suffix}", stem.trim_end())
-            };
-            if name(&candidate).is_err() {
-                continue;
+                let candidate = format!("{}{suffix}", stem.trim_end());
+                name(&candidate).is_ok().then_some(candidate)
+            })
+            .collect();
+        ensure!(candidates.len() > 1, "Use a shorter file name");
+        let mut create = OpenOptions::new();
+        create
+            .write(true)
+            .create_new(true)
+            .follow(FollowSymlinks::No);
+        let write = |target: &mut std::fs::File, source: &mut std::fs::File| -> Result<()> {
+            source.seek(SeekFrom::Start(0))?;
+            std::io::copy(source, target)?;
+            target.sync_all()?;
+            Ok(())
+        };
+        let hidden = format!(".connect-incoming-{}", uuid::Uuid::new_v4());
+        let staged = (|| {
+            let mut target = self.directory.open_with(&hidden, &create)?.into_std();
+            write(&mut target, source)
+        })();
+        if let Err(error) = staged {
+            let _ = self.directory.remove_file(&hidden);
+            return Err(error);
+        }
+        let mut linked = true;
+        for candidate in &candidates {
+            match self
+                .directory
+                .hard_link(&hidden, &self.directory, candidate)
+            {
+                Ok(()) => {
+                    self.directory.remove_file(&hidden)?;
+                    return Ok(candidate.clone());
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(_) => {
+                    linked = false;
+                    break;
+                }
             }
+        }
+        let _ = self.directory.remove_file(&hidden);
+        ensure!(!linked, "This folder already has 99 files with that name");
+        for candidate in candidates {
             let mut target = match self.directory.open_with(&candidate, &create) {
                 Ok(target) => target.into_std(),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(error) => return Err(error.into()),
             };
-            let written = (|| {
-                source.seek(SeekFrom::Start(0))?;
-                std::io::copy(source, &mut target)?;
-                target.sync_all()?;
-                Ok::<_, anyhow::Error>(())
-            })();
-            if let Err(error) = written {
+            if let Err(error) = write(&mut target, source) {
                 drop(target);
                 let _ = self.directory.remove_file(&candidate);
                 return Err(error);
@@ -269,6 +302,20 @@ mod tests {
         assert!(
             second.len() <= 128 && second.ends_with(" (2).txt"),
             "{second}"
+        );
+        // No hidden staging file stays behind.
+        let hidden = std::fs::read_dir(root.path())?
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(".connect-incoming")
+            });
+        assert!(!hidden);
+        assert!(
+            directory
+                .commit(&format!("a.{}", "x".repeat(125)), &mut source)
+                .is_err()
         );
         // A link at a candidate name is never followed or replaced.
         #[cfg(unix)]

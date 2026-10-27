@@ -150,9 +150,24 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                         offset,
                         length,
                     };
-                    let window = session
-                        .send_window_to(&peer.node, &peer.ticket, request, &mut file)
-                        .await?;
+                    // A busy inbox takes the window a little later.
+                    let mut waits = 0;
+                    let window = loop {
+                        match session
+                            .send_window_to(&peer.node, &peer.ticket, request.clone(), &mut file)
+                            .await
+                        {
+                            Ok(window) => break window,
+                            Err(error)
+                                if waits < 30
+                                    && error.to_string().contains("receiving other files") =>
+                            {
+                                waits += 1;
+                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    };
                     offset += window.bytes as u64;
                     token = Some(window.token);
                     update(&jobs, &task_id, |job| job.progress.sent = offset);

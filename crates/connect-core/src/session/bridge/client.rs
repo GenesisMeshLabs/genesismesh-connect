@@ -149,8 +149,23 @@ impl BridgeAuthority {
         identity: SessionIdentity,
         trust: TrustSnapshot,
     ) -> Result<Vec<super::SpaceView>> {
+        let mut spaces = self
+            .listed(identity.clone(), trust.clone(), Operation::Spaces)
+            .await?;
+        // A network computer from before inboxes has none to list.
+        if let Ok(inboxes) = self.listed(identity, trust, Operation::Inboxes).await {
+            spaces.extend(inboxes);
+        }
+        Ok(spaces)
+    }
+    async fn listed(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+        operation: Operation,
+    ) -> Result<Vec<super::SpaceView>> {
         let value = self
-            .authenticated(identity, trust, Operation::Spaces, &serde_json::json!({}))
+            .authenticated(identity, trust, operation, &serde_json::json!({}))
             .await?;
         let answer: super::SpacesAnswer = serde_json::from_value(value)?;
         ensure!(answer.spaces.len() <= 64, "Too many shared folders");

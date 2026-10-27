@@ -373,6 +373,7 @@ async fn exchange(
         | Operation::Settings
         | Operation::Members
         | Operation::Spaces
+        | Operation::Inboxes
         | Operation::ShareSpace
         | Operation::UnshareSpace => {
             let peer = authenticate_for(
@@ -403,7 +404,7 @@ async fn exchange(
                     Operation::Renew => &budgets.renewals,
                     Operation::Settings => &budgets.settings,
                     Operation::Members => &budgets.members,
-                    Operation::Spaces => &budgets.spaces,
+                    Operation::Spaces | Operation::Inboxes => &budgets.spaces,
                     Operation::ShareSpace | Operation::UnshareSpace => &budgets.space_changes,
                     _ => &budgets.collections,
                 })
@@ -470,7 +471,10 @@ async fn exchange(
                         .certificate(&peer, &credentials.expected_node, Utc::now())?;
                     members(signed, &credentials.expected_node, published)
                 }
-                Operation::Spaces | Operation::ShareSpace | Operation::UnshareSpace => {
+                Operation::Spaces
+                | Operation::Inboxes
+                | Operation::ShareSpace
+                | Operation::UnshareSpace => {
                     credentials
                         .trust
                         .certificate(&peer, &credentials.expected_node, Utc::now())?;
@@ -581,11 +585,16 @@ async fn spaces(
         "Only saved devices share folders"
     );
     match operation {
-        Operation::Spaces => {
+        Operation::Spaces | Operation::Inboxes => {
             ensure!(
                 request.as_object().is_some_and(|o| o.is_empty()),
                 "Unsupported spaces fields"
             );
+            let kind = if matches!(operation, Operation::Inboxes) {
+                crate::session::sharing::SpaceKind::Inbox
+            } else {
+                crate::session::sharing::SpaceKind::Folder
+            };
             let list = published
                 .spaces
                 .lock()
@@ -595,6 +604,7 @@ async fn spaces(
             Ok(serde_json::to_value(SpacesAnswer {
                 spaces: list
                     .into_iter()
+                    .filter(|space| space.kind == kind)
                     .filter_map(|space| SpaceView::of(space, node))
                     .collect(),
             })?)

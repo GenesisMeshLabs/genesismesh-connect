@@ -479,8 +479,8 @@ impl DeviceController {
             self.endpoint.is_none(),
             "Stop the session before changing sharing"
         );
-        self.sharing = None;
         if configs.is_empty() {
+            self.sharing = None;
             return Ok(());
         }
         ensure!(
@@ -496,21 +496,34 @@ impl DeviceController {
                 .clone()
                 .into(),
         };
-        let mut shares = Vec::new();
-        for config in configs {
-            let state = self
-                .state_directory
-                .join("sharing")
-                .join(&config.collection_id);
-            shares.push(Arc::new(Share::open(
-                config,
-                authority.clone(),
-                self.vault.pin().clone(),
-                &state,
-            )?));
+        // The old shares stay open until the new ones are, so files arriving
+        // in an inbox keep their staging.
+        let opened = configs
+            .into_iter()
+            .map(|config| {
+                let state = self
+                    .state_directory
+                    .join("sharing")
+                    .join(&config.collection_id);
+                Ok(Arc::new(Share::open(
+                    config,
+                    authority.clone(),
+                    self.vault.pin().clone(),
+                    &state,
+                )?))
+            })
+            .collect::<Result<Vec<_>>>()
+            .and_then(Shares::new);
+        match opened {
+            Ok(shares) => {
+                self.sharing = Some(Arc::new(shares));
+                Ok(())
+            }
+            Err(error) => {
+                self.sharing = None;
+                Err(error)
+            }
         }
-        self.sharing = Some(Arc::new(Shares::new(shares)?));
-        Ok(())
     }
     pub fn save_managed_share(&mut self, config: Option<ShareConfig>) -> Result<()> {
         self.save_managed_shares(config.into_iter().collect())

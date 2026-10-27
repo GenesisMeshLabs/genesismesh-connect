@@ -259,7 +259,13 @@ Current bounds: files up to 1 GiB, windows of 64 KiB to 32 MiB sized to the
 connection, up to four unfinished incoming files and 2 GiB of staging per
 inbox, and ten minutes before an abandoned file is dropped. Windows from
 several senders take turns; one that waits more than ten seconds, or finds
-the inbox full, is told the device is busy rather than refused. Staging is
+the inbox full, is told the device is busy rather than refused, and the app
+tries that window again for about a minute. One sender keeps at most two
+unfinished files in an inbox. A window at the wrong place in its file is
+refused, so a file's bytes and its checked hash always agree. The file is
+written hidden and given its name by a hard link, which never replaces a
+file; on drives without hard links (FAT, exFAT) the name is reserved first and
+written in place. Staging is
 claimed only after the authority allows the file, and each sender has its
 own rate limit. Every window of a download or a send asks the authority anew
 through the network computer, which answers a limited number of such
