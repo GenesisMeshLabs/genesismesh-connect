@@ -93,8 +93,10 @@ apart from the key, then delete the server's copy.
   it relies on the host key.
 - **Tested:** the node runs under systemd in WSL Ubuntu 24.04, without a TPM:
   install, init, service start, status, connection, recovery file, restart and
-  uninstall. Pairing, enrollment and reconnecting after a restart are covered
-  by the node's integration test. Not yet tested on a cloud VM with a TPM.
+  uninstall. Integration tests cover pairing, enrollment and reconnecting after
+  a restart, and moving a desktop network onto the node: a phone paired with the
+  desktop reaches the node from its saved addresses after the restore, without
+  pairing again. Not yet tested on a cloud VM with a TPM.
 
 Remove everything with `sudo ./deploy/node/install.sh --uninstall --yes`, which
 deletes the network's keys for good, or keep the state and master key with
