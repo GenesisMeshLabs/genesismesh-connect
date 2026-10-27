@@ -54,10 +54,14 @@ requires a new proof; there is no persistent transport-binding record in core.
 
 Trust is locally pinned, never adopted from the connecting peer. Certificates
 must be valid now, name the selected node and network, verify under an authority
-key that still vouches, and be absent from the signed CRL. This spike accepts no
-clock skew. CRL signatures, signed issue time and next-update time are checked;
-local snapshot age and a monotonic process timer also bound reliance. The maximum
-configured trust age is 300 seconds; the example uses that maximum and zero extra
+key that still vouches, and be absent from the signed CRL. A device's clock and
+the network computer's differ a little, so a signed start time (a certificate's
+or CRL's issue time, an attestation's start, a read decision's time, a join
+link's) may be up to five minutes ahead of the device, as core allows. Expiry,
+next-update times and age limits are exact, so a device whose clock runs
+minutes ahead still fails. CRL signatures, signed issue time and next-update
+time are checked; local snapshot age and a monotonic process timer also bound
+reliance. The maximum configured trust age is 300 seconds; the example uses that maximum and zero extra
 vouching grace. A new receipt cannot freshen an old signed CRL in that standalone
 example. The device lifecycle uses the [renewal-based freshness policy](authority-spike.md#freshness-and-live-invalidation): a daily signed CRL plus a certificate issued within five minutes and a trust snapshot fetched within one minute.
 

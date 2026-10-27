@@ -32,6 +32,13 @@ pub struct TrustSnapshot {
     recent_certificate: bool,
 }
 
+/// Devices and the network computer keep separate clocks, so a record the
+/// authority signed a moment ago can carry a time ahead of this device's
+/// clock. Where a record starts, allow as much as core and the bridge's
+/// request check allow. Expiry and age limits stay exact: a device whose
+/// clock runs minutes ahead of the network computer still fails.
+pub(crate) const CLOCK_SKEW: chrono::Duration = chrono::Duration::seconds(300);
+
 pub(super) fn timestamp(record: &Value, field: &str) -> Result<DateTime<Utc>> {
     Ok(
         DateTime::parse_from_rfc3339(record[field].as_str().context("Missing trust timestamp")?)?
@@ -79,7 +86,7 @@ impl TrustSnapshot {
             "Wrong sharing identity"
         );
         ensure!(
-            timestamp(attestation, "valid_from")? <= now
+            timestamp(attestation, "valid_from")? <= now + CLOCK_SKEW
                 && now < timestamp(attestation, "expires_at")?,
             "Sharing attestation expired"
         );
@@ -102,9 +109,11 @@ impl TrustSnapshot {
             "Decision does not bind this read"
         );
         let made = timestamp(decision, "decision_made_at")?;
+        // Made for this read moments ago, as closely as two clocks can tell;
+        // the per-read nonce in the context, not this window, stops replay.
         ensure!(
-            made <= now
-                && now - made < chrono::Duration::seconds(5)
+            made <= now + CLOCK_SKEW
+                && now - made < chrono::Duration::seconds(5) + CLOCK_SKEW
                 && now < timestamp(decision, "decision_valid_until")?,
             "Read decision stale"
         );
@@ -231,7 +240,7 @@ impl TrustSnapshot {
             age
         };
         ensure!(
-            issued <= now
+            issued <= now + CLOCK_SKEW
                 && now - issued < crl_age
                 && now < next
                 && next - issued <= chrono::Duration::hours(24),
@@ -281,9 +290,9 @@ impl TrustSnapshot {
         );
         let issued = timestamp(cert, "issued_at")?;
         let expires = timestamp(cert, "expires_at")?;
-        // Deliberately stricter than core's clock-skew allowance.
+        // Stricter than core at expiry, which core extends by the skew.
         ensure!(
-            issued <= now && now < expires,
+            issued <= now + CLOCK_SKEW && now < expires,
             "Certificate expired or not yet valid"
         );
         let id = cert["cert_id"]
