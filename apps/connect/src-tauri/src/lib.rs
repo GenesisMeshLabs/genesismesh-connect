@@ -119,6 +119,8 @@ pub fn run() {
             consumer::browse_files,
             consumer::open_file,
             downloads::download_file,
+            downloads::resume_download,
+            downloads::discard_download,
             downloads::download_status,
             downloads::cancel_download,
             downloads::open_download,

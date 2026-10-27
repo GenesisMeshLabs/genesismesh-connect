@@ -136,6 +136,7 @@ function render(status: HomeStatus) {
   visible("paired-device", !!status.peer);
   text("peer-name", status.peer || "");
   renderDevices(status);
+  renderUnfinished(status);
   if (oldDevice !== status.selected_device) {
     currentSpace = null;
     folderPath = [];
@@ -624,10 +625,55 @@ interface DownloadProgress {
   state: "downloading" | "verifying" | "complete" | "failed" | "canceled";
   problem: string | null; text: string | null; can_open: boolean;
 }
+/** Downloads that stopped: each continues where it stopped, or goes. */
+function renderUnfinished(status: HomeStatus) {
+  const list = el("unfinished-list");
+  const stamp = JSON.stringify(status.unfinished);
+  if (list.dataset.state === stamp) return;
+  list.dataset.state = stamp;
+  list.replaceChildren();
+  visible("unfinished-downloads", status.unfinished.length > 0);
+  for (const item of status.unfinished) {
+    const row = document.createElement("div");
+    row.className = "device-row";
+    row.setAttribute("role", "listitem");
+    const details = document.createElement("div");
+    const name = document.createElement("h3");
+    name.textContent = item.name;
+    const detail = document.createElement("p");
+    detail.className = "home-muted";
+    detail.textContent = `${formatBytes(item.received)} of ${formatBytes(item.total)}`;
+    details.append(name, detail);
+    const resume = document.createElement("button");
+    resume.textContent = "Continue";
+    resume.addEventListener("click", () =>
+      void download(item.name, resume, () => invoke<string>("resume_download", { id: item.id })),
+    );
+    const drop = document.createElement("button");
+    drop.textContent = "Discard";
+    drop.className = "secondary";
+    drop.addEventListener("click", () => void run(drop, async () => {
+      await invoke("discard_download", { id: item.id });
+      message(`${item.name} discarded.`);
+    }));
+    row.append(details, resume, drop);
+    list.append(row);
+  }
+}
 async function open(file: FileEntry, button: HTMLButtonElement) {
+  if (!page) return;
+  const collectionId = page.collection_id;
+  const directory = folderPath;
+  // A file left unfinished continues where it stopped.
+  await download(file.name, button, () =>
+    invoke<string>("download_file", {
+      collectionId, directory, name: file.name, version: file.version, size: file.bytes,
+    }),
+  );
+}
+async function download(fileName: string, button: HTMLButtonElement, begin: () => Promise<string>) {
   await run(button, async () => {
-    if (!page) return;
-    text("preview-name", file.name);
+    text("preview-name", fileName);
     text("preview-detail", "Preparing download…");
     text("preview-content", "");
     visible("preview-content", false);
@@ -637,9 +683,7 @@ async function open(file: FileEntry, button: HTMLButtonElement) {
     visible("cancel-download", true);
     visible("file-preview", true);
     visible("remote-folder", false);
-    downloadId = await invoke<string>("download_file", {
-      collectionId: page.collection_id, directory: folderPath, name: file.name, version: file.version, size: file.bytes,
-    });
+    downloadId = await begin();
     try {
       while (true) {
         const progress = await invoke<DownloadProgress>("download_status", { id: downloadId });
@@ -653,7 +697,7 @@ async function open(file: FileEntry, button: HTMLButtonElement) {
           visible("save-download", true);
           break;
         }
-        if (progress.state === "canceled") {text("preview-detail", "Download canceled"); break;}
+        if (progress.state === "canceled") {text("preview-detail", "Download stopped"); break;}
         if (progress.state === "failed") throw new Error(progress.problem || "Download failed. Please try again.");
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
@@ -672,10 +716,11 @@ el("open-download").addEventListener("click", () => void run(el<HTMLButtonElemen
 el("save-download").addEventListener("click", () => void run(el<HTMLButtonElement>("save-download"), async () => {
   if (await invoke<boolean>("save_download", { id: downloadId })) message("Your file is ready to save.");
 }));
+// Going back keeps what arrived, to continue later; Cancel discards it.
 el("close-preview").addEventListener("click", () => {
-  if (busy && downloadId) void invoke("cancel_download", { id: downloadId }).catch(() => {});
+  if (busy && downloadId) void invoke("cancel_download", { id: downloadId, keep: true }).catch(() => {});
   visible("file-preview", false);
-  visible("remote-folder", true);
+  visible("remote-folder", !!page);
 });
 el("check-connection-button").addEventListener(
   "click",

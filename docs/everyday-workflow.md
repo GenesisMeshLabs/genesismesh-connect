@@ -245,8 +245,14 @@ its token until the sharing device no longer has it or refuses it, then asks
 without it; asked without a token, the sharing device first continues a
 snapshot it already has of the same file for the same device, and makes a
 fresh one only when it has none. A refusal without a token ends the
-download. The app does not yet keep unfinished downloads across its own
-restarts. Mobile folder sharing remains pending.
+download. An unfinished download keeps what was verified, with a small record
+of it, in its own folder of the app's private cache: after the app restarts,
+or when the sharing device stayed away, Files lists it under **Unfinished
+downloads**, and **Continue** (or opening the same file again) carries on
+from there, still checked against the whole file's digest at the end. Going
+back from a download keeps it to continue later; **Cancel** and **Discard**
+drop it. The app keeps up to 8 unfinished downloads for a week, the newest
+first. Mobile folder sharing remains pending.
 
 Existing 64-KiB permissions stay unchanged. **Share a folder again** and select
 the folder to issue a new larger-file permission. Both apps need the new build
