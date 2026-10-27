@@ -56,11 +56,14 @@ pub struct HomeStatus {
     problem: Option<String>,
     legacy: bool,
     connection: Option<ConnectivityStatus>,
+    /// Downloads that stopped before they finished, to continue.
+    unfinished: Vec<crate::downloads::Unfinished>,
 }
 #[tauri::command]
 pub async fn home_status(
     state: tauri::State<'_, WorkflowState>,
     desktop: tauri::State<'_, DesktopState>,
+    downloads: tauri::State<'_, crate::downloads::Downloads>,
 ) -> Result<HomeStatus, String> {
     let owner = state.slot.lock().await;
     let slot = desktop.slot.lock().await;
@@ -118,6 +121,7 @@ pub async fn home_status(
             && !state.directory.join("owner.json").is_file()
             && device.as_ref().is_some_and(|d| d.paired_device.is_none()),
         connection: device.map(|d| d.connectivity),
+        unfinished: crate::downloads::unfinished(&downloads),
     })
 }
 /// This device's Spaces first, then those other devices share with it, with

@@ -658,9 +658,9 @@ fn send_with(
     let mut file = tempfile::tempfile()?;
     file.write_all(bytes)?;
     let digest = declared.unwrap_or_else(|| sha256(bytes));
-    let (mut token, mut offset) = (None, 0u64);
+    let (mut token, mut offset, mut waits) = (None, 0u64, 0);
     loop {
-        let window = runtime.block_on(session.send_window_to(
+        let sent = runtime.block_on(session.send_window_to(
             &host.node,
             &host.ticket,
             &mut Request {
@@ -675,7 +675,17 @@ fn send_with(
                 length: MIN_WINDOW_BYTES,
             },
             &mut file,
-        ))?;
+        ));
+        // A busy device, or one whose network computer did not answer in
+        // time on a loaded machine, takes the window later, as in the app.
+        let window = match sent {
+            Err(error) if waits < 30 && error.to_string().contains("receiving other files") => {
+                waits += 1;
+                std::thread::sleep(Duration::from_secs(2));
+                continue;
+            }
+            sent => sent?,
+        };
         let window = match window {
             Outcome::Sent(window) => window,
             Outcome::ContinueAt { token: kept, at } => {

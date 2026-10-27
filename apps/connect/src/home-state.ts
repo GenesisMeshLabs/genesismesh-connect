@@ -20,6 +20,8 @@ export interface HomeStatus {
   problem: string | null;
   legacy: boolean;
   connection: ConnectionStatus | null;
+  /** Downloads that stopped before they finished, to continue. */
+  unfinished: { id: string; name: string; received: number; total: number }[];
 }
 /** A shared folder: this device's, or another device's shared with it. */
 export interface HomeSpace {
