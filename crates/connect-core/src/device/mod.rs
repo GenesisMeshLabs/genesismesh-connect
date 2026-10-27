@@ -923,8 +923,10 @@ impl DeviceController {
                 .unshare_space(identity.clone(), trust.clone(), collection)
                 .await;
         }
+        // Stopping reconnects, and reconnecting refreshes: boxed, since
+        // that refresh comes back here.
         for collection in applied.ended {
-            self.drop_space(&collection).await?;
+            Box::pin(self.drop_space(&collection)).await?;
         }
         Ok(())
     }
