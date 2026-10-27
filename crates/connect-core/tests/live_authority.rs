@@ -2050,7 +2050,7 @@ async fn members_learn_each_other_from_the_network_computer_and_connect() -> Res
         )
         .await?;
 
-    // Connecting grants nothing: a member that shares no folder serves none.
+    // A member that shares no folder offers no file protocol at all.
     let nothing = phone
         .session()?
         .browse_from(&tablet_node, &tablet_ticket, None, Vec::new())
@@ -2060,6 +2060,22 @@ async fn members_learn_each_other_from_the_network_computer_and_connect() -> Res
             .err()
             .is_some_and(|e| e.to_string().contains("support any known protocol"))
     );
+
+    // Reopened, the tablet still has the list from its profile, and reaches
+    // the phone again.
+    tablet.stop().await;
+    drop(tablet);
+    let mut tablet = DeviceController::open(&dir.path().join("tablet"))?;
+    assert_eq!(names(&tablet)?, ["My phone"]);
+    tablet.reconnect_saved().await?;
+    tablet
+        .session()?
+        .round_trip_to(
+            Some(&phone_node),
+            &ticket_of(&tablet, &phone_node)?,
+            "Reopened tablet reaches the phone",
+        )
+        .await?;
 
     // A member can be chosen but not forgotten locally.
     phone.select_device(&tablet_node).await?;
@@ -2093,7 +2109,7 @@ async fn members_learn_each_other_from_the_network_computer_and_connect() -> Res
         "A removed member is no longer approved"
     );
 
-    // Reopened, the phone keeps its pairing and an empty member list.
+    // Reopened, the phone keeps its pairing and the now empty member list.
     phone.stop().await;
     drop(phone);
     let mut phone = DeviceController::open(&dir.path().join("phone"))?;

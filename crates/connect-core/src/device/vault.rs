@@ -342,8 +342,9 @@ impl Vault {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
         let own = STANDARD.encode(self.key().verifying_key().to_bytes());
         let mut kept: Vec<super::PairedDevice> = Vec::new();
-        for member in members {
+        for mut member in members {
             validate_peer(&member)?;
+            member.ticket = crate::session::canonical_ticket(&member.ticket)?;
             if member.node == own
                 || self.record.peers.iter().any(|p| p.node == member.node)
                 || kept.iter().any(|m| m.node == member.node)

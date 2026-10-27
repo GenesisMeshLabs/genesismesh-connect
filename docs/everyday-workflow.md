@@ -103,6 +103,10 @@ grants nothing: every file operation still needs the authority's decision,
 and a device that shares nothing with you says so. The network computer
 decides who belongs, so a listed device cannot be forgotten on another device;
 when the network computer forgets a device, the others drop it at their next
+refresh. The forgotten device itself can no longer use the authority bridge,
+so it cannot renew its certificate and its connections pause within minutes;
+it keeps showing its last list until it joins a network again. Opening
+Devices asks the network computer right away instead of waiting for the next
 refresh.
 
 ## Choose how devices connect

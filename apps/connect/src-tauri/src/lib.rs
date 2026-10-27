@@ -118,6 +118,7 @@ pub fn run() {
             downloads::open_download,
             downloads::save_download,
             consumer::check_connection,
+            consumer::check_network,
             consumer::select_device,
             consumer::forget_device,
             consumer::set_network_connection,

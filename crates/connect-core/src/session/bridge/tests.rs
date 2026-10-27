@@ -479,14 +479,19 @@ async fn members_see_the_others_and_report_only_their_own_endpoint() -> Result<(
     let http = authority(&f).await?;
     let bridge = host(&f, &http).await?;
     let client = BridgeAuthority::new(route(&bridge, &f))?;
+    // Tickets as the network computer saves and passes them on.
     let ticket = |id: iroh::EndpointId, port: u16| {
-        serde_json::to_string(&json!({
-            "version": 1,
-            "endpoint": EndpointAddr::new(id).with_ip_addr(([192, 0, 2, 9], port).into()),
-        }))
+        crate::session::canonical_ticket(
+            &json!({
+                "version": 1,
+                "endpoint": EndpointAddr::new(id).with_ip_addr(([192, 0, 2, 9], port).into()),
+            })
+            .to_string(),
+        )
         .unwrap()
     };
-    let (own, other) = (
+    let (own, other, laptop_endpoint) = (
+        iroh::SecretKey::generate().public(),
         iroh::SecretKey::generate().public(),
         iroh::SecretKey::generate().public(),
     );
@@ -495,8 +500,22 @@ async fn members_see_the_others_and_report_only_their_own_endpoint() -> Result<(
         node,
         ticket,
     };
+    // A second saved device the bridge lets in, though it is not selected.
+    let laptop_key = support::key();
+    let laptop_cert = signed(
+        json!({
+            "cert_id": "laptop-cert", "node_public_key": public(&laptop_key),
+            "network_name": "connect-spike", "roles": ["role:client"],
+            "issued_at": python_timestamp(f.now - chrono::Duration::seconds(1)),
+            "expires_at": python_timestamp(f.now + chrono::Duration::hours(1)),
+            "issued_by": "spike-only"
+        }),
+        &[&f.authority],
+    );
+    let laptop_identity = || SessionIdentity::new(laptop_key.clone(), laptop_cert.clone());
     let me = device("Phone", public(&f.client), ticket(own, 7000));
     let tablet = device("Tablet", public(&support::key()), ticket(other, 7001));
+    let laptop = device("Laptop", public(&laptop_key), ticket(laptop_endpoint, 7002));
     let huge = device(
         "Huge",
         public(&support::key()),
@@ -509,13 +528,34 @@ async fn members_see_the_others_and_report_only_their_own_endpoint() -> Result<(
         }))?,
     );
     assert!(huge.ticket.len() > MAX_MEMBER_TICKET);
-    bridge.publish_members(vec![me.clone(), tablet.clone(), huge]);
+
+    assert!(
+        client
+            .members(identity(&f), f.trust()?, None)
+            .await
+            .is_err(),
+        "Before the computer publishes its devices there is no answer, not an empty one"
+    );
+    bridge.publish_members(vec![tablet.clone()]);
+    assert!(
+        client
+            .members(identity(&f), f.trust()?, None)
+            .await
+            .is_err(),
+        "A device the computer has not saved receives nothing, even when selected"
+    );
+
+    bridge.publish_members(vec![me.clone(), tablet.clone(), laptop.clone(), huge]);
+    bridge.set_peers(
+        public(&f.client),
+        vec![public(&f.client), public(&laptop_key)],
+    )?;
     let members = client
         .members(identity(&f), f.trust()?, Some(ticket(own, 7100)))
         .await?;
     assert_eq!(
         members,
-        vec![tablet.clone()],
+        vec![tablet.clone(), laptop.clone()],
         "A device sees the others, never itself or an oversized address"
     );
     assert_eq!(
@@ -524,16 +564,50 @@ async fn members_see_the_others_and_report_only_their_own_endpoint() -> Result<(
         "A fresh address for the device's own endpoint is kept"
     );
     assert!(bridge.take_reported().is_empty());
+
+    // The list and the report follow the caller, not the selected device.
+    let seen = client
+        .members(
+            laptop_identity()?,
+            f.trust()?,
+            Some(ticket(laptop_endpoint, 7300)),
+        )
+        .await?;
+    assert_eq!(seen, vec![me.clone(), tablet.clone()]);
+    assert_eq!(
+        bridge.take_reported(),
+        std::collections::BTreeMap::from([(public(&laptop_key), ticket(laptop_endpoint, 7300))])
+    );
+
     client
         .members(identity(&f), f.trust()?, Some(ticket(other, 7200)))
         .await?;
     client
         .members(identity(&f), f.trust()?, Some(me.ticket.clone()))
         .await?;
+    // The same address spelled with padding is the same address.
+    let padded = me.ticket.replace(',', " ,\n ");
+    assert_ne!(padded, me.ticket);
+    client
+        .members(identity(&f), f.trust()?, Some(padded))
+        .await?;
     assert!(
         bridge.take_reported().is_empty(),
-        "Another endpoint's address, or an unchanged one, is not kept"
+        "Another endpoint's address, an unchanged one, or a respelled one is not kept"
     );
+    // An address too long to pass on is dropped; the device still gets its list.
+    let long = serde_json::to_string(&json!({
+        "version": 1,
+        "endpoint": (0..120u16).fold(EndpointAddr::new(own), |addr, port| {
+            addr.with_ip_addr(([192, 0, 2, 11], port + 1).into())
+        }),
+    }))?;
+    assert!(long.len() > MAX_MEMBER_TICKET);
+    assert_eq!(
+        client.members(identity(&f), f.trust()?, Some(long)).await?,
+        vec![tablet.clone(), laptop.clone()]
+    );
+    assert!(bridge.take_reported().is_empty());
     assert!(
         client
             .members(identity(&f), f.trust()?, Some("not a ticket".into()))
@@ -546,7 +620,7 @@ async fn members_see_the_others_and_report_only_their_own_endpoint() -> Result<(
             .members(wrong_identity, f.trust()?, None)
             .await
             .is_err(),
-        "Only an approved device receives the member list"
+        "The host's own identity is not an approved device"
     );
     assert!(http.requests.lock().unwrap().is_empty());
     bridge.close().await;

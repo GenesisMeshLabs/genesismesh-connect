@@ -317,6 +317,9 @@ for (const button of document.querySelectorAll<HTMLElement>("[data-view]"))
       const next = button.dataset.view || "files";
       selectView(next);
       if (next === "files" && current?.peer && !page && !busy) void browse(false);
+      // Devices that joined since the last refresh appear without waiting.
+      if (next === "devices" && current?.configured)
+        void invoke("check_network").then(refresh, () => undefined);
     },
   );
 el("home-brand").addEventListener("click", (event) => {

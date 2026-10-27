@@ -809,6 +809,10 @@ impl DeviceController {
             {
                 self.vault.save_transport_port(true, host.port())?;
             }
+            // Devices asking before this would get no list, never an empty one.
+            if let Some(host) = &bridge_host {
+                host.publish_members(self.vault.peers().to_vec());
+            }
             let endpoint = Arc::new(
                 SessionEndpoint::bind_with_transport(
                     device.session_identity()?,
@@ -1093,6 +1097,165 @@ mod tests {
         assert_eq!(status.connectivity.network, Connectivity::PublicRelays);
         assert_eq!(status.connectivity.own, Some(Connectivity::LocalNetwork));
         assert_eq!(status.connectivity.effective, Connectivity::LocalNetwork);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires a native OS credential store; Linux runner uses an isolated Secret Service"]
+    fn member_lists_skip_known_devices_stay_within_32_and_survive_a_reopen() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("device");
+        let pin = TrustPin {
+            network_name: "disposable-member-test".into(),
+            root_public_key: STANDARD.encode([6; 32]),
+        };
+        let mut device = DeviceController::prepare_remote(&path, pin)?;
+        let own = device.status()?.node_public_key;
+        let ticket = |id: iroh::EndpointId, port: u16| {
+            serde_json::to_string(&serde_json::json!({
+                "version": 1,
+                "endpoint": iroh::EndpointAddr::new(id).with_ip_addr(([192, 0, 2, 3], port).into()),
+            }))
+            .unwrap()
+        };
+        let node = |byte: u8| STANDARD.encode([byte; 32]);
+        let member = |byte: u8| PairedDevice {
+            name: format!("Device {byte}"),
+            node: node(byte),
+            ticket: ticket(iroh::SecretKey::generate().public(), 7000 + u16::from(byte)),
+        };
+        let computer = PairedDevice {
+            name: "Home computer".into(),
+            node: node(200),
+            ticket: ticket(iroh::SecretKey::generate().public(), 6999),
+        };
+        device.vault.save_route(Some(BridgeRoute {
+            ticket: authority_ticket(iroh::SecretKey::generate().public(), 7500),
+            host_node: computer.node.clone(),
+        }))?;
+        device.vault.save_peer(computer.node.clone())?;
+        device.vault.save_pairing(computer.clone())?;
+
+        // Never this device, a paired one, or the same device twice; and the
+        // network computer stays selected when the list does not name it.
+        let mut list: Vec<_> = (1..=40).map(member).collect();
+        list.push(PairedDevice {
+            name: "Me".into(),
+            node: own.clone(),
+            ticket: ticket(iroh::SecretKey::generate().public(), 7600),
+        });
+        list.push(computer.clone());
+        list.push(member(1));
+        assert!(device.vault.save_members(list.clone())?);
+        let kept = device.vault.members().to_vec();
+        assert_eq!(kept.len(), 31, "With the computer, 32 devices in all");
+        assert!(
+            kept.iter()
+                .all(|m| m.node != own && m.node != computer.node)
+        );
+        assert_eq!(kept.first().map(|m| m.name.as_str()), Some("Device 1"));
+        assert_eq!(device.vault.peer(), Some(computer.node.as_str()));
+        assert!(
+            !device.vault.save_members(list)?,
+            "An unchanged list writes nothing"
+        );
+        // Tickets are kept in one spelling.
+        let spaced = kept[0].ticket.replace(',', " , ");
+        let mut respelled = kept.clone();
+        respelled[0].ticket = spaced;
+        assert!(!device.vault.save_members(respelled)?);
+
+        // A selected member that leaves falls back to the network computer;
+        // one that stays keeps the selection.
+        device.vault.save_peer(node(2))?;
+        assert!(device.vault.save_members(kept[1..].to_vec())?);
+        assert_eq!(device.vault.peer(), Some(node(2).as_str()));
+        assert_eq!(
+            device.vault.paired().map(|p| p.name.clone()),
+            Some("Device 2".into())
+        );
+        assert!(device.vault.save_members(kept[2..].to_vec())?);
+        assert_eq!(device.vault.peer(), Some(computer.node.as_str()));
+
+        // Pairing with a member moves it out of the member list.
+        device.vault.save_peer(node(3))?;
+        device.vault.save_pairing(member(3))?;
+        assert!(device.vault.members().iter().all(|m| m.node != node(3)));
+        assert_eq!(
+            device.vault.peers().len() + device.vault.members().len(),
+            30
+        );
+
+        // A reopened profile keeps its member list.
+        let members = device.vault.members().to_vec();
+        drop(device);
+        let reopened = DeviceController::open(&path)?;
+        assert_eq!(reopened.status()?.members, members);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires a native OS credential store; Linux runner uses an isolated Secret Service"]
+    fn reported_addresses_replace_only_the_same_endpoint() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let pin = TrustPin {
+            network_name: "disposable-address-test".into(),
+            root_public_key: STANDARD.encode([7; 32]),
+        };
+        let mut device = DeviceController::prepare_remote(&dir.path().join("device"), pin)?;
+        let ticket = |id: iroh::EndpointId, port: u16| {
+            crate::session::canonical_ticket(
+                &serde_json::json!({
+                    "version": 1,
+                    "endpoint": iroh::EndpointAddr::new(id).with_ip_addr(([192, 0, 2, 4], port).into()),
+                })
+                .to_string(),
+            )
+            .unwrap()
+        };
+        let (phone_endpoint, other) = (
+            iroh::SecretKey::generate().public(),
+            iroh::SecretKey::generate().public(),
+        );
+        let phone = PairedDevice {
+            name: "Phone".into(),
+            node: STANDARD.encode([8; 32]),
+            ticket: ticket(phone_endpoint, 7000),
+        };
+        device.vault.save_peer(phone.node.clone())?;
+        device.vault.save_pairing(phone.clone())?;
+        let report =
+            |ticket: String| std::collections::BTreeMap::from([(phone.node.clone(), ticket)]);
+        assert!(
+            !device
+                .vault
+                .save_peer_addresses(report(ticket(other, 7001)))?
+        );
+        assert!(
+            !device
+                .vault
+                .save_peer_addresses(report(phone.ticket.clone()))?
+        );
+        assert!(
+            !device
+                .vault
+                .save_peer_addresses(std::collections::BTreeMap::from([(
+                    STANDARD.encode([9; 32]),
+                    ticket(phone_endpoint, 7002)
+                )]))?,
+            "An address for a device that is not saved is ignored"
+        );
+        assert_eq!(device.vault.peers()[0].ticket, phone.ticket);
+        assert!(
+            device
+                .vault
+                .save_peer_addresses(report(ticket(phone_endpoint, 7003)))?
+        );
+        assert_eq!(device.vault.peers()[0].ticket, ticket(phone_endpoint, 7003));
+        assert_eq!(
+            device.vault.paired().map(|p| p.ticket.clone()),
+            Some(ticket(phone_endpoint, 7003))
+        );
         Ok(())
     }
 }

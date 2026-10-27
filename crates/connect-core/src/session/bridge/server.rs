@@ -19,7 +19,8 @@ pub struct AuthorityBridge {
 struct Published {
     connectivity: crate::Connectivity,
     session_ticket: Mutex<Option<String>>,
-    members: Mutex<Vec<crate::device::PairedDevice>>,
+    /// None until the network computer publishes its saved devices.
+    members: Mutex<Option<Vec<crate::device::PairedDevice>>>,
     /// Session addresses members reported for their own paired endpoint, until
     /// the network computer saves them.
     reported: Mutex<std::collections::BTreeMap<String, String>>,
@@ -96,7 +97,7 @@ impl AuthorityBridge {
         let published = Arc::new(Published {
             connectivity,
             session_ticket: Mutex::new(None),
-            members: Mutex::new(Vec::new()),
+            members: Mutex::new(None),
             reported: Mutex::new(Default::default()),
         });
         let task = tokio::spawn(accept(
@@ -135,7 +136,7 @@ impl AuthorityBridge {
             .published
             .members
             .lock()
-            .expect("bridge publication mutex poisoned") = members;
+            .expect("bridge publication mutex poisoned") = Some(members);
     }
     /// Session addresses members reported since the last call, by node.
     pub fn take_reported(&self) -> std::collections::BTreeMap<String, String> {
@@ -448,25 +449,30 @@ async fn exchange(
     Ok(())
 }
 
-/// Answer one authenticated member with the other saved devices, and keep the
-/// session address it reported if it names the endpoint it paired with.
+/// Answer one saved device with the others, and keep the session address it
+/// reported if it names the endpoint it paired with. Until the network
+/// computer has published its devices, and for a device it has not saved,
+/// there is no answer: an empty list would read as "nobody else".
 fn members(request: Value, node: &str, published: &Published) -> Result<Value> {
     let request: MembersRequest = serde_json::from_value(request)?;
     let members = published
         .members
         .lock()
         .expect("bridge publication mutex poisoned")
-        .clone();
+        .clone()
+        .context("The device list is not ready")?;
+    let paired = members
+        .iter()
+        .find(|m| m.node == node)
+        .context("Only saved devices receive the device list")?;
+    // An address too long to pass on is not kept; the answer still comes.
     if let Some(ticket) = request.session_ticket {
-        ensure!(
-            ticket.len() <= MAX_MEMBER_TICKET,
-            "Session address too long"
-        );
-        let endpoint = crate::session::ticket_endpoint(&ticket)?;
-        let paired = members.iter().find(|m| m.node == node);
-        if paired.is_some_and(|m| {
-            m.ticket != ticket && crate::session::ticket_endpoint(&m.ticket).ok() == Some(endpoint)
-        }) {
+        let ticket = crate::session::canonical_ticket(&ticket)?;
+        if ticket.len() <= MAX_MEMBER_TICKET
+            && crate::session::canonical_ticket(&paired.ticket).ok() != Some(ticket.clone())
+            && crate::session::ticket_endpoint(&paired.ticket).ok()
+                == Some(crate::session::ticket_endpoint(&ticket)?)
+        {
             published
                 .reported
                 .lock()
@@ -477,7 +483,11 @@ fn members(request: Value, node: &str, published: &Published) -> Result<Value> {
     Ok(serde_json::to_value(MembersAnswer {
         members: members
             .into_iter()
-            .filter(|m| m.node != node && m.ticket.len() <= MAX_MEMBER_TICKET)
+            .filter(|m| m.node != node)
+            .filter_map(|mut m| {
+                m.ticket = crate::session::canonical_ticket(&m.ticket).ok()?;
+                (m.ticket.len() <= MAX_MEMBER_TICKET).then_some(m)
+            })
             .collect(),
     })?)
 }

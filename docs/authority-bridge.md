@@ -24,7 +24,7 @@ by a strict versioned request. There is no URL, method, path or header parameter
 | `trust` | GET `/na/key-history`, then GET `/crl` | Explicit desktop reachability ticket; signed documents must verify against the client's independently pinned root/network and persisted checkpoints |
 | `renew` | POST `/renew` | Mutual node authentication plus a valid node-signed body naming the exact certificate authenticated in that connection |
 | `settings` | None | Mutual node authentication with a currently valid certificate and an empty body; returns the network's connection setting and the computer's current bridge and session tickets, which the device accepts only for the endpoints it already trusts |
-| `members` | None | Mutual node authentication with a currently valid certificate and a body holding only the device's own current session ticket (or none); returns the computer's other saved devices (name, node key, session ticket of at most 2 KiB), never the caller. The computer keeps the reported ticket only for the endpoint that device paired with |
+| `members` | None | Mutual node authentication with a currently valid certificate and a body holding only the device's own current session ticket (or none); returns the computer's other saved devices (name, node key, session ticket of at most 2 KiB, in one canonical spelling), never the caller. Only devices the computer has saved get an answer, and none before it has published its list. The computer keeps a reported ticket only for the endpoint that device paired with |
 
 Trust documents are public and can be fetched before node authentication. This
 allows a client resuming after several minutes to obtain current trust before

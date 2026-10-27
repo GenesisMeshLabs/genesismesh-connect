@@ -475,6 +475,16 @@ pub async fn check_connection(desktop: tauri::State<'_, DesktopState>) -> Result
     Ok(())
 }
 
+/// Ask the network computer for its devices now, when Devices opens.
+#[tauri::command]
+pub async fn check_network(desktop: tauri::State<'_, DesktopState>) -> Result<(), String> {
+    let mut slot = desktop.slot.lock().await;
+    match slot.controller.as_mut() {
+        Some(device) => device.check_network().await.map_err(error),
+        None => Ok(()),
+    }
+}
+
 #[tauri::command]
 pub async fn select_device(
     id: String,
