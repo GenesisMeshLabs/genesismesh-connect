@@ -27,9 +27,11 @@ const MAX_STAGED_BYTES: u64 = 2 * MAX_FILE_BYTES;
 const STAGED_FOR: Duration = Duration::from_secs(3600);
 /// How long a window waits for another sender's window to finish.
 const WAIT_FOR_TURN: Duration = Duration::from_secs(10);
-/// A saved file is remembered this long, so a sender whose last confirmation
-/// was lost learns where it went instead of sending it again.
+/// A saved file is remembered this long, across restarts, so a sender whose
+/// last confirmation was lost learns where it went instead of sending it
+/// again; at most this many at once.
 const SAVED_FOR: Duration = Duration::from_secs(600);
+const MAX_SAVED: usize = 256;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -139,35 +141,39 @@ impl Finished {
         let _ = std::fs::remove_file(&self.meta);
     }
     /// Save the file into the inbox folder, only if it is exactly what the
-    /// sender declared; staging goes either way. After a restart the hash is
-    /// worked out from the staged bytes here.
-    fn save(self, directory: &Collection) -> Result<String> {
-        let saved = (|| {
-            let mut file = File::open(&self.part)?;
-            let digest = match self.hash.clone() {
-                Some(hash) => storage::hex(&hash.finalize()),
-                None => {
-                    let mut hash = Sha256::new();
-                    let mut buffer = vec![0u8; 65536];
-                    loop {
-                        let count = file.read(&mut buffer)?;
-                        if count == 0 {
-                            break;
-                        }
-                        hash.update(&buffer[..count]);
+    /// sender declared. After a restart the hash is worked out from the
+    /// staged bytes here.
+    fn save(&self, directory: &Collection) -> Result<String> {
+        let mut file = File::open(&self.part)?;
+        let digest = match self.hash.clone() {
+            Some(hash) => storage::hex(&hash.finalize()),
+            None => {
+                let mut hash = Sha256::new();
+                let mut buffer = vec![0u8; 65536];
+                loop {
+                    let count = file.read(&mut buffer)?;
+                    if count == 0 {
+                        break;
                     }
-                    storage::hex(&hash.finalize())
+                    hash.update(&buffer[..count]);
                 }
-            };
-            ensure!(
-                digest == self.record.sha256 && file.metadata()?.len() == self.record.size,
-                "The file did not match its digest and was not saved"
-            );
-            directory.commit(&self.record.file_name, &mut file)
-        })();
-        self.discard();
-        saved
+                storage::hex(&hash.finalize())
+            }
+        };
+        ensure!(
+            digest == self.record.sha256 && file.metadata()?.len() == self.record.size,
+            "The file did not match its digest and was not saved"
+        );
+        directory.commit(&self.record.file_name, &mut file)
     }
+}
+/// What a receiving device keeps of a saved file beside staging, for
+/// `SAVED_FOR`.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SavedRecord {
+    record: Record,
+    saved_as: String,
 }
 /// A file that was saved, or is being saved, remembered for its sender.
 struct Done {
@@ -223,23 +229,51 @@ impl Incoming {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
         }
-        let entries = Self::load(&directory)?;
+        let (entries, done) = Self::load(&directory)?;
         let incoming = Arc::new(Self {
             directory: directory.clone(),
             entries: Mutex::new(entries),
-            done: Mutex::new(BTreeMap::new()),
+            done: Mutex::new(done),
             requests: Mutex::new(BTreeMap::new()),
         });
         open.insert(directory, Arc::downgrade(&incoming));
         Ok(incoming)
     }
     /// Unfinished files from a previous run, at most `MAX_STAGED`, each cut
-    /// back to what it recorded; anything else in the folder goes.
-    fn load(directory: &Path) -> Result<BTreeMap<String, Staged>> {
+    /// back to what it recorded, and the files it saved lately; anything
+    /// else in the folder goes.
+    fn load(directory: &Path) -> Result<(BTreeMap<String, Staged>, BTreeMap<String, Done>)> {
         let mut entries = BTreeMap::new();
+        let mut done = BTreeMap::new();
         let mut keep = std::collections::BTreeSet::new();
         for entry in std::fs::read_dir(directory)? {
             let path = entry?.path();
+            if let Some(token) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".saved"))
+                .filter(|t| uuid::Uuid::parse_str(t).is_ok())
+                .map(str::to_owned)
+            {
+                let loaded = (|| {
+                    let metadata = std::fs::metadata(&path)?;
+                    let age = metadata.modified()?.elapsed().unwrap_or_default();
+                    ensure!(age < SAVED_FOR && done.len() < MAX_SAVED, "Expired");
+                    ensure!(metadata.len() <= 4096, "Unexpected record");
+                    let saved: SavedRecord = serde_json::from_slice(&std::fs::read(&path)?)?;
+                    storage::name(&saved.saved_as)?;
+                    Ok::<_, anyhow::Error>(Done {
+                        record: saved.record,
+                        saved_as: Some(saved.saved_as),
+                        at: std::time::SystemTime::now() - age,
+                    })
+                })();
+                if let Ok(saved) = loaded {
+                    keep.insert(path.clone());
+                    done.insert(token, saved);
+                }
+                continue;
+            }
             let Some(token) = path
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -275,13 +309,20 @@ impl Incoming {
                 entries.insert(token, staged);
             }
         }
+        // A file saved just before the previous run ended is not taken again.
+        for token in done.keys() {
+            if entries.remove(token).is_some() {
+                keep.remove(&directory.join(format!("{token}.json")));
+                keep.remove(&directory.join(format!("{token}.part")));
+            }
+        }
         for entry in std::fs::read_dir(directory)? {
             let path = entry?.path();
             if !keep.contains(&path) {
                 let _ = std::fs::remove_file(&path);
             }
         }
-        Ok(entries)
+        Ok((entries, done))
     }
     fn part(&self, token: &str) -> PathBuf {
         self.directory.join(format!("{token}.part"))
@@ -289,17 +330,39 @@ impl Incoming {
     fn meta(&self, token: &str) -> PathBuf {
         self.directory.join(format!("{token}.json"))
     }
+    fn saved(&self, token: &str) -> PathBuf {
+        self.directory.join(format!("{token}.saved"))
+    }
     fn save(&self, token: &str, record: &Record) -> Result<()> {
-        let pending = self.directory.join(format!("{token}.json.tmp"));
+        self.write(&self.meta(token), &serde_json::to_vec(record)?)
+    }
+    /// Write a record whole or not at all.
+    fn write(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+        let mut pending = path.as_os_str().to_owned();
+        pending.push(".tmp");
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create(true).truncate(true);
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        options
-            .open(&pending)?
-            .write_all(&serde_json::to_vec(record)?)?;
-        std::fs::rename(&pending, self.meta(token))?;
+        options.open(&pending)?.write_all(bytes)?;
+        std::fs::rename(&pending, path)?;
         Ok(())
+    }
+    /// Forget saved files after `SAVED_FOR`, and the oldest beyond
+    /// `MAX_SAVED`, with their records.
+    fn prune(&self, done: &mut BTreeMap<String, Done>) {
+        let mut oldest: Vec<(std::time::SystemTime, String)> = done
+            .iter()
+            .map(|(token, entry)| (entry.at, token.clone()))
+            .collect();
+        oldest.sort();
+        let over = done.len().saturating_sub(MAX_SAVED);
+        for (index, (at, token)) in oldest.into_iter().enumerate() {
+            if index < over || at.elapsed().unwrap_or_default() >= SAVED_FOR {
+                done.remove(&token);
+                let _ = std::fs::remove_file(self.saved(&token));
+            }
+        }
     }
     /// Drop files nobody continued, with their bytes.
     fn expire(&self, entries: &mut BTreeMap<String, Staged>) {
@@ -349,7 +412,7 @@ impl Incoming {
     /// it is being saved, or this device no longer has it.
     fn gone(&self, token: &str, peer: &str, request: &Request) -> Refusal {
         let mut done = self.done.lock().expect("saved files");
-        done.retain(|_, entry| entry.at.elapsed().unwrap_or_default() < SAVED_FOR);
+        self.prune(&mut done);
         match done.get(token) {
             None => Refusal::Restart,
             Some(entry) if !same_file(&entry.record, peer, request) => Refusal::Denied,
@@ -469,7 +532,9 @@ impl Incoming {
             return Ok(None);
         }
         let staged = entries.remove(token).context("This transfer expired")?;
-        self.done.lock().expect("saved files").insert(
+        let mut done = self.done.lock().expect("saved files");
+        self.prune(&mut done);
+        done.insert(
             token.to_owned(),
             Done {
                 record: staged.record.clone(),
@@ -485,18 +550,29 @@ impl Incoming {
             meta: self.meta(token),
         }))
     }
-    /// Save a finished file and remember for a while where it went; a file
-    /// that is not saved is forgotten, so its sender starts again.
+    /// Save a finished file and remember for a while where it went, on disk
+    /// too before its staging goes; a file that is not saved is forgotten,
+    /// so its sender starts again.
     fn finish(&self, finished: Finished, directory: &Collection) -> Result<String> {
-        let token = finished.token.clone();
         let saved = finished.save(directory);
         let mut done = self.done.lock().expect("saved files");
-        match (&saved, done.get_mut(&token)) {
-            (Ok(name), Some(entry)) => entry.saved_as = Some(name.clone()),
+        match (&saved, done.get_mut(&finished.token)) {
+            (Ok(name), Some(entry)) => {
+                entry.saved_as = Some(name.clone());
+                let record = SavedRecord {
+                    record: finished.record.clone(),
+                    saved_as: name.clone(),
+                };
+                if let Ok(bytes) = serde_json::to_vec(&record) {
+                    let _ = self.write(&self.saved(&finished.token), &bytes);
+                }
+            }
             _ => {
-                done.remove(&token);
+                done.remove(&finished.token);
             }
         }
+        drop(done);
+        finished.discard();
         saved
     }
     /// A window that did not finish leaves the file as it was recorded.
@@ -1200,6 +1276,14 @@ mod tests {
             Err(Refusal::Denied)
         ));
         assert_eq!(std::fs::read_dir(folder.path())?.count(), 1);
+        assert!(!incoming.part(&token).exists() && !incoming.meta(&token).exists());
+        // The receiving device restarts and still knows where it went.
+        drop(incoming);
+        let incoming = Incoming::open(state.path())?;
+        assert!(matches!(
+            incoming.token("phone", &only),
+            Err(Refusal::Saved(name)) if name == "photo.jpg"
+        ));
         // After a while it is forgotten.
         incoming
             .done
@@ -1212,6 +1296,7 @@ mod tests {
             incoming.token("phone", &only),
             Err(Refusal::Restart)
         ));
+        assert!(!incoming.saved(&token).exists());
         Ok(())
     }
 

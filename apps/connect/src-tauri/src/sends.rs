@@ -135,8 +135,10 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                 update(&jobs, &task_id, |job| job.progress.state = "sending".into());
                 let (mut token, mut offset, mut length) = (None, 0u64, MIN_WINDOW_BYTES);
                 let mut started_over = false;
-                // Answers in a row that only move the file along.
-                let mut continued = 0;
+                // Answers in a row that only move the file along, and all
+                // that was sent: a device that keeps taking the file back
+                // is not followed for ever.
+                let (mut continued, mut sent) = (0, 0u64);
                 loop {
                     let now = file.metadata()?;
                     ensure!(
@@ -196,6 +198,11 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                     let window = match window {
                         Outcome::Sent(window) => {
                             continued = 0;
+                            sent += window.bytes as u64;
+                            ensure!(
+                                sent <= size.saturating_mul(4) + u64::from(MAX_WINDOW_BYTES),
+                                "The other device does not take this file"
+                            );
                             window
                         }
                         // The last window's confirmation was lost.

@@ -213,11 +213,13 @@ version and serves from the offset, and each window is still decided for the
 whole file; a file that changed in between is refused, and the app's check of
 the whole file's digest never lets two versions mix. While the app runs it
 asks a broken window again for up to about two minutes, reaching the device
-afresh each time. It keeps its token until the sharing device refuses it,
-then asks once without it; asked without a token, the sharing device first
-continues a snapshot it already has of the same file for the same device,
-and makes a fresh one only when it has none. A refusal without a token ends
-the download. The app does not yet keep unfinished downloads across its own
+afresh each time; a sharing device that is busy (its download limits, or two
+snapshots already being prepared) is asked again the same way. The app keeps
+its token until the sharing device no longer has it or refuses it, then asks
+without it; asked without a token, the sharing device first continues a
+snapshot it already has of the same file for the same device, and makes a
+fresh one only when it has none. A refusal without a token ends the
+download. The app does not yet keep unfinished downloads across its own
 restarts. Mobile folder sharing remains pending.
 
 Existing 64-KiB permissions stay unchanged. **Share a folder again** and select
@@ -301,9 +303,10 @@ minutes, reaching the device afresh each time. A window at the wrong place,
 for example after a lost confirmation, is answered with where the file
 stands, and only its own sender is told. The sending app learns a transfer's
 token as soon as the receiving device names it, so even a file sent in one
-window can be asked again. A saved file is remembered for 10 minutes: its
-last window asked again, after a lost confirmation, is answered with the name
-it was saved under, and the file is never saved twice. Sending the same file again (same
+window can be asked again. A saved file is remembered for 10 minutes, across
+restarts of either device: its last window asked again, after a lost
+confirmation, is answered with the name it was saved under instead of the
+file being saved again. Sending the same file again (same
 sender, inbox, name, size and digest), for example after the sending app
 restarted, continues the file already there instead of starting another; a
 transfer the device no longer has is answered with "start again", which the

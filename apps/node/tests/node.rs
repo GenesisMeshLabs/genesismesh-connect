@@ -1058,15 +1058,18 @@ fn transfers_continue_where_they_stopped() -> Result<()> {
         pc.restore_managed_share()?;
         runtime.block_on(pc.reconnect_saved())?;
         let session = phone.session()?;
+        let expired = runtime
+            .block_on(session.download_window_from(
+                &pc_node,
+                &pc_ticket()?,
+                request(Some(first.token.clone()), offset),
+                &mut output,
+            ))
+            .err()
+            .context("The old token was taken")?;
         assert!(
-            runtime
-                .block_on(session.download_window_from(
-                    &pc_node,
-                    &pc_ticket()?,
-                    request(Some(first.token.clone()), offset),
-                    &mut output,
-                ))
-                .is_err()
+            expired.to_string().contains("no longer has this download"),
+            "{expired}"
         );
         let mut token = None;
         loop {
