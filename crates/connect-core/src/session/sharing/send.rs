@@ -213,8 +213,9 @@ impl Incoming {
     /// One staging area per inbox for the life of the process, so reopening
     /// shares (after any Space changes) keeps files that are arriving. The
     /// first open in a process takes up the unfinished files a previous run
-    /// left, so they can be continued.
-    pub fn open(state: &Path) -> Result<Arc<Self>> {
+    /// left, so they can be continued, and looks in `inbox` for a file it
+    /// was saving.
+    pub(super) fn open(state: &Path, inbox: &Collection) -> Result<Arc<Self>> {
         static OPEN: Mutex<BTreeMap<PathBuf, std::sync::Weak<Incoming>>> =
             Mutex::new(BTreeMap::new());
         let directory = state.join("incoming");
@@ -229,7 +230,7 @@ impl Incoming {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
         }
-        let (entries, done) = Self::load(&directory)?;
+        let (entries, done) = Self::load(&directory, inbox)?;
         let incoming = Arc::new(Self {
             directory: directory.clone(),
             entries: Mutex::new(entries),
@@ -242,7 +243,39 @@ impl Incoming {
     /// Unfinished files from a previous run, at most `MAX_STAGED`, each cut
     /// back to what it recorded, and the files it saved lately; anything
     /// else in the folder goes.
-    fn load(directory: &Path) -> Result<(BTreeMap<String, Staged>, BTreeMap<String, Done>)> {
+    fn load(
+        directory: &Path,
+        inbox: &Collection,
+    ) -> Result<(BTreeMap<String, Staged>, BTreeMap<String, Done>)> {
+        // A file the previous run was saving when it stopped is remembered
+        // as saved if it is in the inbox; otherwise it is still staged.
+        for entry in std::fs::read_dir(directory)? {
+            let path = entry?.path();
+            let Some(token) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".saving"))
+                .filter(|t| uuid::Uuid::parse_str(t).is_ok())
+            else {
+                continue;
+            };
+            let saved = directory.join(format!("{token}.saved"));
+            let _ = (|| {
+                ensure!(!saved.exists(), "Recorded");
+                let metadata = std::fs::metadata(&path)?;
+                let age = metadata.modified()?.elapsed().unwrap_or_default();
+                ensure!(age < SAVED_FOR, "Expired");
+                ensure!(metadata.len() <= 4096, "Unexpected record");
+                let record: Record = serde_json::from_slice(&std::fs::read(&path)?)?;
+                let saved_as = inbox
+                    .committed(&record.file_name, record.size, &record.sha256)
+                    .context("Not saved")?;
+                store(
+                    &saved,
+                    &serde_json::to_vec(&SavedRecord { record, saved_as })?,
+                )
+            })();
+        }
         let mut entries = BTreeMap::new();
         let mut done = BTreeMap::new();
         let mut keep = std::collections::BTreeSet::new();
@@ -329,22 +362,11 @@ impl Incoming {
     fn saved(&self, token: &str) -> PathBuf {
         self.directory.join(format!("{token}.saved"))
     }
-    fn save(&self, token: &str, record: &Record) -> Result<()> {
-        self.write(&self.meta(token), &serde_json::to_vec(record)?)
+    fn saving(&self, token: &str) -> PathBuf {
+        self.directory.join(format!("{token}.saving"))
     }
-    /// Write a record whole or not at all.
-    fn write(&self, path: &Path, bytes: &[u8]) -> Result<()> {
-        let mut pending = path.as_os_str().to_owned();
-        pending.push(".tmp");
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let mut file = options.open(&pending)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        std::fs::rename(&pending, path)?;
-        Ok(())
+    fn save(&self, token: &str, record: &Record) -> Result<()> {
+        store(&self.meta(token), &serde_json::to_vec(record)?)
     }
     /// Forget saved files after `SAVED_FOR`, and the oldest beyond
     /// `MAX_SAVED`, with their records.
@@ -552,6 +574,11 @@ impl Incoming {
     /// too before its staging goes; a file that is not saved is forgotten,
     /// so its sender starts again.
     fn finish(&self, finished: Finished, directory: &Collection) -> Result<String> {
+        // Noted first, so a device that stops while saving learns on restart
+        // whether the file was saved.
+        if let Ok(bytes) = serde_json::to_vec(&finished.record) {
+            let _ = store(&self.saving(&finished.token), &bytes);
+        }
         let saved = finished.save(directory);
         let mut done = self.done.lock().expect("saved files");
         match (&saved, done.get_mut(&finished.token)) {
@@ -562,7 +589,7 @@ impl Incoming {
                     saved_as: name.clone(),
                 };
                 if let Ok(bytes) = serde_json::to_vec(&record) {
-                    let _ = self.write(&self.saved(&finished.token), &bytes);
+                    let _ = store(&self.saved(&finished.token), &bytes);
                 }
             }
             _ => {
@@ -570,6 +597,7 @@ impl Incoming {
             }
         }
         drop(done);
+        let _ = std::fs::remove_file(self.saving(&finished.token));
         finished.discard();
         saved
     }
@@ -586,6 +614,20 @@ impl Incoming {
     }
 }
 
+/// Write a record whole or not at all.
+fn store(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut pending = path.as_os_str().to_owned();
+    pending.push(".tmp");
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&pending)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    std::fs::rename(&pending, path)?;
+    Ok(())
+}
 /// Whether `record` is the file `request` names, from the same sender.
 fn same_file(record: &Record, peer: &str, request: &Request) -> bool {
     record.peer == peer
@@ -1102,9 +1144,11 @@ mod tests {
     #[test]
     fn staging_follows_its_file_in_order_and_within_its_limits() -> Result<()> {
         let state = tempfile::tempdir()?;
-        let incoming = Incoming::open(state.path())?;
+        let folder = tempfile::tempdir()?;
+        let directory = Collection::open(folder.path())?;
+        let incoming = Incoming::open(state.path(), &directory)?;
         assert!(
-            Arc::ptr_eq(&incoming, &Incoming::open(state.path())?),
+            Arc::ptr_eq(&incoming, &Incoming::open(state.path(), &directory)?),
             "Reopening an inbox keeps the files arriving in it"
         );
         let window = u64::from(MIN_WINDOW_BYTES);
@@ -1186,9 +1230,11 @@ mod tests {
     #[test]
     fn an_unfinished_file_is_continued_after_the_receiving_device_restarts() -> Result<()> {
         let state = tempfile::tempdir()?;
+        let folder = tempfile::tempdir()?;
+        let directory = Collection::open(folder.path())?;
         let window = u64::from(MIN_WINDOW_BYTES);
         let token = {
-            let incoming = Incoming::open(state.path())?;
+            let incoming = Incoming::open(state.path(), &directory)?;
             let token = new_file(&incoming, "phone", 2 * window)?;
             let (mut file, _) = incoming
                 .claim("phone", &token, &request(Some(&token), 0, 2 * window))
@@ -1202,7 +1248,7 @@ mod tests {
             token
         };
         // The next process picks the file up where it was recorded.
-        let incoming = Incoming::open(state.path())?;
+        let incoming = Incoming::open(state.path(), &directory)?;
         assert!(!state.path().join("incoming").join("stray.bin").exists());
         assert_eq!(std::fs::metadata(incoming.part(&token))?.len(), window);
         assert!(matches!(
@@ -1222,8 +1268,6 @@ mod tests {
         assert_eq!(std::fs::metadata(&finished.part)?.len(), 2 * window);
         // The declared digest does not match these bytes: nothing is saved,
         // staging goes, and the sender starts again.
-        let folder = tempfile::tempdir()?;
-        let directory = Collection::open(folder.path())?;
         assert!(incoming.finish(finished, &directory).is_err());
         assert_eq!(std::fs::read_dir(folder.path())?.count(), 0);
         assert!(!incoming.part(&token).exists() && !incoming.meta(&token).exists());
@@ -1237,7 +1281,9 @@ mod tests {
     #[test]
     fn a_saved_file_tells_its_sender_where_it_went() -> Result<()> {
         let state = tempfile::tempdir()?;
-        let incoming = Incoming::open(state.path())?;
+        let folder = tempfile::tempdir()?;
+        let directory = Collection::open(folder.path())?;
+        let incoming = Incoming::open(state.path(), &directory)?;
         let window = u64::from(MIN_WINDOW_BYTES);
         let bytes = vec![7u8; window as usize];
         let mut only = request(None, 0, window);
@@ -1258,8 +1304,6 @@ mod tests {
         // twice.
         only.token = Some(token.clone());
         assert!(matches!(incoming.token("phone", &only), Err(Refusal::Busy)));
-        let folder = tempfile::tempdir()?;
-        let directory = Collection::open(folder.path())?;
         assert_eq!(incoming.finish(finished, &directory)?, "photo.jpg");
         assert!(matches!(
             incoming.token("phone", &only),
@@ -1288,7 +1332,7 @@ mod tests {
         incoming.save(&token, &record)?;
         std::fs::write(incoming.part(&token), b"")?;
         drop(incoming);
-        let incoming = Incoming::open(state.path())?;
+        let incoming = Incoming::open(state.path(), &directory)?;
         assert!(!incoming.part(&token).exists() && !incoming.meta(&token).exists());
         assert!(matches!(
             incoming.token("phone", &only),
@@ -1311,9 +1355,66 @@ mod tests {
     }
 
     #[test]
+    fn a_save_cut_short_is_settled_after_a_restart() -> Result<()> {
+        let state = tempfile::tempdir()?;
+        let folder = tempfile::tempdir()?;
+        let directory = Collection::open(folder.path())?;
+        let window = u64::from(MIN_WINDOW_BYTES);
+        // Two files arrive whole, and the device stops while saving them:
+        // one after it reached the inbox, the other before.
+        let sends: Vec<(&str, Request)> = [("phone", 7u8), ("tablet", 8u8)]
+            .into_iter()
+            .map(|(peer, byte)| {
+                let mut send = request(None, 0, window);
+                send.sha256 = storage::hex(&Sha256::digest(vec![byte; window as usize]));
+                (peer, send)
+            })
+            .collect();
+        let mut tokens = Vec::new();
+        {
+            let incoming = Incoming::open(state.path(), &directory)?;
+            for (index, (peer, send)) in sends.iter().enumerate() {
+                let token = incoming.token(peer, send).ok().context("token")?;
+                let (mut file, _) = incoming.claim(peer, &token, send).ok().context("claim")?;
+                file.write_all(&vec![7 + index as u8; window as usize])?;
+                let finished = incoming
+                    .received(&token, 0, window, None)?
+                    .context("finished")?;
+                store(
+                    &incoming.saving(&token),
+                    &serde_json::to_vec(&finished.record)?,
+                )?;
+                if index == 0 {
+                    assert_eq!(finished.save(&directory)?, "photo.jpg");
+                }
+                tokens.push(token);
+            }
+        }
+        let incoming = Incoming::open(state.path(), &directory)?;
+        // The first is known as saved, and its staging is gone.
+        let mut first = sends[0].1.clone();
+        first.token = Some(tokens[0].clone());
+        assert!(matches!(
+            incoming.token("phone", &first),
+            Err(Refusal::Saved(name)) if name == "photo.jpg"
+        ));
+        assert!(!incoming.part(&tokens[0]).exists() && !incoming.meta(&tokens[0]).exists());
+        // The second is still staged, from what was recorded.
+        let mut second = sends[1].1.clone();
+        second.token = Some(tokens[1].clone());
+        assert!(incoming.token("tablet", &second).is_ok());
+        assert_eq!(std::fs::metadata(incoming.part(&tokens[1]))?.len(), 0);
+        assert!(tokens.iter().all(|token| !incoming.saving(token).exists()));
+        assert_eq!(std::fs::read_dir(folder.path())?.count(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn a_broken_window_keeps_its_file_and_a_restarted_send_finds_it() -> Result<()> {
         let state = tempfile::tempdir()?;
-        let incoming = Incoming::open(state.path())?;
+        let folder = tempfile::tempdir()?;
+        let directory = Collection::open(folder.path())?;
+        let incoming = Incoming::open(state.path(), &directory)?;
         let window = u64::from(MIN_WINDOW_BYTES);
         let token = new_file(&incoming, "phone", 2 * window)?;
         let (mut file, _) = incoming

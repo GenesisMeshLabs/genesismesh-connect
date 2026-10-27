@@ -203,6 +203,32 @@ impl Collection {
         }
         anyhow::bail!("This folder already has 99 files with that name")
     }
+    /// The name `commit` saved these exact bytes under, if one of the names
+    /// it chooses from holds them: whether a save under way when the device
+    /// stopped was completed.
+    pub fn committed(&self, file_name: &str, size: u64, sha256: &str) -> Option<String> {
+        candidates(file_name).into_iter().find(|candidate| {
+            (|| {
+                let mut options = OpenOptions::new();
+                options.read(true).follow(FollowSymlinks::No);
+                let file = self.directory.open_with(candidate, &options)?;
+                let metadata = file.metadata()?;
+                ensure!(metadata.is_file() && metadata.len() == size, "Another file");
+                let mut file = file.into_std();
+                let mut hash = Sha256::new();
+                let mut buffer = Zeroizing::new(vec![0u8; 65536]);
+                loop {
+                    let count = file.read(&mut buffer)?;
+                    if count == 0 {
+                        break;
+                    }
+                    hash.update(&buffer[..count]);
+                }
+                Ok::<_, anyhow::Error>(hex(&hash.finalize()) == sha256)
+            })()
+            .unwrap_or(false)
+        })
+    }
     pub fn open(path: &Path) -> Result<Self> {
         ensure!(path.is_absolute(), "Collection root must be absolute");
         Ok(Self {

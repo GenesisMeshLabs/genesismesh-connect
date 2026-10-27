@@ -16,6 +16,10 @@ pub const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_WINDOW_BYTES: u32 = 32 * 1024 * 1024;
 pub const MIN_WINDOW_BYTES: u32 = 64 * 1024;
 const MAX_HEADER: usize = 512 * 1024;
+/// When both places for unfinished downloads are taken, one nobody has
+/// continued for this long, for example a canceled one, gives its place to a
+/// new download. It can still go on later from a fresh snapshot.
+const IDLE_FOR: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -100,6 +104,20 @@ impl State {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
         }
+        // Snapshots belong to the process that made them: the first open in
+        // a process removes what an earlier run left behind, for example
+        // after a crash. Later opens, when the Spaces change, keep them.
+        static OPENED: Mutex<std::collections::BTreeSet<PathBuf>> =
+            Mutex::new(std::collections::BTreeSet::new());
+        if OPENED
+            .lock()
+            .expect("download folders")
+            .insert(directory.clone())
+        {
+            for entry in std::fs::read_dir(&directory)? {
+                let _ = std::fs::remove_file(entry?.path());
+            }
+        }
         Ok(Self {
             directory,
             entries: Arc::new(Mutex::new(BTreeMap::new())),
@@ -182,6 +200,19 @@ impl State {
             // snapshot of the same version at its offset: the version names
             // the file's exact revision, and each window is decided anew.
             entries.retain(|_, entry| !entry.finished);
+            if entries.len() >= 2
+                && let Some(idle) = entries
+                    .iter()
+                    .filter(|(_, entry)| {
+                        // A window being served holds its snapshot.
+                        Arc::strong_count(&entry.snapshot) == 1
+                            && entry.touched.elapsed() >= IDLE_FOR
+                    })
+                    .min_by_key(|(_, entry)| entry.touched)
+                    .map(|(token, _)| token.clone())
+            {
+                entries.remove(&idle);
+            }
             ensure!(
                 entries.len() < 2,
                 Busy("Two downloads are already being prepared. Try again shortly.")
@@ -239,9 +270,12 @@ impl State {
         };
         Ok((token, snapshot, permit, pending))
     }
-    fn finished(&self, token: &str) {
+    /// A window was served: the download went on just now, and is finished
+    /// once its last window was.
+    fn served(&self, token: &str, done: bool) {
         if let Some(entry) = self.entries.lock().expect("download cache").get_mut(token) {
-            entry.finished = true;
+            entry.touched = Instant::now();
+            entry.finished = done;
         }
     }
     /// A snapshot that can no longer be read is not offered again.
@@ -345,6 +379,8 @@ fn ack_body(intent: &Value, prepared: &Value) -> Result<Value> {
 
 struct Prepared {
     pending: PendingSnapshot,
+    /// Held while the window is served, so its place is not given away.
+    _snapshot: Arc<storage::Snapshot>,
     token: String,
     file: File,
     length: usize,
@@ -378,6 +414,7 @@ impl Share {
             .await?;
         let length = u64::from(request.length).min(snapshot.size - request.offset) as usize;
         let snapshot_sha = snapshot.sha256.clone();
+        let held = snapshot.clone();
         let offset = request.offset;
         let read = tokio::task::spawn_blocking(move || {
             let (file, digest) = snapshot.window(offset, length)?;
@@ -437,6 +474,7 @@ impl Share {
         Ok((
             Prepared {
                 pending,
+                _snapshot: held,
                 token,
                 file,
                 length,
@@ -585,9 +623,10 @@ pub(in crate::session) async fn serve(
     share.persist(&json!({"receipt":confirmation,"intent":prepared.intent,"decision":prepared.decision,
         "attestation":prepared.attestation,"host_certificate":credentials.identity.certificate,"peer_certificate":peer}))?;
     prepared.pending.token = None;
-    if request.offset + prepared.length as u64 == request.size {
-        share.downloads.finished(&prepared.token);
-    }
+    share.downloads.served(
+        &prepared.token,
+        request.offset + prepared.length as u64 == request.size,
+    );
     write_frame(&mut send, &confirmation).await?;
     send.finish()?;
     connection.closed().await;
@@ -744,4 +783,93 @@ pub(in crate::session) async fn receive(
         sha256: digest,
         done: request.offset + count as u64 == request.size,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn snapshots_left_behind_go_and_an_idle_download_gives_its_place() -> Result<()> {
+        let state = tempfile::tempdir()?;
+        let cache = state.path().join("download-snapshots");
+        std::fs::create_dir_all(&cache)?;
+        std::fs::write(cache.join(".tmpLEFT"), b"left by a crash")?;
+        let downloads = State::open(state.path())?;
+        assert_eq!(std::fs::read_dir(&cache)?.count(), 0);
+
+        let root = tempfile::tempdir()?;
+        for name in ["a.bin", "b.bin", "c.bin"] {
+            std::fs::write(root.path().join(name), vec![7u8; 70000])?;
+        }
+        let collection = Arc::new(Collection::open(root.path())?);
+        let (files, _) = collection.catalog(None)?;
+        let ask = |file: &super::super::catalog::Entry| Request {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            collection_id: "space".into(),
+            file_name: file.name.clone(),
+            directory: Vec::new(),
+            version: file.version.clone(),
+            size: file.bytes,
+            token: None,
+            offset: 0,
+            length: MIN_WINDOW_BYTES,
+        };
+        let permits = Arc::new(tokio::sync::Semaphore::new(4));
+        let mut tokens = Vec::new();
+        let mut serving = None;
+        for file in &files[..2] {
+            let (token, snapshot, _, mut pending) = downloads
+                .snapshot(
+                    collection.clone(),
+                    "peer",
+                    &ask(file),
+                    permits.clone().acquire_owned().await?,
+                )
+                .await?;
+            pending.token = None;
+            tokens.push(token);
+            // The second one is serving a window.
+            serving = Some(snapshot);
+        }
+        let third = || async {
+            downloads
+                .snapshot(
+                    collection.clone(),
+                    "peer",
+                    &ask(&files[2]),
+                    permits.clone().acquire_owned().await?,
+                )
+                .await
+        };
+        // Both places are taken by downloads that went on just now.
+        let refused = third()
+            .await
+            .err()
+            .context("A third download was prepared")?;
+        assert!(refused.is::<Busy>());
+
+        // Both go quiet; only the one not serving a window gives its place.
+        for entry in downloads
+            .entries
+            .lock()
+            .expect("download cache")
+            .values_mut()
+        {
+            entry.touched = Instant::now() - IDLE_FOR - Duration::from_secs(1);
+        }
+        let (token, _, _, mut pending) = third().await?;
+        pending.token = None;
+        {
+            let entries = downloads.entries.lock().expect("download cache");
+            assert!(!entries.contains_key(&tokens[0]));
+            assert!(entries.contains_key(&tokens[1]) && entries.contains_key(&token));
+        }
+        drop(serving);
+
+        // Opening again in the same process keeps the snapshots in use.
+        let _again = State::open(state.path())?;
+        assert_eq!(std::fs::read_dir(&cache)?.count(), 2);
+        Ok(())
+    }
 }

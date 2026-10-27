@@ -104,7 +104,7 @@ impl Share {
         let receipts = state.join("receipts");
         std::fs::create_dir_all(&receipts)?;
         let downloads = download::State::open(state)?;
-        let incoming = send::Incoming::open(state)?;
+        let incoming = send::Incoming::open(state, &directory)?;
         Ok(Self {
             attestation: std::sync::RwLock::new(config.attestation_id.clone()),
             config,
