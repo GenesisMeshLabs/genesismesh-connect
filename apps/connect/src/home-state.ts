@@ -1,4 +1,7 @@
 export interface HomeStatus {
+  disconnected: boolean;
+  can_leave: boolean;
+  leaving: boolean;
   owner: boolean;
   configured: boolean;
   network: string | null;
@@ -15,6 +18,7 @@ export interface HomeStatus {
   sharing: string | null;
   spaces: HomeSpace[];
   can_share: boolean;
+  can_share_folder?: boolean;
   joining: string | null;
   request: { id: string; name: string; node: string; code: string } | null;
   problem: string | null;
@@ -30,10 +34,12 @@ export interface HomeSpace {
   host: string;
   host_id: string;
   own: boolean;
-  kind: "folder" | "inbox";
+  kind: "folder" | "inbox" | "web" | "ssh" | "tcp";
 }
 /** Where a shared folder lives, or whose inbox it is, in a few words. */
+export function isService(space: HomeSpace) { return ["web", "ssh", "tcp"].includes(space.kind); }
 export function spaceSummary(space: HomeSpace) {
+  if (isService(space)) return `${space.kind === "web" ? "Web app" : space.kind === "ssh" ? "SSH" : "TCP service"} · ${space.own ? "Shared from this device" : `On ${space.host}`}`;
   if (space.kind === "inbox")
     return space.own ? "Receiving files from your devices" : `Send files to ${space.host}`;
   return space.own ? "Shared from this device · read-only" : `On ${space.host}`;
@@ -98,11 +104,20 @@ export function filterFiles(files: FileEntry[], query: string) {
 }
 export function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  const units = ["KB", "MB", "GB", "TB", "PB"];
+  const power = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length);
+  return `${(bytes / 1024 ** power).toFixed(1)} ${units[power - 1]}`;
 }
 export function friendlyProblem(value: string) {
+  if (/policy changed/i.test(value)) return "This policy changed elsewhere. Close and reopen Manage access to load its latest version.";
+  if (/custom.*(rule|gate|policy)|policy is disabled|authority before editing/i.test(value)) return "This policy has custom rules that need review at the network authority. Connect has kept them unchanged.";
+  if (/network authority cannot be shared|connection cannot be shared again/i.test(value)) return "Choose an application’s port. Connect’s own authority and connection ports cannot be shared.";
+  if (/service.*(time limit|expired)|session time limit/i.test(value)) return "This service session ended. Open it again for a new permission check.";
+  if (/byte limit reached/i.test(value)) return "This connection reached its policy’s data limit. Ask the sharing device to review Manage access.";
+  if (/not enough free storage|check available storage/i.test(value)) return "There isn’t enough free storage to finish this transfer. Free some space on the receiving device or the device preparing the file, then try again.";
+  if (/device is disconnected/i.test(value)) return "This device is disconnected. Tap Reconnect in Settings.";
+  if (/current transfer|changing networks/i.test(value)) return "Finish or cancel the current transfer, then try again.";
+  if (/leaving.*unfinished|finish leaving|could not finish leaving/i.test(value)) return "Leaving hasn’t finished. Unlock this device and retry leaving the network.";
   if (/Share the folder again|larger files/i.test(value)) return "Share this folder again on your computer to allow larger files.";
   // A device that shares no folder offers no file protocols at all.
   if (/support any known protocol/i.test(value)) return "This device isn’t sharing anything with you yet.";

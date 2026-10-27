@@ -13,6 +13,10 @@ import {
   type HomeStatus,
 } from "../src/home-state.ts";
 const blank: HomeStatus = {
+  disconnected: false,
+  can_leave: false,
+  leaving: false,
+  unfinished: [],
   owner: false,
   configured: false,
   network: null,
@@ -29,6 +33,13 @@ const blank: HomeStatus = {
   legacy: false,
   connection: null,
 };
+test("disconnected and interrupted-leave states give a specific next action", () => {
+  assert.match(friendlyProblem("This device is disconnected. Tap Reconnect in Settings."), /Reconnect/);
+  assert.match(friendlyProblem("Finish or cancel the current transfer before leaving."), /Finish or cancel/);
+  assert.match(friendlyProblem("Leaving is unfinished: locked"), /Unlock this device/);
+  assert.equal(primaryScreen({ ...blank, configured: true, disconnected: true }), "workspace");
+  assert.equal(primaryScreen({ ...blank, configured: false }), "welcome");
+});
 test("shared folders say where they live and what to do when there are none", () => {
   const space = { id: "1", name: "Photos", host: "Home PC", host_id: "a", own: false, kind: "folder" as const };
   assert.equal(spaceSummary(space), "On Home PC");
@@ -116,4 +127,9 @@ test("the connection summary says what this device uses and who chose it", () =>
     }),
     /This device connects only on the local network.*also allows public relays/,
   );
+});
+
+test("formats large transfer sizes without overflowing GB labels", () => {
+  assert.equal(formatBytes(1024 ** 4), "1.0 TB");
+  assert.equal(formatBytes(1024 ** 5), "1.0 PB");
 });

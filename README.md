@@ -2,11 +2,11 @@
 
 A separate device application built around Genesis Mesh trust, Iroh connectivity and a Tauri shell.
 
-Current implementation: **guided network setup, multiple approved devices and authorized file browsing**. The shared core now has native identity stores for Windows, macOS, Linux, Android and iOS, desktop authority packaging, and remote collection governance. Windows and Linux native builds are checked; Mac/iOS device acceptance and Android runtime validation remain pending. Full send/receive and mobile document workflows are still in progress. See the [platform status and remaining work](docs/cross-platform.md) and [everyday workflow](docs/everyday-workflow.md).
+Current implementation: **guided network setup, approved devices, files, inboxes and policy-controlled TCP services**. Shared resources have an access editor for recipients, expiry, limits and additional Genesis Mesh rules. Native file/media pickers support phone sharing; desktop folders remain available. See the [everyday workflow](docs/everyday-workflow.md), [service sharing](docs/service-sharing.md) and [platform status](docs/cross-platform.md). Builds and automated tests are separate from physical-device acceptance; newly implemented mobile workflows still need device validation.
 
 ## Structure
 
-The normal navigation is **Files**, **Devices** and **Settings**. Technical
+The normal navigation is **Shared**, **Devices** and **Settings**. Technical
 enrollment, trust details, activity and connection diagnostics remain under
 Settings → Advanced tools. Existing technical profiles are preserved.
 
@@ -86,7 +86,9 @@ That check uses two endpoints on the same host and passes only the server's rela
 
 Original diagnostic/advanced transport keys remain ephemeral. Guided consumer transport keys persist separately from the node key in the platform vault, allowing saved connections to reopen. Tickets contain public endpoint keys and routing addresses, never private keys; they establish reachability, not Genesis Mesh permission.
 
-The diagnostic protocols accept one message of at most 1,024 bytes per connection. Separate authenticated protocols handle pairing, fixed authority operations, directory pages and collection reads. The preview supports up to 32 saved devices, one selected folder tree (up to 16 levels) and disk-backed downloads up to 1 GiB. Folder navigation and breadcrumbs require the latest client and host; legacy flat protocols remain compatible. There is no shell or general-purpose HTTP proxy. The desktop host follows app lifetime; a persistent service comes later. Phone suspension can interrupt it; guided profiles reopen their saved connection and each operation refreshes trust. Downloads have progress/cancel and native view/save actions. Durable resume, mobile hosting, uploads and recovery remain pending; physical feature acceptance is recorded separately.
+The diagnostic protocols accept one message of at most 1,024 bytes per connection. Separate authenticated protocols handle pairing, fixed authority operations, directory pages, file transfers and TCP services. The interface supports up to 32 saved devices and folder trees up to 16 levels. File sizes use an exact JSON integer ceiling of 2^53−1 bytes; actual capacity depends on available disk, filesystem and policy limits. This ceiling is not a tested maximum transfer size. Existing policies retain their limits until explicitly changed. See the everyday workflow for staging, retry and receipt bounds.
+
+Desktop hosting follows app lifetime. Phone suspension can interrupt it. Service sharing is a loopback TCP tunnel to a configured local service, with a live authority decision and periodic rechecks; it is not a system VPN or remote shell execution API. Mobile folder hosting, unattended desktop service operation and physical acceptance of the new service/file picker workflows remain separate work.
 
 Spike B pins the released `v1.8.1` SDK and runs without Mac or iPhone setup:
 

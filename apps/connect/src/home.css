@@ -591,3 +591,79 @@
   word-break: break-all;
   user-select: all;
 }
+
+.share-dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; background: #15241f; color: #f2f5ed; border: 1px solid #60705d; border-radius: 18px; padding: 24px; }
+.share-dialog::backdrop { background: #000a; }
+.share-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.share-kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 0; }
+.share-dialog label { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; cursor: pointer; }
+.share-kinds label { border: 1px solid #60705d; }
+.share-dialog input[type=checkbox], .share-dialog input[type=radio] { width: 20px; height: 20px; flex: 0 0 auto; margin: 0; }
+.share-dialog fieldset { border: 1px solid #60705d; border-radius: 10px; }
+.share-dialog select { width: 100%; padding: 12px; }
+#share-confirm { width: 100%; }
+#share-problem { color: #ffbdb1; }
+/* Everyday library: actions first, resource management secondary. */
+#view-files > .home-page-heading h1 { font-size: clamp(1.55rem, 3vw, 2.2rem); max-width: 560px; line-height: 1.18; }
+.sharing-shortcuts { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin: 16px 0 26px; }
+.sharing-shortcut { display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: 7px; padding: 18px 14px; background: #263c2c; border: 1px solid #48644b; color: #e9f4e2; min-height: 88px; }
+.sharing-shortcut strong { font-size: .88rem; }
+.sharing-shortcut span { font-size: .73rem; color: #bed0bf; font-weight: 400; line-height: 1.5; }
+.sharing-shortcut:hover { background: #314d37; }
+.library-search-row { display: flex; gap: 10px; align-items: center; }
+.library-search-row input { margin: 0; flex: 1; min-width: 0; }
+.everyday select { background: #111b15; color: #eef5ea; border: 1px solid #455947; border-radius: 9px; min-height: 46px; padding: 10px; font: inherit; font-size: .85rem; }
+.library-search-row select { max-width: 36%; }
+.library-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.library-filters button { padding: 10px 14px; min-height: 44px; border-radius: 24px; background: transparent; color: #bcccbf; border: 1px solid #405243; font-size: .8rem; }
+.library-filters button[aria-pressed=true] { background: #c8ed9d; color: #142014; border-color: #c8ed9d; }
+.space-row.home-card { margin: 0; padding: 18px 20px; }
+.space-row > div { min-width: 0; }
+.space-row h2, .device-row h2 { overflow-wrap: anywhere; }
+.resource-kind { display: block; text-transform: uppercase; letter-spacing: .06em; font-size: .64rem; color: #b3cf9d; margin-bottom: 7px; }
+.resource-options { position: relative; margin-left: auto; }
+.resource-options summary, .device-options summary { cursor: pointer; padding: 12px 8px; min-height: 44px; color: #c8d4c8; font-size: .8rem; }
+.resource-options[open] { display: flex; flex-direction: column; }
+.resource-options button { margin-top: 8px; }
+.file-sort-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.file-sort-row #file-count { margin-left: auto; }
+.everyday button:focus-visible, .everyday summary:focus-visible { outline: 2px solid #c8ed9d; outline-offset: 3px; }
+@media (max-width: 650px) {
+ .sharing-shortcuts { grid-template-columns: 1fr 1fr; margin: 12px 0 20px; gap: 8px; }
+ .sharing-shortcut { min-height: 80px; padding: 14px 12px; }
+ .library-filters { gap: 5px; }
+ .library-filters button { padding: 10px 11px; font-size: .74rem; }
+ .space-row.home-card { padding: 16px; }
+ .home-navigation button { min-height: 48px; }
+ .everyday input, .everyday textarea, .everyday select { font-size: 16px; }
+ .home-page-heading p { line-height: 1.55; }
+ .share-dialog { padding: 18px; }
+}
+.sharing-shortcuts { padding: 0; border: 0; background: transparent; }
+.resource-options { border: 0; padding: 0; }
+#view-files > .home-page-heading { flex-wrap: wrap; gap: 10px; }
+#view-files > .home-page-heading > div { flex: 1 1 230px; }
+@media (max-width: 650px) {
+ #view-files > .home-page-heading > div { flex-basis: 100%; }
+ #view-files > .home-page-heading > button { flex: 1; }
+}
+.share-dialog details { margin: 12px 0; }
+.share-dialog details summary { cursor: pointer; padding: 12px 0; min-height: 44px; }
+#share-service-fields input, #access-expiry { margin-bottom: 12px; }
+#access-extra { font-family: ui-monospace, monospace; font-size: .8rem; }
+#access-problem { color: #ffbdb1; }
+.service-connection { border-top: 1px solid #405243; padding: 14px 0; }
+.service-connection code { display: block; padding: 12px; background: #101613; user-select: all; margin-bottom: 12px; overflow-wrap: anywhere; }
+.service-connection .button-row { flex-wrap: wrap; }
+/* Dialog density stays readable on phones without inherited diagnostic-form spacing. */
+.share-dialog form { display: block; margin: 0; }
+.share-dialog .share-heading h2 { margin: 8px 0; font-size: 1.15rem; }
+.share-dialog p { margin: 10px 0; font-size: .85rem; line-height: 1.55; }
+.share-dialog label { margin: 10px 0 5px; padding: 0; }
+.share-dialog .share-kinds { margin: 14px 0; }
+.share-dialog .share-kinds label { margin: 0; padding: 10px; min-height: 48px; }
+.share-dialog input[type=checkbox], .share-dialog input[type=radio] { min-height: 20px; }
+.share-dialog fieldset { margin: 14px 0; padding: 8px 12px; }
+.share-dialog fieldset label { margin: 0; min-height: 44px; }
+.share-dialog details { padding: 0; }
+.share-dialog #share-confirm, .share-dialog #access-save { position: sticky; bottom: 0; width: 100%; margin-top: 12px; box-shadow: 0 0 0 8px #15241f; }

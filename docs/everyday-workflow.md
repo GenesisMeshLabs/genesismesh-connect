@@ -172,10 +172,9 @@ for private connections away from home, is planned.
 ## Share and browse
 
 A shared folder is a **Space**. Any Windows, macOS or Linux device of the
-network can share one, not only the network computer: choose **Files → Share
+network can share one, not only the network computer: choose **Shared → Share
 a folder** and select the folder with the native picker. The Space takes the
-folder's name and, for now, is shared with every other device of the network
-(choosing devices comes next). A device shares up to 16 Spaces; a network
+folder's name; select the devices allowed to use it before sharing. A device shares up to 16 Spaces; a network
 holds up to 64.
 
 The network computer issues every Space. A device asks it over the
@@ -187,7 +186,7 @@ computer itself), and only it can change or stop its Spaces. The network
 computer keeps the list of Spaces (name, sharing device, devices) in its owner
 directory, so recovery files include it.
 
-**Files** lists the Spaces on your network: this device's, marked **Shared
+**Shared** lists the Spaces on your network: this device's, marked **Shared
 from this device**, and each Space another device shares with this one, by
 the sharing device's name, even while that device is off. Choose **Open** to
 browse it; the files come straight from the sharing device, which asks the
@@ -204,7 +203,7 @@ network computer refreshes every 30 seconds, so a busy network computer never
 holds up their file operations. There are no remote path fields in the normal
 UI.
 
-The everyday interface has Files, Devices and Settings, with bottom navigation
+The everyday interface has Shared, Devices and Settings, with bottom navigation
 on phones. Choose a device by name to browse its files. Technical controls and
 error details stay in Settings > Advanced.
 
@@ -215,8 +214,8 @@ policy always receives the **full file size**, never the window size. Signed
 receipts and window hashes are verified, and the whole-file SHA-256 must match
 before native viewing/export. No local paths or bulk bytes cross frontend IPC.
 
-Current bounds: up to 16 Spaces per device, up to 16 subfolder levels, files up to
-1 GiB, at most 512 entries scanned per folder, pages of 32, one active transfer
+Current bounds: up to 16 Spaces per device, up to 16 subfolder levels, file sizes up to
+2^53−1 bytes (the exact JSON integer ceiling), at most 512 entries scanned per folder, pages of 32, one active transfer
 per Space,
 bounded cache/receipt storage. Links, junctions, unsafe
 names and oversized files are omitted; source versions are checked on each
@@ -247,7 +246,7 @@ snapshot it already has of the same file for the same device, and makes a
 fresh one only when it has none. A refusal without a token ends the
 download. An unfinished download keeps what was verified, with a small record
 of it, in its own folder of the app's private cache: after the app restarts,
-or when the sharing device stayed away, Files lists it under **Unfinished
+or when the sharing device stayed away, Shared lists it under **Unfinished
 downloads**, and **Continue** (or opening the same file again) carries on
 from there, still checked against the whole file's digest at the end. Going
 back from a download keeps it to continue later; **Cancel** and **Discard**
@@ -258,7 +257,7 @@ not kept. A download the sharing device refuses stays listed, since the
 refusal may pass; a file with a new version is another download. Mobile
 folder sharing remains pending.
 
-Existing 64-KiB permissions stay unchanged. **Share a folder again** and select
+Existing size limits stay unchanged, including older 64-KiB and 1-GiB grants. **Share a folder again** and select
 the folder to issue a new larger-file permission. Both apps need the new build
 for nested browsing: the new Browse ALPN and nested Download v2 have distinct
 proof/exporter domains. Legacy flat list/catalog/download remains available for
@@ -281,13 +280,13 @@ unshared.
 ## Send files
 
 A device can receive files into an **inbox**: on a Windows, macOS or Linux
-device, choose **Files → Receive files** and pick the folder files should land
+device, choose **Shared → Receive files** and pick the folder files should land
 in. The inbox is a Space of its own kind: the network computer issues a
 policy that lets the chosen devices (for now, every other device) write into
 it, and nothing else. An inbox is never browsed, and a shared folder never
 accepts files. **Stop receiving** works like stopping any Space.
 
-Other devices see **Send files to Home PC** in Files; **Send a file** opens
+Other devices see **Send files to Home PC** in Shared; **Send a file** opens
 the native picker and shows progress, then the name the file was saved under.
 The receiving device decides every step:
 
@@ -304,9 +303,9 @@ The receiving device decides every step:
   the name the file was saved under. A file that changes on the sending
   device while it is sent stops at the next window.
 
-Current bounds: files up to 1 GiB, windows of 64 KiB to 32 MiB sized to the
-connection, up to four unfinished incoming files and 2 GiB of staging per
-inbox, and an hour before an abandoned file is dropped. Windows from
+Current bounds: files up to the exact JSON integer ceiling (2^53−1 bytes),
+windows of 64 KiB to 32 MiB sized to the connection, up to four unfinished
+incoming files with space reserved against available disk, and an hour before an abandoned file is dropped. Windows from
 several senders take turns; one that waits more than ten seconds, finds
 the inbox full (before its budget or an authority request is spent), goes over
 its rate, or whose decision the device could not get from its network computer
@@ -355,9 +354,10 @@ sender, inbox, name, size and digest), for example after the sending app
 restarted, continues the file already there instead of starting another; a
 transfer the device no longer has is answered with "start again", which the
 app does once. After the receiving device restarts, the whole-file hash is
-worked out again from the staged bytes before the file is saved. Sending
-from phones, and phones receiving files, need the phone builds' file pickers
-and are not available yet.
+worked out again from the staged bytes before the file is saved. Native file/media picking and phone inboxes are implemented. Share a document
+or photo as a private read-only copy, send a copy to an inbox, or create a
+phone inbox. Physical acceptance of these new picker and export flows remains
+pending. Phone folder-tree hosting is not supported.
 
 ## Verification boundary
 
@@ -368,3 +368,32 @@ identities on one host. Windows UI setup uses a disposable network and bundled
 runtime. iOS compile/archive/install results and physical Windows/iPhone pairing,
 Keychain persistence, browsing and lifecycle tests must be recorded separately
 in [two-device acceptance](two-device-acceptance.md).
+
+## Disconnect or leave a network
+
+In **Settings → This device’s connection**, choose **Disconnect** to pause this device. Its identity, paired devices and folders stay saved. It stays disconnected after restarting Connect; **Reconnect** enables connections again. Disconnecting the network computer also pauses the authority connection its other devices use. Finish or cancel an active file transfer before either action.
+
+On a member device, **Leave network** asks for confirmation, stops its connections, removes its local identity and trust records, and clears Connect’s in-app downloads, including unfinished ones. It returns to Welcome so you can use a new invitation. Shared folders and files saved outside Connect are not deleted. This works while the network computer is offline; it does not revoke the old membership at the authority. The network owner can remove that old entry from Devices separately.
+
+The network computer cannot leave through this action: its authority and other devices must be preserved. Use Disconnect there. Interrupted local cleanup keeps a durable marker, refuses to reuse the old identity, and can be retried; unlocking the device’s credential store may be necessary.
+
+
+## Shared library and larger files
+
+**Shared** combines files, inboxes and apps/services. Search by resource or
+device name, filter by device, or choose **Apps & services**, **From devices**,
+**Shared by me** or **Inboxes**. Device cards can open that device's shared items.
+Use **Manage** on your own resources to change access or stop sharing. See
+[service sharing and access policies](service-sharing.md).
+
+The previous 1-GiB implementation cap is removed. Free space, filesystem limits
+and each resource's policy still apply. Staging uses bounded buffers and leaves
+a disk reserve of 5%, clamped to 64 MiB–1 GiB. Downloads need room for snapshots
+on the host and staging on the receiving device; mobile picking can require an
+additional private copy. Whole-file size is checked before snapshot preparation,
+then the final read decision binds its hash. Custom policies that require a hash
+must account for the preparation phase. Snapshot preparation can be retried for
+up to 30 minutes while the app runs, with cancellation available. The exact
+integer ceiling is not a promise of petabyte-scale transfers: automated checks
+cover a real snapshot above 1 GiB and sparse-file offsets above 4 GiB; physical
+large transfers remain a separate acceptance test.

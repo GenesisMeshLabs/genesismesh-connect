@@ -48,9 +48,10 @@ are under the ignored `temp/` directory.
 
 Normal pairing still starts on the network computer. It can add multiple peers.
 New peers receive a host-capable enrollment, which alone grants no file access.
-The ordinary folder picker and permission-creation workflow currently run on the
-authority computer. Remote hosting is implemented and integration-tested in the
-Rust core; its guided approval/import workflow is the next application stage.
+Desktop members can share folders and manage their own resources through the
+fixed authority bridge. Files, media copies and inboxes have native mobile
+picker paths. Shared TCP services and access-policy editing use the same device
+identity and authority decision boundary; see [service sharing](service-sharing.md).
 
 ## Current platform evidence
 
@@ -58,8 +59,8 @@ Rust core; its guided approval/import workflow is the next application stage.
 | --- | --- | --- |
 | Windows | Native app, DPAPI, bundled owner, device picker, sharing | Builds and native startup checked. Some newly compiled test harnesses are blocked by Application Control 4551. The complete Windows gate is not green. |
 | Linux | Native app, Secret Service, bundled owner, desktop pickers | Native compilation/build, real keyring, owner restart and integration tests run in Ubuntu 24.04 WSL. A general desktop distribution/installer and physical cross-device matrix remain pending. |
-| macOS | Keychain adapter, native authority packaging and desktop picker paths | Earlier source built a native app/authority and passed 36 core tests. Bundle-signature verification and interactive Keychain checks remain pending. SSH is currently unavailable for the latest UX/download update. |
-| Android | Keystore adapter, initialization script, join scheme, official icons, backup exclusion | Native Mac Rust/Gradle build passed. Debug APK signature/manifest verified, installed and launched on Samsung SM-A176B (API 36) through Windows USB. Android enrollment, persistence and file-workflow acceptance remain pending. Earlier Windows Android compilation was blocked by Application Control 4551; its policy was not changed. |
+| macOS | Keychain adapter, native authority packaging and desktop picker paths | Earlier source built a native app/authority and passed 36 core tests. Bundle-signature verification and interactive Keychain checks remain pending. The latest sharing/service source passes 69 core tests, 15 app tests, the real-authority service integration and Clippy on the Mac. Interactive validation of this update remains pending. |
+| Android | Keystore adapter, initialization script, join scheme, official icons, backup exclusion | Earlier debug APK installed and launched on Samsung SM-A176B (API 36) through Windows USB. The latest sharing/services update builds an ARM64 debug APK on the Mac; installation and service acceptance for this update remain pending. Android enrollment, persistence and file-workflow acceptance remain pending. Earlier Windows Android compilation was blocked by Application Control 4551; its policy was not changed. |
 | iOS | Existing Tauri shell and device-only Keychain format retained | Build 6 with subfolder navigation and nested downloads is signed, installed and launched. Signature, profile and 18 icon sizes verified. User confirmed the retained network and build 6 folders appearing/opening on the physical iPhone. Nested download/export acceptance remains pending. |
 
 ## Build hosts
@@ -100,18 +101,18 @@ selected signing team and handle account/keychain/device prompts locally.
 
 ## Remaining product work
 
-Full feature parity is not complete. The next stages are peer-to-peer contact
-approval between two enrolled clients, guided remote sharing approval, native
-Android/iOS document providers for hosting, multiple shared collections,
-send/receive, durable resume, and installers. Latest source adds disk-backed
-downloads, progress/cancel and native view/save actions; mobile build/device
-acceptance for this update remains pending.
+Full feature parity is not complete. Files/media copies, inbox send/receive,
+download resume, multiple resources, service tunnels and resource-policy editing
+are implemented. Mobile folder-tree hosting, broader service compatibility,
+installers, and physical acceptance of the latest picker/service workflows remain
+pending. Windows native rebuilds are blocked by Application Control 4551. The
+latest iOS Rust library compiles; signed installation remains a separate gate.
 Every device should eventually offer both sides of that workflow. Mobile
 foreground/background rules remain platform constraints; no always-on iPhone
 service, transparent VPN, or authority-on-every-phone claim is made.
 
 The consumer browser serves the selected folder and its subfolders, to depth 16,
-with files up to 1 GiB, 32 entries per page and at most 512 scanned entries per
+with policy/disk-limited files up to the exact JSON integer ceiling, 32 entries per page and at most 512 scanned entries per
 folder. Every path component rejects links/junctions. Nested downloads bind their
 directory to the signed request and token. Legacy 64-KiB list/read
 remains compatible. Re-share explicitly to issue a larger-file permission. No upload/write

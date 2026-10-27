@@ -9,7 +9,7 @@
     <meta name="theme-color" content="#101613" />
     <title>Genesis Mesh Connect</title>
     <link rel="icon" type="image/png" href="/brand/favicon.png" />
-    <script type="module" src="/src/main.ts" defer></script>
+    <script type="module" src="/src/startup.ts" defer></script>
   </head>
   <body>
     <div id="everyday" class="everyday">
@@ -26,7 +26,21 @@
         >
       </header>
       <main class="home-main">
+        <section id="startup" class="home-card setup-card" role="status">
+          <h1 id="startup-title">Opening your network…</h1>
+          <p id="startup-detail">Your saved devices and folders will appear here.</p>
+          <button id="startup-retry" type="button" hidden>Try again</button>
+        </section>
         <div id="home-message" class="home-message" role="status" hidden></div>
+        <div id="disconnected-banner" class="home-message" role="status" hidden>
+          This device is disconnected. Your network is saved.
+          <button id="reconnect-banner" class="secondary">Reconnect</button>
+        </div>
+        <section id="leave-retry" class="home-card" hidden>
+          <h2>Finish leaving this network</h2>
+          <p>Your old connection has stopped. Unlock this device and retry to finish removing its saved setup.</p>
+          <button id="retry-leave-network" class="secondary">Retry leaving network</button>
+        </section>
         <div
           id="home-error"
           class="home-message home-error"
@@ -149,23 +163,20 @@
         </section>
         <div id="workspace" hidden>
           <nav class="home-navigation" aria-label="Main navigation">
-            <button data-view="files" aria-pressed="true">Files</button
+            <button data-view="files" aria-pressed="true">Shared</button
             ><button data-view="devices" aria-pressed="false">Devices</button
             ><button data-view="settings" aria-pressed="false">Settings</button>
           </nav>
           <div id="view-files">
             <div class="home-page-heading">
               <div>
-                <h1>Files</h1>
+                <h1>Your shared space</h1>
                 <p id="files-description">
                   Choose a folder on your computer to make it available to your
                   phone.
                 </p>
               </div>
-              <button id="share-button" hidden>Share a folder</button
-              ><button id="receive-button" class="secondary" hidden>
-                Receive files
-              </button
+              <button id="share-button" hidden>Share</button
               ><button id="cancel-send" class="secondary" hidden>
                 Cancel sending
               </button
@@ -173,6 +184,58 @@
                 Refresh files
               </button>
             </div>
+            <section id="sharing-shortcuts" class="sharing-shortcuts" aria-label="Sharing shortcuts"></section>
+            <div id="library-tools" class="library-tools">
+              <div class="library-search-row">
+                <label for="space-search" class="sr-only">Search shared items and devices</label>
+                <input id="space-search" type="search" placeholder="Search shared items…" />
+                <label for="space-device" class="sr-only">Filter by device</label>
+                <select id="space-device"><option value="">All devices</option></select>
+              </div>
+              <div class="library-filters" role="group" aria-label="Filter shared items">
+                <button data-library-filter="all" aria-pressed="true">All</button>
+                <button data-library-filter="remote" aria-pressed="false">From devices</button>
+                <button data-library-filter="mine" aria-pressed="false">Shared by me</button>
+                <button data-library-filter="inbox" aria-pressed="false">Inboxes</button>
+                <button data-library-filter="services" aria-pressed="false">Apps & services</button>
+              </div>
+              <p id="library-count" class="home-muted" role="status"></p>
+              <div id="library-no-matches" class="home-empty" hidden><h2>Nothing here yet</h2><p id="library-empty-hint"></p><button id="clear-library-filters" class="secondary">Show all shared items</button></div>
+            </div>
+            <dialog id="share-dialog" class="share-dialog">
+              <form id="share-form">
+                <div class="share-heading"><h2>What would you like to share?</h2><button type="button" id="share-close" class="text-button" aria-label="Close sharing">Close</button></div>
+                <p>Choose something from this device, then who can use it.</p>
+                <div id="share-kinds" class="share-kinds" role="radiogroup" aria-label="What to share"></div>
+                <div id="share-service-fields" hidden>
+                  <label for="service-preset">What is running on this device?</label>
+                  <select id="service-preset"><option value="web:8080:My web app">Web app</option><option value="web:8123:Home Assistant">Home Assistant</option><option value="web:8096:Jellyfin">Jellyfin</option><option value="web:32400:Plex">Plex</option><option value="web:3000:Development site">Development site</option><option value="ssh:22:SSH">SSH</option><option value="tcp:0:TCP service">Custom TCP service</option></select>
+                  <label for="service-name">Name others will see</label><input id="service-name" maxlength="64" placeholder="My web app" />
+                  <details><summary>Connection details</summary><p class="home-muted">Connect forwards to this device’s local port. Enable the app or service first. Web apps use HTTP.</p><label for="service-port">Local port</label><input id="service-port" type="number" min="1" max="65535" value="8080" /></details>
+                  <p class="home-muted">Keep Connect and the shared app running. Phones can host only while awake with Connect open.</p>
+                </div>
+                <fieldset id="share-recipients"><legend>Who can access it?</legend><div id="share-device-list"></div></fieldset>
+                <label id="share-inbox-label" for="share-inbox" hidden>Send to</label><select id="share-inbox" hidden></select>
+                <p id="share-description" class="home-muted"></p>
+                <p id="share-problem" role="alert" hidden></p>
+                <button id="share-confirm" type="submit">Choose file and share</button>
+              </form>
+            </dialog>
+            <section id="open-services" class="home-card" hidden><h2>Open connections</h2><p class="home-muted">Available to apps on this device for up to one hour. Close a connection when finished.</p><div id="open-service-list"></div></section>
+            <dialog id="access-dialog" class="share-dialog">
+              <form id="access-form">
+                <div class="share-heading"><h2 id="access-title">Manage access</h2><button id="access-close" type="button" class="text-button">Close</button></div>
+                <p>These settings update your network’s policy for this shared item.</p>
+                <fieldset><legend>Allowed devices</legend><div id="access-devices"></div></fieldset>
+                <label for="access-expiry">Access expires</label><input id="access-expiry" type="datetime-local" /><p class="home-muted">Leave empty for ongoing access. Times use this device’s time zone.</p>
+                <details><summary>Limits and additional rules</summary>
+                  <label for="access-size">Maximum bytes per file or service connection</label><select id="access-size"><option value="9007199254740991">No extra size limit</option><option value="10485760">10 MB</option><option value="104857600">100 MB</option><option value="1073741824">1 GB</option><option value="10737418240">10 GB</option></select>
+                  <div id="access-duration-field"><label for="access-duration">Maximum service session</label><select id="access-duration"><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="3600">1 hour</option></select></div>
+                  <label for="access-extra">Additional Genesis Mesh gates (JSON)</label><textarea id="access-extra" rows="6" spellcheck="false"></textarea><p class="home-muted">Existing rules are preserved. The authority validates any changes. Resource and allowed-device gates are managed above.</p>
+                </details>
+                <p id="access-version" class="home-muted"></p><p id="access-problem" role="alert" hidden></p><button id="access-save" type="submit">Save access policy</button>
+              </form>
+            </dialog>
             <div id="files-empty" class="home-empty">
               <span aria-hidden="true">▤</span>
               <h2>A place for your files.</h2>
@@ -191,7 +254,7 @@
             <div id="space-list" class="space-list" role="list"></div>
             <section id="remote-folder" class="home-card" hidden>
               <button id="all-spaces" class="text-button" hidden>
-                ← All shared folders
+                ← All shared items
               </button>
               <div class="folder-heading">
                 <span class="folder-symbol" aria-hidden="true">▤</span>
@@ -204,8 +267,9 @@
               ><input
                 id="file-search"
                 type="search"
-                placeholder="Search this folder…"
+                placeholder="Search loaded files…"
               />
+              <div class="file-sort-row"><label for="file-sort">Sort</label><select id="file-sort"><option value="name">Name</option><option value="size">Largest first</option></select><span id="file-count" class="home-muted"></span></div>
               <div id="file-list" class="file-list" role="list"></div>
               <button id="more-files" class="secondary" hidden>
                 Show more files
@@ -243,9 +307,7 @@
             </section>
             <div id="saved-devices" aria-label="Saved devices"></div>
             <p id="devices-note" class="home-muted" hidden>
-              Your network computer adds and removes devices: in its Connect
-              app, or on a server with
-              <code>sudo genesismesh-connect remove "Device name"</code>.
+              To add or remove a device, open Devices on your network computer.
             </p>
           </div>
           <div id="view-settings" hidden>
@@ -316,6 +378,16 @@
                 >
                 <button id="save-device-connection" class="secondary">Save</button>
               </div>
+            </section>
+            <section id="network-actions" class="home-card">
+              <h2>This device’s connection</h2>
+              <p id="network-action-description">Disconnect to pause connections. Your network and shared folders stay saved.</p>
+              <button id="toggle-network" class="secondary">Disconnect</button>
+              <div id="leave-network-option" hidden>
+                <p>Leave to remove this device’s setup and in-app downloads. You’ll need a new invitation to join again.</p>
+                <button id="leave-network" class="secondary">Leave network</button>
+              </div>
+              <p id="owner-leave-note" class="home-muted" hidden>This computer runs your network. Leaving here would affect your other devices; use Disconnect to pause it.</p>
             </section>
             <section class="home-card">
               <h2>Sharing</h2>

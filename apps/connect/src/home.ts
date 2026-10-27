@@ -1,9 +1,14 @@
+import { setupServices } from "./services";
+import { visibleSpaces, sortedFiles, type LibraryFilter } from "./library-state";
+import { setupSharing } from "./sharing";
+import { sharingChoices } from "./sharing-state";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import QRCode from "qrcode";
 import { el, input } from "./ui";
 import {
   primaryScreen,
+  isService,
   filterFiles,
   formatBytes,
   folderCrumbs,
@@ -19,6 +24,7 @@ import {
 } from "./home-state";
 
 let current: HomeStatus | null = null;
+let libraryFilter: LibraryFilter = "all";
 let statusProblem: string | null = null;
 let screen = "welcome",
   busy = false,
@@ -62,6 +68,7 @@ function problem(value: string) {
   visible("home-error", !!value);
 }
 function show(next: string) {
+  visible("startup", false);
   screen = next;
   for (const name of [
     "welcome",
@@ -104,8 +111,19 @@ function render(status: HomeStatus) {
   const oldPeer = current?.peer;
   const oldDevice = current?.selected_device;
   current = status;
+  visible("disconnected-banner", status.disconnected);
+  visible("leave-retry", status.leaving);
+  visible("leave-network-option", status.can_leave);
+  visible("owner-leave-note", !status.can_leave && status.owner);
+  if (!busy) text("toggle-network", status.disconnected ? "Reconnect" : "Disconnect");
+  text("network-action-description", status.disconnected
+    ? "Disconnected until you tap Reconnect, even after reopening the app."
+    : status.owner ? "Disconnecting this computer pauses access for your other devices. Your setup stays saved."
+      : "Disconnect to pause connections. Your network and shared folders stay saved.");
   const next = primaryScreen(status);
-  if (next !== "welcome" || !["create-screen", "join-screen", "restore-screen"].includes(screen))
+  if (status.leaving) {
+    show("leaving");
+  } else if (next !== "welcome" || !["create-screen", "join-screen", "restore-screen"].includes(screen))
     show(next === "joining" ? "joining-screen" : next);
   if (status.joining) text("joining-progress", status.joining);
   text("home-network", status.network || "Your private network");
@@ -126,15 +144,12 @@ function render(status: HomeStatus) {
   renderConnection(status);
   visible("recovery-card", status.owner && status.configured);
   visible("add-device-button", status.owner && status.devices.length < 32);
-  visible("share-button", status.can_share && status.devices.length > 0);
-  visible(
-    "receive-button",
-    status.can_share && status.devices.length > 0 && !status.spaces.some((s) => s.own && s.kind === "inbox"),
-  );
+  visible("share-button", !status.disconnected && status.devices.length > 0 && sharingChoices(status).length > 0);
   // Without listed folders, a device browses the selected device's one folder.
   const legacy = !status.spaces.length && !!status.peer && !status.owner;
-  visible("browse-button", !!currentSpace || legacy);
-  if (!busy) text("browse-button", currentSpace || page ? "Refresh" : `Files on ${status.peer || "another device"}`);
+  visible("browse-button", !status.disconnected);
+  if (!busy) text("browse-button", "Refresh");
+  renderShortcuts(status);
   renderSpaces(status);
   visible("paired-device", !!status.peer);
   text("peer-name", status.peer || "");
@@ -157,9 +172,9 @@ function render(status: HomeStatus) {
       ? "Ready to connect · identity checked on connection"
       : "Connection paused · keep both apps open",
   );
-  visible("files-empty", !status.spaces.length && !page);
+
   visible("files-add-device", status.owner && !status.peer);
-  text("files-description", "Shared folders on your network");
+  text("files-description", status.disconnected ? "Reconnect to use your shared items." : "Files, apps and services across your devices.");
   text("files-empty-description", legacy ? "Refresh to see your shared files." : filesEmptyText(status));
   visible("approval-card", !!status.request);
   approval = status.request?.id || "";
@@ -180,7 +195,7 @@ function render(status: HomeStatus) {
     );
   }
   if (!oldPeer && status.peer) {
-    if (!status.owner && !status.spaces.length && !busy) setTimeout(() => void browse(false), 0);
+    if (!status.owner && !status.disconnected && !status.spaces.length && !busy) setTimeout(() => void browse(false), 0);
     if (hadStatus) message(`${status.peer} added.`);
     visible("pair-card", false);
     selectView("files");
@@ -229,14 +244,15 @@ function renderDevices(status: HomeStatus) {
         : "Your device";
     details.append(name, detail);
     const choose = document.createElement("button");
-    choose.textContent = "Open files";
+    choose.textContent = "View shared items";
     choose.className = "secondary";
     choose.addEventListener("click", () => void run(choose, async () => {
       if (!device.selected) await invoke("select_device", { id: device.id });
-      currentSpace = null;
+      resetLibrary();
       await refresh();
       selectView("files");
-      await loadFiles(false);
+      el<HTMLSelectElement>("space-device").value = device.id;
+      if (current) renderSpaces(current);
       message("");
     }));
     row.append(details, choose);
@@ -283,6 +299,40 @@ async function refresh() {
   }
 }
 el("choose-create").addEventListener("click", () => show("create-screen"));
+
+async function changeConnection(button: HTMLButtonElement) {
+  const reconnect = !!current?.disconnected;
+  if (!reconnect && current?.owner && !window.confirm("Disconnect this network computer? Your other devices will lose access until you reconnect it.")) return;
+  await run(button, async () => {
+    await invoke(reconnect ? "reconnect_network" : "disconnect_network");
+    message(reconnect ? "Reconnection enabled. Checking your network…" : "Disconnected. Tap Reconnect whenever you’re ready.");
+  });
+  // run restores a temporary button label; reflect the final state afterward.
+  if (current) text("toggle-network", current.disconnected ? "Reconnect" : "Disconnect");
+}
+el("toggle-network").addEventListener("click", () => void changeConnection(el("toggle-network")));
+el("reconnect-banner").addEventListener("click", () => void changeConnection(el("reconnect-banner")));
+
+async function leaveNetwork(button: HTMLButtonElement) {
+  if (!current?.can_leave) return;
+  if (!current.leaving && !window.confirm("Leave this network on this device? Its saved identity and in-app downloads will be removed. Files you saved elsewhere and your other devices stay unchanged. To join again, get a new invitation. The network computer may still list this old device until its owner removes it.")) return;
+  await run(button, async () => {
+    await invoke("leave_network");
+    currentSpace = null; page = null; files = []; folderPath = []; downloadId = "";
+    input("join-link").value = "";
+    input("file-search").value = "";
+    el("file-list").replaceChildren();
+    visible("file-preview", false); visible("remote-folder", false);
+    visible("pair-card", false); visible("approval-card", false);
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith("genesismesh.connect.peers.v1:")) localStorage.removeItem(key);
+    }
+    selectView("files");
+    message("You’ve left the network on this device. Use a new invitation to join again.");
+  });
+}
+el("leave-network").addEventListener("click", () => void leaveNetwork(el("leave-network")));
+el("retry-leave-network").addEventListener("click", () => void leaveNetwork(el("retry-leave-network")));
 el("choose-join").addEventListener("click", () => show("join-screen"));
 el("choose-restore").addEventListener("click", () => show("restore-screen"));
 el("restore-form").addEventListener("submit", (event) => {
@@ -334,7 +384,7 @@ for (const button of document.querySelectorAll<HTMLElement>("[data-view]"))
     {
       const next = button.dataset.view || "files";
       selectView(next);
-      if (next === "files" && current?.peer && !page && !busy) void browse(false);
+      if (next === "files" && current?.peer && !current.spaces.length && !page && !busy) void browse(false);
       // Devices that joined since the last refresh appear without waiting.
       if (next === "devices" && current?.configured)
         void invoke("check_network").then(refresh, () => undefined);
@@ -439,23 +489,59 @@ el("reject-device").addEventListener(
       );
     }),
 );
-el("share-button").addEventListener(
-  "click",
-  () =>
-    void run(el<HTMLButtonElement>("share-button"), async () => {
-      if (await invoke<boolean>("share_folder"))
-        message("Folder shared with your other devices. They can browse it now.");
-    }),
-);
+function renderShortcuts(status: HomeStatus) {
+  const node = el("sharing-shortcuts");
+  const choices = status.devices.length ? sharingChoices(status) : [];
+  const stamp = JSON.stringify([choices, status.disconnected]);
+  if (node.dataset.state === stamp) return;
+  node.dataset.state = stamp; node.replaceChildren();
+  const hints = { service: "App or service", file: "Share a document", media: "Photos & videos", folder: "Share a folder", inbox: "Receive files", send: "Send a copy" };
+  for (const choice of choices) {
+    const button = document.createElement("button"); button.className = "sharing-shortcut";
+    button.dataset.shareKind = choice.kind; button.disabled = status.disconnected;
+    const title = document.createElement("strong"); title.textContent = hints[choice.kind];
+    const detail = document.createElement("span"); detail.textContent = choice.kind === "inbox" ? "Let devices send to you" : choice.kind === "send" ? "To another device’s inbox" : "Choose who gets access";
+    button.append(title, detail); node.append(button);
+  }
+}
+function resetLibrary() {
+  currentSpace = null; page = null; files = []; folderPath = [];
+  visible("remote-folder", false); visible("file-preview", false);
+  input("space-search").value = ""; el<HTMLSelectElement>("space-device").value = "";
+  libraryFilter = "all";
+}
+input("space-search").addEventListener("input", () => { if (current) renderSpaces(current); });
+el("space-device").addEventListener("change", () => { if (current) renderSpaces(current); });
+el("clear-library-filters").addEventListener("click", () => { resetLibrary(); if (current) render(current); });
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-library-filter]")) {
+  button.addEventListener("click", () => { libraryFilter = button.dataset.libraryFilter as LibraryFilter; if (current) renderSpaces(current); });
+}
 function renderSpaces(status: HomeStatus) {
   const list = el("space-list");
   visible("space-list", !currentSpace);
-  // Polling must not replace a focused button every two seconds.
-  const stamp = JSON.stringify(status.spaces);
+  visible("library-tools", !currentSpace);
+  const select = el<HTMLSelectElement>("space-device");
+  const hosts = new Map(status.devices.map(d => [d.id, d.name]));
+  for (const space of status.spaces) hosts.set(space.host_id, space.own ? "This device" : space.host);
+  const hostStamp = JSON.stringify([...hosts]);
+  if (select.dataset.state !== hostStamp) {
+    const value = select.value; select.replaceChildren(new Option("All devices", ""));
+    for (const [id, name] of hosts) select.add(new Option(name, id));
+    select.value = hosts.has(value) ? value : ""; select.dataset.state = hostStamp;
+  }
+  const filtered = visibleSpaces(status.spaces, input("space-search").value, libraryFilter, select.value);
+  const filteredView = !!input("space-search").value || !!select.value || libraryFilter !== "all";
+  text("library-count", `${filtered.length} shared ${filtered.length === 1 ? "item" : "items"}`);
+  visible("library-no-matches", !currentSpace && !filtered.length && filteredView);
+  text("library-empty-hint", input("space-search").value ? "Try another name or clear your filters." : libraryFilter === "mine" ? "Use a sharing shortcut above to share from this device." : "Nothing is shared in this view. On the other device, choose Share and select this device.");
+  visible("files-empty", !currentSpace && !status.spaces.length && !filteredView && !page);
+  for (const button of document.querySelectorAll<HTMLElement>("[data-library-filter]")) button.setAttribute("aria-pressed", String(button.dataset.libraryFilter === libraryFilter));
+  // Preserve keyboard focus during status polling.
+  const stamp = JSON.stringify([filtered, status.disconnected]);
   if (list.dataset.state === stamp) return;
   list.dataset.state = stamp;
   list.replaceChildren();
-  for (const space of status.spaces) {
+  for (const space of filtered) {
     const row = document.createElement("section");
     row.className = "home-card space-row";
     row.setAttribute("role", "listitem");
@@ -468,6 +554,9 @@ function renderSpaces(status: HomeStatus) {
     const action = document.createElement("button");
     action.className = "secondary";
     if (space.own && space.kind === "inbox") {
+      const browse = document.createElement("button"); browse.textContent = "Open inbox"; browse.disabled = status.disconnected;
+      browse.addEventListener("click", () => void run(browse, () => openSpace(space)));
+      details.append(browse);
       action.textContent = "Stop receiving";
       action.setAttribute("aria-label", "Stop receiving files");
       action.addEventListener("click", () => void run(action, async () => {
@@ -483,7 +572,7 @@ function renderSpaces(status: HomeStatus) {
       action.textContent = "Stop sharing";
       action.setAttribute("aria-label", `Stop sharing ${space.name}`);
       action.addEventListener("click", () => void run(action, async () => {
-        if (!window.confirm(`Stop sharing ${space.name}? Your other devices can no longer open it. Files they already saved stay on them.`)) return;
+        if (!window.confirm(isService(space) ? `Stop sharing ${space.name}? Its connections will close and other devices can no longer open it.` : `Stop sharing ${space.name}? Your other devices can no longer open it. Files they already saved stay on them.`)) return;
         const confirmed = await invoke<boolean>("stop_sharing", { id: space.id });
         message(
           confirmed
@@ -491,12 +580,27 @@ function renderSpaces(status: HomeStatus) {
             : `${space.name} is no longer shared from this device. Your network computer will update its list when it can be reached.`,
         );
       }));
+    } else if (isService(space)) {
+      action.textContent = space.kind === "web" ? "Open app" : "Connect";
+      action.addEventListener("click", () => void run(action, () => services.open(space)));
     } else {
       action.textContent = "Open";
       action.setAttribute("aria-label", `Open ${space.name} on ${space.host}`);
       action.addEventListener("click", () => void run(action, () => openSpace(space)));
     }
-    row.append(details, action);
+    action.disabled = status.disconnected;
+    const badge = document.createElement("span"); badge.className = "resource-kind";
+    badge.textContent = isService(space) ? (space.kind === "web" ? "Web app" : space.kind === "ssh" ? "SSH" : "TCP service") : space.kind === "inbox" ? "Inbox" : space.own ? "Shared by you" : "Shared items";
+    details.prepend(badge);
+    row.append(details);
+    if (space.own) {
+      const options = document.createElement("details"), summary = document.createElement("summary");
+      options.className = "resource-options"; summary.textContent = "Manage";
+      summary.setAttribute("aria-label", `Manage ${space.name}`);
+      const access = document.createElement("button"); access.className = "secondary"; access.textContent = "Manage access"; access.disabled = status.disconnected;
+      access.addEventListener("click", () => void run(access, () => services.access(space)));
+      options.append(summary, access, action); row.append(options);
+    } else row.append(action);
     list.append(row);
   }
 }
@@ -525,21 +629,18 @@ async function sendTo(space: HomeSpace) {
 el("cancel-send").addEventListener("click", () => {
   if (sendId) void invoke("cancel_send", { id: sendId }).catch((error) => problem(String(error)));
 });
-el("receive-button").addEventListener(
-  "click",
-  () =>
-    void run(el<HTMLButtonElement>("receive-button"), async () => {
-      if (await invoke<boolean>("receive_files"))
-        message("Your other devices can now send files to this computer.");
-    }),
-);
 async function openSpace(space: HomeSpace) {
+  const previous = { currentSpace, folderPath, page, files };
   currentSpace = space;
   folderPath = [];
   page = null;
   files = [];
   input("file-search").value = "";
-  await loadFiles(false);
+  try { await loadFiles(false); }
+  catch (error) {
+    ({ currentSpace, folderPath, page, files } = previous);
+    throw error;
+  }
 }
 el("all-spaces").addEventListener("click", () => {
   currentSpace = null;
@@ -552,7 +653,9 @@ el("all-spaces").addEventListener("click", () => {
 function renderFiles() {
   const list = el("file-list");
   list.replaceChildren();
-  for (const file of filterFiles(files, input("file-search").value)) {
+  const shown = sortedFiles(filterFiles(files, input("file-search").value), el<HTMLSelectElement>("file-sort").value);
+  text("file-count", `${shown.length} shown${page?.next ? " · Load more below" : ""}`);
+  for (const file of shown) {
     const row = document.createElement("button");
     row.className = "file-row";
     row.setAttribute("role", "listitem");
@@ -594,7 +697,7 @@ function renderBreadcrumbs() {
   });
 }
 async function loadFiles(more: boolean, directory = folderPath) {
-  const result = await invoke<FilePage>("browse_files", {
+  const result = await invoke<FilePage>(currentSpace?.own && currentSpace.kind === "inbox" ? "browse_received" : "browse_files", {
     after: more ? page?.next : null,
     directory,
     space: currentSpace?.id ?? null,
@@ -615,14 +718,19 @@ async function loadFiles(more: boolean, directory = folderPath) {
   );
   visible("all-spaces", !!currentSpace);
   visible("space-list", false);
+  visible("library-tools", false);
   message("");
 }
 async function browse(more: boolean) {
   await run(el<HTMLButtonElement>(more ? "more-files" : "browse-button"), () => loadFiles(more));
 }
-el("browse-button").addEventListener("click", () => void browse(false));
+el("browse-button").addEventListener("click", () => {
+  if (currentSpace || page || current?.peer && !current.spaces.length && !current.owner) void browse(false);
+  else void run(el<HTMLButtonElement>("browse-button"), async () => { await invoke("check_network"); });
+});
 el("more-files").addEventListener("click", () => void browse(true));
 input("file-search").addEventListener("input", renderFiles);
+el("file-sort").addEventListener("change", renderFiles);
 interface DownloadProgress {
   name: string; total: number; received: number;
   state: "downloading" | "verifying" | "complete" | "failed" | "canceled";
@@ -672,6 +780,10 @@ function renderUnfinished(status: HomeStatus) {
 async function open(file: FileEntry, button: HTMLButtonElement) {
   if (!page) return;
   const collectionId = page.collection_id;
+  if (currentSpace?.own && currentSpace.kind === "inbox") {
+    await run(button, () => invoke("export_received", { collectionId, directory: folderPath, name: file.name, version: file.version }));
+    return;
+  }
   const directory = folderPath;
   // A file left unfinished continues where it stopped.
   await download(file.name, button, () =>
@@ -854,6 +966,7 @@ if (isTauri()) {
     (status) => {
       el<HTMLButtonElement>("choose-create").disabled =
         !status.runtime_available;
+      visible("choose-create", status.runtime_available);
       visible("create-unavailable", !status.runtime_available);
       visible("choose-existing", status.runtime_available);
       visible("choose-restore", status.runtime_available);
@@ -878,3 +991,6 @@ if (isTauri()) {
   for (const id of ["choose-create", "choose-join"])
     el<HTMLButtonElement>(id).disabled = true;
 }
+
+const services = setupServices(() => current, refresh, message);
+setupSharing(() => current, refresh, message, sendTo);
