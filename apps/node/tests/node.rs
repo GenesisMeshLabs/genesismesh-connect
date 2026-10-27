@@ -33,6 +33,13 @@ fn sealed(root: &Path, name: &str) -> Result<(PathBuf, PathBuf)> {
     Ok((root.join(format!("{name}-store")), credentials))
 }
 
+/// Each test runs a server with its own authority; one at a time keeps their
+/// timing like a real network's on a busy machine.
+fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Devices in this test process keep their secrets in one sealed store; a
 /// process chooses its store once.
 fn devices_sealed() {
@@ -107,6 +114,7 @@ fn stop(mut child: Child) -> Result<()> {
 #[test]
 #[ignore = "Requires the packaged, standalone owner runtime"]
 fn a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart() -> Result<()> {
+    let _one = one_at_a_time();
     let directory = tempfile::tempdir()?;
     devices_sealed();
     let (store, credentials) = sealed(directory.path(), "server")?;
@@ -291,6 +299,7 @@ fn join(
 #[test]
 #[ignore = "Requires the packaged, standalone owner runtime"]
 fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
+    let _one = one_at_a_time();
     use connect_core::session::sharing::ReadRequest;
     let directory = tempfile::tempdir()?;
     devices_sealed();
@@ -591,6 +600,7 @@ fn sha256(bytes: &[u8]) -> String {
 #[test]
 #[ignore = "Requires the packaged, standalone owner runtime"]
 fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
+    let _one = one_at_a_time();
     let directory = tempfile::tempdir()?;
     devices_sealed();
     let (store, credentials) = sealed(directory.path(), "server")?;

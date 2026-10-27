@@ -346,6 +346,14 @@ impl Shares {
     pub(super) fn inbox(&self, collection: &str) -> Option<&Share> {
         self.of_kind(collection, SpaceKind::Inbox)
     }
+    /// The staging areas of these Spaces' inboxes: holding them keeps files
+    /// that are arriving while the shares are reopened.
+    pub(crate) fn staging(&self) -> Vec<Arc<send::Incoming>> {
+        self.shares
+            .iter()
+            .map(|share| share.incoming.clone())
+            .collect()
+    }
     /// Whether any Space here is an inbox, so the send protocol is offered.
     pub(super) fn receives(&self) -> bool {
         self.shares

@@ -42,6 +42,35 @@ pub(super) fn name(value: &str) -> Result<()> {
     );
     Ok(())
 }
+/// The names an incoming `file_name` may be saved under, in order: itself,
+/// then "name (2).ext" up to 99, trimmed to fit, never losing the extension.
+fn candidates(file_name: &str) -> Vec<String> {
+    let (stem, extension) = match file_name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => (stem, Some(extension)),
+        _ => (file_name, None),
+    };
+    (1..=99)
+        .filter_map(|index| {
+            if index == 1 {
+                return Some(file_name.to_owned());
+            }
+            let suffix = match extension {
+                Some(extension) => format!(" ({index}).{extension}"),
+                None => format!(" ({index})"),
+            };
+            let mut stem = stem.to_owned();
+            while stem.len() + suffix.len() > 128 && stem.pop().is_some() {}
+            let candidate = format!("{}{suffix}", stem.trim_end());
+            name(&candidate).is_ok().then_some(candidate)
+        })
+        .collect()
+}
+/// A name an inbox can save, even beside a file of the same name.
+pub(super) fn receivable(file_name: &str) -> Result<()> {
+    name(file_name)?;
+    ensure!(candidates(file_name).len() > 1, "Use a shorter file name");
+    Ok(())
+}
 pub(super) fn sha(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
@@ -118,27 +147,7 @@ impl Collection {
     pub fn commit(&self, file_name: &str, source: &mut std::fs::File) -> Result<String> {
         use std::io::{Seek, SeekFrom};
         name(file_name)?;
-        let (stem, extension) = match file_name.rsplit_once('.') {
-            Some((stem, extension)) if !stem.is_empty() => (stem, Some(extension)),
-            _ => (file_name, None),
-        };
-        let candidates: Vec<String> = (1..=99)
-            .filter_map(|index| {
-                if index == 1 {
-                    return Some(file_name.to_owned());
-                }
-                // Long names give up characters for the number, never the
-                // extension.
-                let suffix = match extension {
-                    Some(extension) => format!(" ({index}).{extension}"),
-                    None => format!(" ({index})"),
-                };
-                let mut stem = stem.to_owned();
-                while stem.len() + suffix.len() > 128 && stem.pop().is_some() {}
-                let candidate = format!("{}{suffix}", stem.trim_end());
-                name(&candidate).is_ok().then_some(candidate)
-            })
-            .collect();
+        let candidates = candidates(file_name);
         ensure!(candidates.len() > 1, "Use a shorter file name");
         let mut create = OpenOptions::new();
         create

@@ -149,14 +149,22 @@ impl BridgeAuthority {
         identity: SessionIdentity,
         trust: TrustSnapshot,
     ) -> Result<Vec<super::SpaceView>> {
-        let mut spaces = self
+        let (mut spaces, inboxes) = self.listing(identity, trust).await?;
+        spaces.extend(inboxes.unwrap_or_default());
+        Ok(spaces)
+    }
+    /// The shared folders, and the inboxes when the network computer could
+    /// list them: none from one that predates inboxes or did not answer.
+    pub async fn listing(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+    ) -> Result<(Vec<super::SpaceView>, Option<Vec<super::SpaceView>>)> {
+        let spaces = self
             .listed(identity.clone(), trust.clone(), Operation::Spaces)
             .await?;
-        // A network computer from before inboxes has none to list.
-        if let Ok(inboxes) = self.listed(identity, trust, Operation::Inboxes).await {
-            spaces.extend(inboxes);
-        }
-        Ok(spaces)
+        let inboxes = self.listed(identity, trust, Operation::Inboxes).await.ok();
+        Ok((spaces, inboxes))
     }
     async fn listed(
         &self,

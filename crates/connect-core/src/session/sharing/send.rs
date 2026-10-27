@@ -93,7 +93,7 @@ enum Refusal {
     Denied,
     Busy,
 }
-pub(super) struct Incoming {
+pub(crate) struct Incoming {
     directory: PathBuf,
     entries: Mutex<BTreeMap<String, Staged>>,
     /// Per sender, so one device cannot use up another's budget.
@@ -145,27 +145,32 @@ impl Incoming {
         Ok(())
     }
     /// The token a window carries, or a new one. A continuing window must
-    /// match its file exactly; nothing is staged yet.
-    fn token(&self, peer: &str, request: &Request) -> Result<String> {
+    /// match its file exactly; a new file must fit now, checked before any
+    /// budget or authority request is spent. Nothing is staged yet.
+    fn token(&self, peer: &str, request: &Request) -> std::result::Result<String, Refusal> {
+        let mut entries = self.entries.lock().expect("incoming files");
+        entries.retain(|_, entry| entry.touched.elapsed() < STAGED_FOR);
         let Some(token) = &request.token else {
-            ensure!(request.offset == 0, "Start a new file from the beginning");
+            if request.offset != 0 {
+                return Err(Refusal::Denied);
+            }
+            if !room(&entries, peer, request.size) {
+                return Err(Refusal::Busy);
+            }
             return Ok(uuid::Uuid::new_v4().to_string());
         };
-        let entries = self.entries.lock().expect("incoming files");
-        let entry = entries
-            .get(token)
-            .filter(|entry| entry.touched.elapsed() < STAGED_FOR)
-            .context("This transfer expired. Send the file again.")?;
-        ensure!(
-            entry.peer == peer
-                && entry.collection == request.collection_id
-                && entry.file_name == request.file_name
-                && entry.size == request.size
-                && entry.sha256 == request.sha256
-                && entry.received == request.offset,
-            "This window does not continue its file"
-        );
-        Ok(token.clone())
+        let entry = entries.get(token).ok_or(Refusal::Denied)?;
+        if entry.peer == peer
+            && entry.collection == request.collection_id
+            && entry.file_name == request.file_name
+            && entry.size == request.size
+            && entry.sha256 == request.sha256
+            && entry.received == request.offset
+        {
+            Ok(token.clone())
+        } else {
+            Err(Refusal::Denied)
+        }
     }
     /// After the authority allowed the file: its staging file, positioned at
     /// the window, and the file's hash so far. A first window gets a new
@@ -193,12 +198,7 @@ impl Incoming {
         if request.token.is_some() {
             return Err(Refusal::Denied);
         }
-        let staged: u64 = entries.values().map(|entry| entry.size).sum();
-        let own = entries.values().filter(|entry| entry.peer == peer).count();
-        if entries.len() >= MAX_STAGED
-            || own >= MAX_STAGED_PER_SENDER
-            || staged.saturating_add(request.size) > MAX_STAGED_BYTES
-        {
+        if !room(&entries, peer, request.size) {
             return Err(Refusal::Busy);
         }
         let file = tempfile::NamedTempFile::new_in(&self.directory).map_err(|_| Refusal::Busy)?;
@@ -248,9 +248,19 @@ impl Incoming {
     }
 }
 
+/// Whether the inbox has room for one more unfinished file from `peer`.
+fn room(entries: &BTreeMap<String, Staged>, peer: &str, size: u64) -> bool {
+    let staged: u64 = entries.values().map(|entry| entry.size).sum();
+    let own = entries.values().filter(|entry| entry.peer == peer).count();
+    entries.len() < MAX_STAGED
+        && own < MAX_STAGED_PER_SENDER
+        && staged.saturating_add(size) <= MAX_STAGED_BYTES
+}
+
 fn validate(request: &Request) -> Result<()> {
     uuid::Uuid::parse_str(&request.request_id)?;
-    storage::name(&request.file_name)?;
+    // Refused before any byte: a name with no room for " (2)".
+    storage::receivable(&request.file_name)?;
     storage::name(&request.collection_id)?;
     ensure!(
         request.size <= MAX_FILE_BYTES
@@ -421,13 +431,19 @@ pub(in crate::session) async fn serve(
     let Some(share) = shares.inbox(&request.collection_id) else {
         return refuse(connection, send, Header::Denied, None).await;
     };
-    let token = match validate(&request)
-        .and_then(|()| share.incoming.admit(&sender, &request))
-        .and_then(|()| share.incoming.token(&sender, &request))
-    {
+    if validate(&request).is_err() {
+        return refuse(connection, send, Header::Denied, None).await;
+    }
+    // A full inbox says so before the sender's budget or the authority is
+    // asked, so a sender waiting for room spends neither.
+    let token = match share.incoming.token(&sender, &request) {
         Ok(token) => token,
-        Err(_) => return refuse(connection, send, Header::Denied, None).await,
+        Err(Refusal::Denied) => return refuse(connection, send, Header::Denied, None).await,
+        Err(Refusal::Busy) => return refuse(connection, send, Header::Busy, None).await,
     };
+    if share.incoming.admit(&sender, &request).is_err() {
+        return refuse(connection, send, Header::Denied, None).await;
+    }
     // Windows from several senders take turns.
     let Ok(Ok(turn)) = timeout(WAIT_FOR_TURN, share.budget.clone().acquire_owned()).await else {
         return refuse(connection, send, Header::Busy, None).await;
@@ -723,7 +739,7 @@ mod tests {
         );
         let size = 3 * u64::from(MIN_WINDOW_BYTES);
         let first = request(None, 0, size);
-        let token = incoming.token("phone", &first)?;
+        let token = incoming.token("phone", &first).ok().context("token")?;
         let (_, hash) = incoming
             .claim("phone", &token, &first)
             .ok()
@@ -754,24 +770,31 @@ mod tests {
             "A window recorded at the wrong offset is refused"
         );
         // One sender keeps at most two unfinished files; the inbox, four.
-        let other = incoming.token("phone", &request(None, 0, 10))?;
+        let other = incoming
+            .token("phone", &request(None, 0, 10))
+            .ok()
+            .context("token")?;
         assert!(
             incoming
                 .claim("phone", &other, &request(None, 0, 10))
                 .is_ok()
         );
-        let third = incoming.token("phone", &request(None, 0, 10))?;
-        assert!(matches!(
-            incoming.claim("phone", &third, &request(None, 0, 10)),
-            Err(Refusal::Busy)
-        ));
+        assert!(
+            matches!(
+                incoming.token("phone", &request(None, 0, 10)),
+                Err(Refusal::Busy)
+            ),
+            "A full inbox says so before a budget or a decision is spent"
+        );
         for sender in ["tablet", "laptop"] {
-            let token = incoming.token(sender, &request(None, 0, 10))?;
+            let token = incoming
+                .token(sender, &request(None, 0, 10))
+                .ok()
+                .context("token")?;
             let _ = incoming.claim(sender, &token, &request(None, 0, 10));
         }
-        let full = incoming.token("watch", &request(None, 0, 10))?;
         assert!(matches!(
-            incoming.claim("watch", &full, &request(None, 0, 10)),
+            incoming.token("watch", &request(None, 0, 10)),
             Err(Refusal::Busy)
         ));
         // An abandoned file goes, and its window is refused after that.

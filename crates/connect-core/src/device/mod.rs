@@ -479,8 +479,11 @@ impl DeviceController {
             self.endpoint.is_none(),
             "Stop the session before changing sharing"
         );
+        // Files arriving in an inbox keep their staging while the shares
+        // reopen; each share's trust checkpoint is released first.
+        let _arriving = self.sharing.as_ref().map(|shares| shares.staging());
+        self.sharing = None;
         if configs.is_empty() {
-            self.sharing = None;
             return Ok(());
         }
         ensure!(
@@ -496,8 +499,6 @@ impl DeviceController {
                 .clone()
                 .into(),
         };
-        // The old shares stay open until the new ones are, so files arriving
-        // in an inbox keep their staging.
         let opened = configs
             .into_iter()
             .map(|config| {
@@ -514,16 +515,8 @@ impl DeviceController {
             })
             .collect::<Result<Vec<_>>>()
             .and_then(Shares::new);
-        match opened {
-            Ok(shares) => {
-                self.sharing = Some(Arc::new(shares));
-                Ok(())
-            }
-            Err(error) => {
-                self.sharing = None;
-                Err(error)
-            }
-        }
+        self.sharing = Some(Arc::new(opened?));
+        Ok(())
     }
     pub fn save_managed_share(&mut self, config: Option<ShareConfig>) -> Result<()> {
         self.save_managed_shares(config.into_iter().collect())
@@ -882,9 +875,18 @@ impl DeviceController {
         let Some(client) = self.bridge_client.clone() else {
             return Ok(());
         };
-        let Ok(views) = client.spaces(identity.clone(), trust.clone()).await else {
+        let Ok((mut views, inboxes)) = client.listing(identity.clone(), trust.clone()).await else {
             return Ok(());
         };
+        // Inboxes the computer did not list just now stay as last listed.
+        views.extend(inboxes.unwrap_or_else(|| {
+            self.vault
+                .spaces()
+                .iter()
+                .filter(|space| space.kind == crate::session::sharing::SpaceKind::Inbox)
+                .cloned()
+                .collect()
+        }));
         // A profile at its size limit keeps the last list.
         let Ok(stale) = self.apply_spaces(views) else {
             return Ok(());

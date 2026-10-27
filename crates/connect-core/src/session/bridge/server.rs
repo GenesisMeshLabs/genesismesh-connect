@@ -2,6 +2,9 @@ use super::*;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use genesis_mesh_sdk::{node_auth::node_signing_payload, verify_canonical};
 
+/// Connections the bridge serves at once.
+const MAX_CONNECTIONS: usize = 16;
+
 /// Serves one explicitly selected node. Node renewal signatures pass unchanged
 /// to the configured local authority; there is no URL/method/path input.
 pub struct AuthorityBridge {
@@ -792,14 +795,17 @@ async fn accept(
         settings: Mutex::new(Budget::new(120)),
         members: Mutex::new(Budget::new(120)),
         // Each device asks once per refresh; changes come from people.
-        spaces: Mutex::new(Budget::new(120)),
+        // Two lists (folders, inboxes) per device and refresh.
+        spaces: Mutex::new(Budget::new(240)),
         space_changes: Mutex::new(Budget::new(16)),
     });
     loop {
         tokio::select! {
             incoming = endpoint.accept() => {
                 let Some(incoming) = incoming else { break };
-                if tasks.len() >= 4 || !arrivals.allow() { incoming.refuse(); continue; }
+                // Each device checks in with a few quick connections in a row,
+                // and a network has up to 32 devices.
+                if tasks.len() >= MAX_CONNECTIONS || !arrivals.allow() { incoming.refuse(); continue; }
                 let mut changes = state.subscribe();
                 let Some(credentials) = changes.borrow_and_update().clone() else { incoming.refuse(); continue };
                 let (authority, forwarded, budgets, local, published) = (authority.clone(), forwarded.clone(), budgets.clone(), endpoint.clone(), published.clone());
