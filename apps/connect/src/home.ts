@@ -723,14 +723,19 @@ el("save-name").addEventListener("click", () => {
 // the logo and a phone's back gesture all return.
 let advancedEntry = false;
 function showAdvanced(open: boolean) {
+  if (open === !el("advanced-shell").hidden) return;
   visible("everyday", !open);
   visible("advanced-shell", open);
   window.scrollTo(0, 0);
+  el(open ? "close-advanced" : "open-advanced").focus({ preventScroll: true });
   if (!open) void refresh();
 }
+// Closed at once; the history entry follows, so a second tap does nothing.
 function leaveAdvanced() {
-  if (advancedEntry) history.back();
-  else showAdvanced(false);
+  const entry = advancedEntry;
+  advancedEntry = false;
+  showAdvanced(false);
+  if (entry) history.back();
 }
 el("open-advanced").addEventListener("click", () => {
   showAdvanced(true);
@@ -744,14 +749,19 @@ document
     event.preventDefault();
     leaveAdvanced();
   });
-window.addEventListener("popstate", () => {
-  if (!advancedEntry) return;
-  advancedEntry = false;
-  showAdvanced(false);
+// The history entry decides, also after a reload or going forward again.
+window.addEventListener("popstate", (event) => {
+  advancedEntry = !!event.state?.advanced;
+  showAdvanced(advancedEntry);
 });
+if (history.state?.advanced) {
+  advancedEntry = true;
+  showAdvanced(true);
+}
 async function acceptLink(urls: string[] | null) {
   const link = urls?.find((url) => url.startsWith("genesismesh://join/"));
   if (!link) return;
+  leaveAdvanced();
   input("join-link").value = link;
   show("join-screen");
   message("Invitation received. Name this device and ask to join.");

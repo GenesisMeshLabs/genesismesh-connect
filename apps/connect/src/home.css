@@ -393,15 +393,27 @@
   color: #152110;
   min-height: var(--return-height);
   padding: calc(11px + env(safe-area-inset-top)) 18px 11px;
+  white-space: nowrap;
 }
 #advanced-shell .sidebar {
   top: var(--return-height);
   height: calc(100dvh - var(--return-height));
 }
+#advanced-shell .toast {
+  top: calc(var(--return-height) + 10px);
+  z-index: 20;
+}
 @media (max-width: 680px) {
   #advanced-shell .sidebar {
     height: auto;
     padding-top: 13px;
+  }
+  /* Below the bar and the page navigation that sticks under it. */
+  #advanced-shell .page {
+    scroll-margin-top: calc(var(--return-height) + 140px);
+  }
+  #advanced-shell .toast {
+    top: calc(var(--return-height) + 125px);
   }
 }
 .everyday pre {
