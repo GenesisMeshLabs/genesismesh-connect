@@ -45,6 +45,9 @@ pub struct Space {
     pub collection: String,
     pub name: String,
     pub host: String,
+    /// Entries from before inboxes have no kind: they are folders.
+    #[serde(default)]
+    pub kind: crate::session::sharing::SpaceKind,
     pub subject: String,
     pub recipients: Vec<String>,
     pub created_at: String,
@@ -81,6 +84,7 @@ pub enum OwnerCall {
         collection: String,
         name: String,
         recipients: Vec<String>,
+        kind: crate::session::sharing::SpaceKind,
     },
     Remove {
         host: String,
@@ -329,8 +333,9 @@ impl OwnerRuntime {
         name: &str,
         recipients: &[String],
         subject: Option<&str>,
+        kind: crate::session::sharing::SpaceKind,
     ) -> Result<Space> {
-        let mut request = json!({"op":"space_share","host":host,"collection":collection,"name":name,"recipients":recipients});
+        let mut request = json!({"op":"space_share","host":host,"collection":collection,"name":name,"recipients":recipients,"kind":kind});
         if let Some(subject) = subject {
             request["subject"] = json!(subject);
         }
@@ -376,12 +381,14 @@ impl OwnerRuntime {
                 collection,
                 name,
                 recipients,
+                kind,
             } => serde_json::to_value(self.space_share(
                 &host,
                 &collection,
                 &name,
                 &recipients,
                 None,
+                kind,
             )?)?,
             OwnerCall::Remove { host, collection } => {
                 json!(self.space_remove(&host, &collection)?)
@@ -429,6 +436,7 @@ mod tests {
             collection: collection.into(),
             name: "Photos".into(),
             host: host.into(),
+            kind: Default::default(),
             subject: "connect-device-test".into(),
             recipients: vec!["phone".into()],
             created_at: "2026-10-27T00:00:00+00:00".into(),

@@ -10,6 +10,7 @@ import {
   friendlyProblem,
   connectionSummary,
   spaceSummary,
+  sendSummary,
   filesEmptyText,
   type HomeSpace,
   type HomeStatus,
@@ -123,6 +124,10 @@ function render(status: HomeStatus) {
   visible("recovery-card", status.owner && status.configured);
   visible("add-device-button", status.owner && status.devices.length < 32);
   visible("share-button", status.can_share && status.devices.length > 0);
+  visible(
+    "receive-button",
+    status.can_share && status.devices.length > 0 && !status.spaces.some((s) => s.own && s.kind === "inbox"),
+  );
   // Without listed folders, a device browses the selected device's one folder.
   const legacy = !status.spaces.length && !!status.peer && !status.owner;
   visible("browse-button", !!currentSpace || legacy);
@@ -444,7 +449,19 @@ function renderSpaces(status: HomeStatus) {
     details.append(name, where);
     const action = document.createElement("button");
     action.className = "secondary";
-    if (space.own) {
+    if (space.own && space.kind === "inbox") {
+      action.textContent = "Stop receiving";
+      action.setAttribute("aria-label", "Stop receiving files");
+      action.addEventListener("click", () => void run(action, async () => {
+        if (!window.confirm("Stop receiving files? Your devices can no longer send files here. Files already received stay in the folder.")) return;
+        await invoke("stop_sharing", { id: space.id });
+        message("This device no longer receives files.");
+      }));
+    } else if (space.kind === "inbox") {
+      action.textContent = "Send a file";
+      action.setAttribute("aria-label", `Send a file to ${space.host}`);
+      action.addEventListener("click", () => void run(action, () => sendTo(space)));
+    } else if (space.own) {
       action.textContent = "Stop sharing";
       action.setAttribute("aria-label", `Stop sharing ${space.name}`);
       action.addEventListener("click", () => void run(action, async () => {
@@ -465,6 +482,39 @@ function renderSpaces(status: HomeStatus) {
     list.append(row);
   }
 }
+interface SendProgress {
+  state: "checking" | "sending" | "complete" | "failed" | "canceled";
+  sent: number; total: number; problem: string | null; saved_as: string | null; name: string;
+}
+let sendId = "";
+async function sendTo(space: HomeSpace) {
+  const id = await invoke<string | null>("send_file", { space: space.id });
+  if (!id) return;
+  sendId = id;
+  visible("cancel-send", true);
+  try {
+    while (true) {
+      const progress = await invoke<SendProgress>("send_status", { id });
+      message(`${progress.name} to ${space.host}: ${sendSummary(progress)}`);
+      if (progress.state === "complete" || progress.state === "canceled") return;
+      if (progress.state === "failed") throw new Error(progress.problem || "Sending failed. Please try again.");
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  } finally {
+    visible("cancel-send", false);
+  }
+}
+el("cancel-send").addEventListener("click", () => {
+  if (sendId) void invoke("cancel_send", { id: sendId }).catch((error) => problem(String(error)));
+});
+el("receive-button").addEventListener(
+  "click",
+  () =>
+    void run(el<HTMLButtonElement>("receive-button"), async () => {
+      if (await invoke<boolean>("receive_files"))
+        message("Your other devices can now send files to this computer.");
+    }),
+);
 async function openSpace(space: HomeSpace) {
   currentSpace = space;
   folderPath = [];

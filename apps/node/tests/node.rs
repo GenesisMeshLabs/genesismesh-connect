@@ -6,7 +6,7 @@ use anyhow::{Context, Result, ensure};
 use connect_core::{
     Connectivity,
     device::{DeviceController, PairedDevice},
-    session::pairing::PairCard,
+    session::{pairing::PairCard, sharing::SpaceKind},
 };
 use serde_json::{Value, json};
 use std::{
@@ -31,6 +31,13 @@ fn sealed(root: &Path, name: &str) -> Result<(PathBuf, PathBuf)> {
     getrandom::fill(&mut key)?;
     std::fs::write(credentials.join("connect-master-key"), key)?;
     Ok((root.join(format!("{name}-store")), credentials))
+}
+
+/// Each test runs a server with its own authority; one at a time keeps their
+/// timing like a real network's on a busy machine.
+fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Devices in this test process keep their secrets in one sealed store; a
@@ -107,6 +114,7 @@ fn stop(mut child: Child) -> Result<()> {
 #[test]
 #[ignore = "Requires the packaged, standalone owner runtime"]
 fn a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart() -> Result<()> {
+    let _one = one_at_a_time();
     let directory = tempfile::tempdir()?;
     devices_sealed();
     let (store, credentials) = sealed(directory.path(), "server")?;
@@ -291,6 +299,7 @@ fn join(
 #[test]
 #[ignore = "Requires the packaged, standalone owner runtime"]
 fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
+    let _one = one_at_a_time();
     use connect_core::session::sharing::ReadRequest;
     let directory = tempfile::tempdir()?;
     devices_sealed();
@@ -327,6 +336,7 @@ fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
             photos.clone(),
             "Family photos".into(),
             vec![phone_node.clone()],
+            SpaceKind::Folder,
         ))?;
         assert_eq!(shared.name, "Family photos");
         assert_eq!(shared.recipients, vec![phone_node.clone()]);
@@ -340,6 +350,7 @@ fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
             private,
             "Private".into(),
             vec![server_node.clone()],
+            SpaceKind::Folder,
         ))?;
         let status = server.control(json!({"op":"status"}))?;
         let mut listed: Vec<String> = status["spaces"]
@@ -432,6 +443,7 @@ fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
                     decoy,
                     "Taken".into(),
                     vec![server_node.clone()],
+                    SpaceKind::Folder,
                 ))
                 .is_err(),
             "The server refuses a Space that belongs to another device"
@@ -505,4 +517,327 @@ fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
     runtime.block_on(phone.stop());
     stop(child)?;
     outcome
+}
+
+/// Send `bytes` as `name` into `host`'s inbox, window by window, declaring
+/// `declared` as the whole file's SHA-256. Returns the name it was saved as.
+fn send_file(
+    runtime: &tokio::runtime::Runtime,
+    device: &DeviceController,
+    host: &connect_core::device::PairedDevice,
+    inbox: &str,
+    name: &str,
+    bytes: &[u8],
+    declared: Option<String>,
+) -> Result<Option<String>> {
+    let session = device.session()?;
+    send_with(runtime, &session, host, inbox, name, bytes, declared)
+}
+
+/// The same, from a running session, so several devices can send at once.
+fn send_with(
+    runtime: &tokio::runtime::Runtime,
+    session: &connect_core::session::SessionEndpoint,
+    host: &connect_core::device::PairedDevice,
+    inbox: &str,
+    name: &str,
+    bytes: &[u8],
+    declared: Option<String>,
+) -> Result<Option<String>> {
+    use connect_core::session::sharing::send::{MIN_WINDOW_BYTES, Request};
+    use std::io::Write as _;
+    let mut file = tempfile::tempfile()?;
+    file.write_all(bytes)?;
+    let digest = declared.unwrap_or_else(|| sha256(bytes));
+    let (mut token, mut offset) = (None, 0u64);
+    loop {
+        let window = runtime.block_on(session.send_window_to(
+            &host.node,
+            &host.ticket,
+            Request {
+                request_id: request_id()?,
+                collection_id: inbox.into(),
+                file_name: name.into(),
+                size: bytes.len() as u64,
+                sha256: digest.clone(),
+                token: token.clone(),
+                offset,
+                // Larger files take larger windows, as the app's do: every
+                // window costs authority requests, which are rate limited.
+                length: if bytes.len() > 1_000_000 {
+                    8 * MIN_WINDOW_BYTES
+                } else {
+                    MIN_WINDOW_BYTES
+                },
+            },
+            &mut file,
+        ))?;
+        offset += window.bytes as u64;
+        token = Some(window.token);
+        if window.done {
+            return Ok(window.saved_as);
+        }
+    }
+}
+
+/// A SHA-256 in lowercase hex, without another dependency in this test.
+fn sha256(bytes: &[u8]) -> String {
+    let mut command = Command::new("sha256sum")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("sha256sum");
+    command
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(bytes)
+        .expect("write");
+    let output = command.wait_with_output().expect("sha256sum output");
+    String::from_utf8_lossy(&output.stdout)[..64].to_owned()
+}
+
+#[test]
+#[ignore = "Requires the packaged, standalone owner runtime"]
+fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
+    let _one = one_at_a_time();
+    let directory = tempfile::tempdir()?;
+    devices_sealed();
+    let (store, credentials) = sealed(directory.path(), "server")?;
+    let server = Server {
+        state: directory.path().join("server"),
+        store,
+        credentials,
+    };
+    let init = server.command(&["init", "--name", "Home"])?.output()?;
+    ensure!(
+        init.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let runtime = tokio::runtime::Runtime::new()?;
+    let child = server.run()?;
+    let outcome = (|| {
+        server.control(json!({"op":"connection","setting":"local_network"}))?;
+        let mut pc = join(&server, &runtime, &directory.path().join("pc"), "Home PC")?;
+        let mut phone = join(&server, &runtime, &directory.path().join("phone"), "Phone")?;
+        let mut tablet = join(
+            &server,
+            &runtime,
+            &directory.path().join("tablet"),
+            "Tablet",
+        )?;
+        for device in [&mut pc, &mut phone, &mut tablet] {
+            runtime.block_on(device.check_network())?;
+        }
+        let phone_node = phone.status()?.node_public_key;
+        let pc_node = pc.status()?.node_public_key;
+
+        // The PC accepts files from the phone into its inbox folder.
+        let received = directory.path().join("received");
+        std::fs::create_dir(&received)?;
+        std::fs::write(received.join("photo.jpg"), b"already here")?;
+        let inbox = runtime.block_on(pc.share_space(
+            None,
+            received.clone(),
+            "Inbox".into(),
+            vec![phone_node.clone()],
+            SpaceKind::Inbox,
+        ))?;
+        assert_eq!(inbox.kind, SpaceKind::Inbox);
+        for device in [&mut phone, &mut tablet] {
+            runtime.block_on(device.check_network())?;
+        }
+        let listed = phone.status()?.spaces;
+        assert_eq!(
+            listed
+                .iter()
+                .map(|s| (s.name.as_str(), s.kind))
+                .collect::<Vec<_>>(),
+            [("Inbox", SpaceKind::Inbox)]
+        );
+        let pc_from = |device: &DeviceController| -> Result<connect_core::device::PairedDevice> {
+            device
+                .status()?
+                .members
+                .into_iter()
+                .find(|m| m.node == pc_node)
+                .context("Missing PC")
+        };
+
+        // Several windows, each decided by the PC for the whole file.
+        let photo: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        let saved = send_file(
+            &runtime,
+            &phone,
+            &pc_from(&phone)?,
+            &inbox.collection_id,
+            "photo.jpg",
+            &photo,
+            None,
+        )?;
+        assert_eq!(
+            saved.as_deref(),
+            Some("photo (2).jpg"),
+            "An existing file is never replaced"
+        );
+        assert_eq!(std::fs::read(received.join("photo (2).jpg"))?, photo);
+        assert_eq!(std::fs::read(received.join("photo.jpg"))?, b"already here");
+        let again = send_file(
+            &runtime,
+            &phone,
+            &pc_from(&phone)?,
+            &inbox.collection_id,
+            "photo.jpg",
+            &photo,
+            None,
+        )?;
+        assert_eq!(again.as_deref(), Some("photo (3).jpg"));
+        let empty = send_file(
+            &runtime,
+            &phone,
+            &pc_from(&phone)?,
+            &inbox.collection_id,
+            "empty.txt",
+            b"",
+            None,
+        )?;
+        assert_eq!(empty.as_deref(), Some("empty.txt"));
+
+        // A file that does not match its declared digest is never saved.
+        let wrong = send_file(
+            &runtime,
+            &phone,
+            &pc_from(&phone)?,
+            &inbox.collection_id,
+            "tampered.bin",
+            &photo,
+            Some("0".repeat(64)),
+        );
+        assert!(wrong.is_err());
+        assert!(!received.join("tampered.bin").exists());
+
+        // A device the inbox does not name is refused before any byte, and a
+        // shared folder or an unknown inbox accepts nothing.
+        let refused = send_file(
+            &runtime,
+            &tablet,
+            &pc_from(&tablet)?,
+            &inbox.collection_id,
+            "spam.txt",
+            b"spam",
+            None,
+        );
+        assert!(
+            refused
+                .err()
+                .is_some_and(|e| e.to_string().contains("isn't accepting files"))
+        );
+        assert!(!received.join("spam.txt").exists());
+        let photos = directory.path().join("photos");
+        std::fs::create_dir(&photos)?;
+        let folder = runtime.block_on(pc.share_space(
+            None,
+            photos.clone(),
+            "Photos".into(),
+            vec![phone_node.clone()],
+            SpaceKind::Folder,
+        ))?;
+        // Both refusals reach the PC and come back as denials, not as a
+        // connection failure.
+        let into_folder = send_file(
+            &runtime,
+            &phone,
+            &pc_from(&phone)?,
+            &folder.collection_id,
+            "into-folder.txt",
+            b"no",
+            None,
+        );
+        assert!(
+            into_folder
+                .err()
+                .is_some_and(|e| e.to_string().contains("isn't accepting files")),
+            "A folder accepts no files"
+        );
+        assert!(!photos.join("into-folder.txt").exists());
+        // And an inbox is never browsed.
+        let session = phone.session()?;
+        let host = pc_from(&phone)?;
+        assert!(
+            runtime
+                .block_on(session.browse_from(
+                    &host.node,
+                    &host.ticket,
+                    None,
+                    Vec::new(),
+                    Some(inbox.collection_id.clone())
+                ))
+                .err()
+                .is_some_and(|e| e.to_string().contains("access was not allowed")),
+            "An inbox is never browsed"
+        );
+        // Two trusted devices sending into one inbox at once take turns, and
+        // both files arrive whole.
+        let shared = directory.path().join("shared-inbox");
+        std::fs::create_dir(&shared)?;
+        let both = runtime.block_on(pc.share_space(
+            None,
+            shared.clone(),
+            "Family inbox".into(),
+            vec![phone_node.clone(), tablet.status()?.node_public_key],
+            SpaceKind::Inbox,
+        ))?;
+        for device in [&mut phone, &mut tablet] {
+            runtime.block_on(device.check_network())?;
+        }
+        let large: Vec<u8> = (0..1_500_000u32).map(|i| (i % 241) as u8).collect();
+        let (from_phone, from_tablet) = (phone.session()?, tablet.session()?);
+        let (phone_host, tablet_host) = (pc_from(&phone)?, pc_from(&tablet)?);
+        let (a, b) = std::thread::scope(|scope| {
+            let a = scope.spawn(|| {
+                send_with(
+                    &runtime,
+                    &from_phone,
+                    &phone_host,
+                    &both.collection_id,
+                    "a.bin",
+                    &large,
+                    None,
+                )
+            });
+            let b = scope.spawn(|| {
+                send_with(
+                    &runtime,
+                    &from_tablet,
+                    &tablet_host,
+                    &both.collection_id,
+                    "b.bin",
+                    &large,
+                    None,
+                )
+            });
+            (a.join().expect("phone"), b.join().expect("tablet"))
+        });
+        assert_eq!(a?.as_deref(), Some("a.bin"));
+        assert_eq!(b?.as_deref(), Some("b.bin"));
+        assert_eq!(std::fs::read(shared.join("a.bin"))?, large);
+        assert_eq!(std::fs::read(shared.join("b.bin"))?, large);
+        let names: Vec<String> = std::fs::read_dir(&received)?
+            .map(|e| e.map(|e| e.file_name().to_string_lossy().into_owned()))
+            .collect::<std::io::Result<_>>()?;
+        let mut names = names;
+        names.sort();
+        assert_eq!(
+            names,
+            ["empty.txt", "photo (2).jpg", "photo (3).jpg", "photo.jpg"]
+        );
+        Ok::<_, anyhow::Error>((pc, phone, tablet))
+    })();
+    stop(child)?;
+    let (mut pc, mut phone, mut tablet) = outcome?;
+    for device in [&mut pc, &mut phone, &mut tablet] {
+        runtime.block_on(device.stop());
+    }
+    Ok(())
 }

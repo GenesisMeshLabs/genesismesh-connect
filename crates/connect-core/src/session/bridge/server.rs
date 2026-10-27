@@ -2,6 +2,9 @@ use super::*;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use genesis_mesh_sdk::{node_auth::node_signing_payload, verify_canonical};
 
+/// Connections the bridge serves at once.
+const MAX_CONNECTIONS: usize = 16;
+
 /// Serves one explicitly selected node. Node renewal signatures pass unchanged
 /// to the configured local authority; there is no URL/method/path input.
 pub struct AuthorityBridge {
@@ -373,6 +376,7 @@ async fn exchange(
         | Operation::Settings
         | Operation::Members
         | Operation::Spaces
+        | Operation::Inboxes
         | Operation::ShareSpace
         | Operation::UnshareSpace => {
             let peer = authenticate_for(
@@ -403,7 +407,7 @@ async fn exchange(
                     Operation::Renew => &budgets.renewals,
                     Operation::Settings => &budgets.settings,
                     Operation::Members => &budgets.members,
-                    Operation::Spaces => &budgets.spaces,
+                    Operation::Spaces | Operation::Inboxes => &budgets.spaces,
                     Operation::ShareSpace | Operation::UnshareSpace => &budgets.space_changes,
                     _ => &budgets.collections,
                 })
@@ -470,7 +474,10 @@ async fn exchange(
                         .certificate(&peer, &credentials.expected_node, Utc::now())?;
                     members(signed, &credentials.expected_node, published)
                 }
-                Operation::Spaces | Operation::ShareSpace | Operation::UnshareSpace => {
+                Operation::Spaces
+                | Operation::Inboxes
+                | Operation::ShareSpace
+                | Operation::UnshareSpace => {
                     credentials
                         .trust
                         .certificate(&peer, &credentials.expected_node, Utc::now())?;
@@ -581,11 +588,16 @@ async fn spaces(
         "Only saved devices share folders"
     );
     match operation {
-        Operation::Spaces => {
+        Operation::Spaces | Operation::Inboxes => {
             ensure!(
                 request.as_object().is_some_and(|o| o.is_empty()),
                 "Unsupported spaces fields"
             );
+            let kind = if matches!(operation, Operation::Inboxes) {
+                crate::session::sharing::SpaceKind::Inbox
+            } else {
+                crate::session::sharing::SpaceKind::Folder
+            };
             let list = published
                 .spaces
                 .lock()
@@ -595,6 +607,7 @@ async fn spaces(
             Ok(serde_json::to_value(SpacesAnswer {
                 spaces: list
                     .into_iter()
+                    .filter(|space| space.kind == kind)
                     .filter_map(|space| SpaceView::of(space, node))
                     .collect(),
             })?)
@@ -619,6 +632,7 @@ async fn spaces(
                         collection: request.collection,
                         name: request.name,
                         recipients: request.recipients,
+                        kind: request.kind,
                     },
                 )
                 .await?,
@@ -726,6 +740,9 @@ pub(super) fn check_collection_decision(
             "directory",
         ],
         Some("connect.collection.list") => &["collection_id", "peer_node", "size", "page_digest"],
+        Some("connect.inbox.write") if id.starts_with("connect-send:") => {
+            &["collection_id", "file_name", "peer_node", "sha256", "size"]
+        }
         _ => anyhow::bail!("Unsupported collection action"),
     };
     ensure!(
@@ -749,7 +766,7 @@ pub(super) fn check_collection_decision(
                 .as_str()
                 .is_some_and(|s| STANDARD.decode(s).is_ok_and(|k| k.len() == 32))
             && parameters["size"].as_u64().is_some_and(|n| n
-                <= if id.starts_with("connect-download:") {
+                <= if id.starts_with("connect-download:") || id.starts_with("connect-send:") {
                     crate::session::sharing::download::MAX_FILE_BYTES
                 } else {
                     65536
@@ -778,14 +795,17 @@ async fn accept(
         settings: Mutex::new(Budget::new(120)),
         members: Mutex::new(Budget::new(120)),
         // Each device asks once per refresh; changes come from people.
-        spaces: Mutex::new(Budget::new(120)),
+        // Two lists (folders, inboxes) per device and refresh.
+        spaces: Mutex::new(Budget::new(240)),
         space_changes: Mutex::new(Budget::new(16)),
     });
     loop {
         tokio::select! {
             incoming = endpoint.accept() => {
                 let Some(incoming) = incoming else { break };
-                if tasks.len() >= 4 || !arrivals.allow() { incoming.refuse(); continue; }
+                // Each device checks in with a few quick connections in a row,
+                // and a network has up to 32 devices.
+                if tasks.len() >= MAX_CONNECTIONS || !arrivals.allow() { incoming.refuse(); continue; }
                 let mut changes = state.subscribe();
                 let Some(credentials) = changes.borrow_and_update().clone() else { incoming.refuse(); continue };
                 let (authority, forwarded, budgets, local, published) = (authority.clone(), forwarded.clone(), budgets.clone(), endpoint.clone(), published.clone());

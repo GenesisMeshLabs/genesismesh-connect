@@ -4,6 +4,7 @@ pub mod browse;
 pub mod catalog;
 pub mod download;
 pub mod listing;
+pub mod send;
 mod storage;
 mod transfer;
 use super::*;
@@ -22,6 +23,21 @@ const MAX_RECEIPT_BYTES: u64 = 32 * 1024 * 1024;
 const ROTATE_RECEIPTS: usize = 1792;
 const ROTATE_RECEIPT_BYTES: u64 = 24 * 1024 * 1024;
 
+/// What a Space lets its devices do: read a shared folder, or send files into
+/// the host's inbox folder.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SpaceKind {
+    #[default]
+    Folder,
+    Inbox,
+}
+impl SpaceKind {
+    pub(crate) fn is_folder(&self) -> bool {
+        *self == Self::Folder
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ShareConfig {
@@ -35,6 +51,8 @@ pub struct ShareConfig {
     /// The devices it is shared with; empty for a folder shared before Spaces.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recipients: Vec<String>,
+    #[serde(default, skip_serializing_if = "SpaceKind::is_folder")]
+    pub kind: SpaceKind,
 }
 pub struct Share {
     config: ShareConfig,
@@ -48,6 +66,7 @@ pub struct Share {
     released_names: AtomicU64,
     budget: Arc<tokio::sync::Semaphore>,
     downloads: download::State,
+    incoming: Arc<send::Incoming>,
     requests: Mutex<(std::time::Instant, u32)>,
     browse_requests: Mutex<(std::time::Instant, u32)>,
 }
@@ -85,6 +104,7 @@ impl Share {
         let receipts = state.join("receipts");
         std::fs::create_dir_all(&receipts)?;
         let downloads = download::State::open(state)?;
+        let incoming = send::Incoming::open(state)?;
         Ok(Self {
             attestation: std::sync::RwLock::new(config.attestation_id.clone()),
             config,
@@ -96,6 +116,7 @@ impl Share {
             released_names: AtomicU64::new(0),
             budget: Arc::new(tokio::sync::Semaphore::new(1)),
             downloads,
+            incoming,
             requests: Mutex::new((std::time::Instant::now(), 0)),
             browse_requests: Mutex::new((std::time::Instant::now(), 0)),
         })
@@ -311,14 +332,36 @@ impl Shares {
     pub fn iter(&self) -> impl Iterator<Item = &Arc<Share>> {
         self.shares.iter()
     }
-    pub(super) fn get(&self, collection: &str) -> Option<&Share> {
+    fn of_kind(&self, collection: &str, kind: SpaceKind) -> Option<&Share> {
         self.shares
             .iter()
-            .find(|share| share.config.collection_id == collection)
+            .find(|share| share.config.collection_id == collection && share.config.kind == kind)
             .map(|share| &**share)
     }
-    /// The Space a request names, or for one that names none, the first Space
-    /// shared with `peer` (a folder shared before Spaces names everyone).
+    /// A shared folder, to read and list. An inbox is never read from.
+    pub(super) fn get(&self, collection: &str) -> Option<&Share> {
+        self.of_kind(collection, SpaceKind::Folder)
+    }
+    /// An inbox, to send into. A shared folder is never written to.
+    pub(super) fn inbox(&self, collection: &str) -> Option<&Share> {
+        self.of_kind(collection, SpaceKind::Inbox)
+    }
+    /// The staging areas of these Spaces' inboxes: holding them keeps files
+    /// that are arriving while the shares are reopened.
+    pub(crate) fn staging(&self) -> Vec<Arc<send::Incoming>> {
+        self.shares
+            .iter()
+            .map(|share| share.incoming.clone())
+            .collect()
+    }
+    /// Whether any Space here is an inbox, so the send protocol is offered.
+    pub(super) fn receives(&self) -> bool {
+        self.shares
+            .iter()
+            .any(|share| share.config.kind == SpaceKind::Inbox)
+    }
+    /// The folder a request names, or for one that names none, the first
+    /// folder shared with `peer` (a folder shared before Spaces names everyone).
     pub(super) fn find(&self, collection: Option<&str>, peer: &str) -> Option<&Share> {
         match collection {
             Some(collection) => self.get(collection),
@@ -326,8 +369,9 @@ impl Shares {
                 .shares
                 .iter()
                 .find(|share| {
-                    share.config.recipients.is_empty()
-                        || share.config.recipients.iter().any(|node| node == peer)
+                    share.config.kind == SpaceKind::Folder
+                        && (share.config.recipients.is_empty()
+                            || share.config.recipients.iter().any(|node| node == peer))
                 })
                 .map(|share| &**share),
         }
@@ -429,6 +473,11 @@ mod tests {
     }
 
     fn share(root: &Path, name: &str, recipients: &[&str]) -> Result<Arc<Share>> {
+        let kind = if name == "Inbox" {
+            SpaceKind::Inbox
+        } else {
+            SpaceKind::Folder
+        };
         let folder = root.join(format!("{name}-folder"));
         std::fs::create_dir_all(&folder)?;
         let pin = TrustPin {
@@ -446,6 +495,7 @@ mod tests {
                 policy_id: "connect-test".into(),
                 name: name.into(),
                 recipients: recipients.iter().map(|r| (*r).to_owned()).collect(),
+                kind,
             },
             crate::authority::LocalAuthority::new("http://127.0.0.1:9")?,
             pin,
@@ -481,6 +531,21 @@ mod tests {
         );
         assert_eq!(id(shares.find(None, &key(3))), None);
         assert!(Shares::new(vec![photos.clone(), photos.clone()]).is_err());
+        // An inbox is only written to, a folder only read from.
+        let inbox = share(root.path(), "Inbox", &[&phone])?;
+        let mixed = Shares::new(vec![photos.clone(), inbox.clone()])?;
+        assert!(mixed.get(inbox.collection_id()).is_none());
+        assert!(mixed.inbox(photos.collection_id()).is_none());
+        assert_eq!(
+            id(mixed.inbox(inbox.collection_id())),
+            Some(inbox.collection_id().to_owned())
+        );
+        assert!(mixed.receives() && !shares.receives());
+        assert_eq!(
+            id(mixed.find(None, &phone)),
+            Some(photos.collection_id().to_owned()),
+            "An app without Spaces never lands in an inbox"
+        );
         // A renewed attestation is used from then on, and saved with the Space.
         let renewed = uuid::Uuid::new_v4().to_string();
         photos.renew(&renewed)?;

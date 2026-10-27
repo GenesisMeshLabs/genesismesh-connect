@@ -149,8 +149,31 @@ impl BridgeAuthority {
         identity: SessionIdentity,
         trust: TrustSnapshot,
     ) -> Result<Vec<super::SpaceView>> {
+        let (mut spaces, inboxes) = self.listing(identity, trust).await?;
+        spaces.extend(inboxes.unwrap_or_default());
+        Ok(spaces)
+    }
+    /// The shared folders, and the inboxes when the network computer could
+    /// list them: none from one that predates inboxes or did not answer.
+    pub async fn listing(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+    ) -> Result<(Vec<super::SpaceView>, Option<Vec<super::SpaceView>>)> {
+        let spaces = self
+            .listed(identity.clone(), trust.clone(), Operation::Spaces)
+            .await?;
+        let inboxes = self.listed(identity, trust, Operation::Inboxes).await.ok();
+        Ok((spaces, inboxes))
+    }
+    async fn listed(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+        operation: Operation,
+    ) -> Result<Vec<super::SpaceView>> {
         let value = self
-            .authenticated(identity, trust, Operation::Spaces, &serde_json::json!({}))
+            .authenticated(identity, trust, operation, &serde_json::json!({}))
             .await?;
         let answer: super::SpacesAnswer = serde_json::from_value(value)?;
         ensure!(answer.spaces.len() <= 64, "Too many shared folders");
@@ -171,6 +194,7 @@ impl BridgeAuthority {
         collection: String,
         name: String,
         recipients: Vec<String>,
+        kind: crate::session::sharing::SpaceKind,
     ) -> Result<super::SpaceView> {
         let node = identity.public_key();
         let value = self
@@ -182,13 +206,17 @@ impl BridgeAuthority {
                     collection: collection.clone(),
                     name,
                     recipients,
+                    kind,
                 })?,
             )
             .await?;
         let space: super::SpaceView = serde_json::from_value(value)?;
         space.check()?;
         ensure!(
-            space.collection == collection && space.host == node && space.grant.is_some(),
+            space.collection == collection
+                && space.host == node
+                && space.kind == kind
+                && space.grant.is_some(),
             "The network computer answered for another folder"
         );
         Ok(space)
@@ -296,7 +324,12 @@ impl BridgeAuthority {
         capability: &str,
     ) -> Result<Value> {
         ensure!(
-            ["connect.collection.read", "connect.collection.list"].contains(&capability),
+            [
+                "connect.collection.read",
+                "connect.collection.list",
+                "connect.inbox.write"
+            ]
+            .contains(&capability),
             "Unsupported collection action"
         );
         let signed = crate::authority::request(

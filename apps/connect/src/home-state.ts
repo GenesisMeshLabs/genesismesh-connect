@@ -28,10 +28,20 @@ export interface HomeSpace {
   host: string;
   host_id: string;
   own: boolean;
+  kind: "folder" | "inbox";
 }
-/** Where a shared folder lives, in a few words. */
+/** Where a shared folder lives, or whose inbox it is, in a few words. */
 export function spaceSummary(space: HomeSpace) {
+  if (space.kind === "inbox")
+    return space.own ? "Receiving files from your devices" : `Send files to ${space.host}`;
   return space.own ? "Shared from this device · read-only" : `On ${space.host}`;
+}
+/** A send's progress in a few words. */
+export function sendSummary(progress: { state: string; sent: number; total: number; saved_as: string | null }) {
+  if (progress.state === "checking") return "Preparing…";
+  if (progress.state === "complete") return progress.saved_as ? `Sent · saved as ${progress.saved_as}` : "Sent";
+  if (progress.state === "canceled") return "Sending canceled";
+  return `${formatBytes(progress.sent)} of ${formatBytes(progress.total)}`;
 }
 /** What the empty Files view suggests next. */
 export function filesEmptyText(status: HomeStatus) {

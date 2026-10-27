@@ -42,6 +42,35 @@ pub(super) fn name(value: &str) -> Result<()> {
     );
     Ok(())
 }
+/// The names an incoming `file_name` may be saved under, in order: itself,
+/// then "name (2).ext" up to 99, trimmed to fit, never losing the extension.
+fn candidates(file_name: &str) -> Vec<String> {
+    let (stem, extension) = match file_name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => (stem, Some(extension)),
+        _ => (file_name, None),
+    };
+    (1..=99)
+        .filter_map(|index| {
+            if index == 1 {
+                return Some(file_name.to_owned());
+            }
+            let suffix = match extension {
+                Some(extension) => format!(" ({index}).{extension}"),
+                None => format!(" ({index})"),
+            };
+            let mut stem = stem.to_owned();
+            while stem.len() + suffix.len() > 128 && stem.pop().is_some() {}
+            let candidate = format!("{}{suffix}", stem.trim_end());
+            name(&candidate).is_ok().then_some(candidate)
+        })
+        .collect()
+}
+/// A name an inbox can save, even beside a file of the same name.
+pub(super) fn receivable(file_name: &str) -> Result<()> {
+    name(file_name)?;
+    ensure!(candidates(file_name).len() > 1, "Use a shorter file name");
+    Ok(())
+}
 pub(super) fn sha(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
@@ -107,6 +136,72 @@ impl Collection {
             }
         }
         Ok((files, next))
+    }
+    /// Save a verified incoming file under `file_name`, or "name (2).ext" and
+    /// so on when that exists: an existing file is never replaced. The bytes
+    /// go to a hidden file first and get their name by a hard link, which
+    /// fails rather than replace anything, so a partly written file is never
+    /// seen under the real name. Where the filesystem has no hard links (FAT
+    /// or exFAT drives), the name is reserved exclusively and written through.
+    /// Returns the name used.
+    pub fn commit(&self, file_name: &str, source: &mut std::fs::File) -> Result<String> {
+        use std::io::{Seek, SeekFrom};
+        name(file_name)?;
+        let candidates = candidates(file_name);
+        ensure!(candidates.len() > 1, "Use a shorter file name");
+        let mut create = OpenOptions::new();
+        create
+            .write(true)
+            .create_new(true)
+            .follow(FollowSymlinks::No);
+        let write = |target: &mut std::fs::File, source: &mut std::fs::File| -> Result<()> {
+            source.seek(SeekFrom::Start(0))?;
+            std::io::copy(source, target)?;
+            target.sync_all()?;
+            Ok(())
+        };
+        let hidden = format!(".connect-incoming-{}", uuid::Uuid::new_v4());
+        let staged = (|| {
+            let mut target = self.directory.open_with(&hidden, &create)?.into_std();
+            write(&mut target, source)
+        })();
+        if let Err(error) = staged {
+            let _ = self.directory.remove_file(&hidden);
+            return Err(error);
+        }
+        let mut linked = true;
+        for candidate in &candidates {
+            match self
+                .directory
+                .hard_link(&hidden, &self.directory, candidate)
+            {
+                Ok(()) => {
+                    self.directory.remove_file(&hidden)?;
+                    return Ok(candidate.clone());
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(_) => {
+                    linked = false;
+                    break;
+                }
+            }
+        }
+        let _ = self.directory.remove_file(&hidden);
+        ensure!(!linked, "This folder already has 99 files with that name");
+        for candidate in candidates {
+            let mut target = match self.directory.open_with(&candidate, &create) {
+                Ok(target) => target.into_std(),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.into()),
+            };
+            if let Err(error) = write(&mut target, source) {
+                drop(target);
+                let _ = self.directory.remove_file(&candidate);
+                return Err(error);
+            }
+            return Ok(candidate);
+        }
+        anyhow::bail!("This folder already has 99 files with that name")
     }
     pub fn open(path: &Path) -> Result<Self> {
         ensure!(path.is_absolute(), "Collection root must be absolute");
@@ -184,6 +279,71 @@ mod tests {
         assert!(directory.snapshot("large.txt").is_err());
         std::fs::create_dir(root.path().join("dir"))?;
         assert!(directory.snapshot("dir").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn incoming_files_never_replace_existing_ones() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        std::fs::write(root.path().join("photo.jpg"), b"original")?;
+        let directory = Collection::open(root.path())?;
+        let mut source = tempfile::tempfile()?;
+        std::io::Write::write_all(&mut source, b"incoming")?;
+        assert_eq!(directory.commit("photo.jpg", &mut source)?, "photo (2).jpg");
+        assert_eq!(directory.commit("photo.jpg", &mut source)?, "photo (3).jpg");
+        assert_eq!(directory.commit("notes", &mut source)?, "notes");
+        assert_eq!(directory.commit("notes", &mut source)?, "notes (2)");
+        assert_eq!(std::fs::read(root.path().join("photo.jpg"))?, b"original");
+        assert_eq!(
+            std::fs::read(root.path().join("photo (3).jpg"))?,
+            b"incoming"
+        );
+        for unsafe_name in ["../escape.txt", "a/b", "CON", ""] {
+            assert!(
+                directory.commit(unsafe_name, &mut source).is_err(),
+                "{unsafe_name}"
+            );
+        }
+        // A long name gives up characters for the number, never the extension.
+        let long = format!("{}.txt", "n".repeat(124));
+        assert_eq!(directory.commit(&long, &mut source)?, long);
+        let second = directory.commit(&long, &mut source)?;
+        assert!(
+            second.len() <= 128 && second.ends_with(" (2).txt"),
+            "{second}"
+        );
+        // No hidden staging file stays behind.
+        let hidden = std::fs::read_dir(root.path())?
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(".connect-incoming")
+            });
+        assert!(!hidden);
+        assert!(
+            directory
+                .commit(&format!("a.{}", "x".repeat(125)), &mut source)
+                .is_err()
+        );
+        // A link at a candidate name is never followed or replaced.
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir()?;
+            std::fs::write(outside.path().join("target.txt"), b"outside")?;
+            std::os::unix::fs::symlink(
+                outside.path().join("target.txt"),
+                root.path().join("linked.txt"),
+            )?;
+            assert_eq!(
+                directory.commit("linked.txt", &mut source)?,
+                "linked (2).txt"
+            );
+            assert_eq!(
+                std::fs::read(outside.path().join("target.txt"))?,
+                b"outside"
+            );
+        }
         Ok(())
     }
 }

@@ -8,6 +8,7 @@ import {
   friendlyProblem,
   connectionSummary,
   spaceSummary,
+  sendSummary,
   filesEmptyText,
   type HomeStatus,
 } from "../src/home-state.ts";
@@ -29,9 +30,14 @@ const blank: HomeStatus = {
   connection: null,
 };
 test("shared folders say where they live and what to do when there are none", () => {
-  const space = { id: "1", name: "Photos", host: "Home PC", host_id: "a", own: false };
+  const space = { id: "1", name: "Photos", host: "Home PC", host_id: "a", own: false, kind: "folder" as const };
   assert.equal(spaceSummary(space), "On Home PC");
   assert.match(spaceSummary({ ...space, own: true }), /this device/);
+  assert.equal(spaceSummary({ ...space, kind: "inbox" }), "Send files to Home PC");
+  assert.match(spaceSummary({ ...space, kind: "inbox", own: true }), /Receiving files/);
+  const progress = { state: "sending", sent: 1024, total: 2048, saved_as: null };
+  assert.equal(sendSummary(progress), "1.0 KB of 2.0 KB");
+  assert.equal(sendSummary({ ...progress, state: "complete", saved_as: "photo (2).jpg" }), "Sent · saved as photo (2).jpg");
   assert.match(filesEmptyText(blank), /Nothing is shared/);
   assert.match(filesEmptyText({ ...blank, can_share: true }), /Add a device/);
   const device = { id: "b", name: "Phone", selected: true, authority_connection: false, member: false };

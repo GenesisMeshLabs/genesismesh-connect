@@ -479,6 +479,9 @@ impl DeviceController {
             self.endpoint.is_none(),
             "Stop the session before changing sharing"
         );
+        // Files arriving in an inbox keep their staging while the shares
+        // reopen; each share's trust checkpoint is released first.
+        let _arriving = self.sharing.as_ref().map(|shares| shares.staging());
         self.sharing = None;
         if configs.is_empty() {
             return Ok(());
@@ -496,20 +499,23 @@ impl DeviceController {
                 .clone()
                 .into(),
         };
-        let mut shares = Vec::new();
-        for config in configs {
-            let state = self
-                .state_directory
-                .join("sharing")
-                .join(&config.collection_id);
-            shares.push(Arc::new(Share::open(
-                config,
-                authority.clone(),
-                self.vault.pin().clone(),
-                &state,
-            )?));
-        }
-        self.sharing = Some(Arc::new(Shares::new(shares)?));
+        let opened = configs
+            .into_iter()
+            .map(|config| {
+                let state = self
+                    .state_directory
+                    .join("sharing")
+                    .join(&config.collection_id);
+                Ok(Arc::new(Share::open(
+                    config,
+                    authority.clone(),
+                    self.vault.pin().clone(),
+                    &state,
+                )?))
+            })
+            .collect::<Result<Vec<_>>>()
+            .and_then(Shares::new);
+        self.sharing = Some(Arc::new(opened?));
         Ok(())
     }
     pub fn save_managed_share(&mut self, config: Option<ShareConfig>) -> Result<()> {
@@ -586,6 +592,7 @@ impl DeviceController {
         directory: std::path::PathBuf,
         name: String,
         recipients: Vec<String>,
+        kind: crate::session::sharing::SpaceKind,
     ) -> Result<ShareConfig> {
         let client = self
             .bridge_client
@@ -599,7 +606,7 @@ impl DeviceController {
         let trust = client.refresh(&mut self.trust).await?;
         let collection = collection.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let view = client
-            .share_space(identity, trust, collection, name, recipients)
+            .share_space(identity, trust, collection, name, recipients, kind)
             .await?;
         let config = Self::space_config(view, directory)?;
         self.set_space(config.clone()).await?;
@@ -615,6 +622,7 @@ impl DeviceController {
             policy_id: grant.policy_id,
             name: view.name,
             recipients: grant.recipients,
+            kind: view.kind,
         })
     }
     /// Stop one of this device's Spaces here, then ask the network computer
@@ -867,9 +875,18 @@ impl DeviceController {
         let Some(client) = self.bridge_client.clone() else {
             return Ok(());
         };
-        let Ok(views) = client.spaces(identity.clone(), trust.clone()).await else {
+        let Ok((mut views, inboxes)) = client.listing(identity.clone(), trust.clone()).await else {
             return Ok(());
         };
+        // Inboxes the computer did not list just now stay as last listed.
+        views.extend(inboxes.unwrap_or_else(|| {
+            self.vault
+                .spaces()
+                .iter()
+                .filter(|space| space.kind == crate::session::sharing::SpaceKind::Inbox)
+                .cloned()
+                .collect()
+        }));
         // A profile at its size limit keeps the last list.
         let Ok(stale) = self.apply_spaces(views) else {
             return Ok(());
@@ -1439,6 +1456,7 @@ mod tests {
             policy_id: format!("connect-{kept}"),
             name: "Photos".into(),
             recipients: vec![phone.clone()],
+            ..Default::default()
         };
         device.vault.save_shares(vec![config.clone()])?;
         let grant = |collection: &str, attestation: String| SpaceGrant {
@@ -1453,18 +1471,21 @@ mod tests {
                 collection: kept.clone(),
                 name: "Photos".into(),
                 host: own.clone(),
+                kind: Default::default(),
                 grant: Some(grant(&kept, renewed.clone())),
             },
             SpaceView {
                 collection: stopped.clone(),
                 name: "Old folder".into(),
                 host: own.clone(),
+                kind: Default::default(),
                 grant: Some(grant(&stopped, uuid::Uuid::new_v4().to_string())),
             },
             SpaceView {
                 collection: theirs.clone(),
                 name: "Recipes".into(),
                 host: phone.clone(),
+                kind: Default::default(),
                 grant: None,
             },
         ];
