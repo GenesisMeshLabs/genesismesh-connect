@@ -14,10 +14,9 @@ use anyhow::{Context, Result, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::Utc;
 use ed25519_dalek::SigningKey;
-use iroh::{
-    Endpoint, EndpointAddr, RelayMode,
-    endpoint::{Connection, presets},
-};
+use iroh::{Endpoint, EndpointAddr, endpoint::Connection};
+#[cfg(test)]
+use iroh::{RelayMode, endpoint::presets};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -142,12 +141,18 @@ struct SessionTicket {
 }
 
 pub(crate) fn validate_ticket(ticket: &str) -> Result<()> {
+    ticket_endpoint(ticket).map(|_| ())
+}
+
+/// The endpoint a valid session ticket names. Fresh addresses may replace a
+/// saved ticket only for this same endpoint.
+pub(crate) fn ticket_endpoint(ticket: &str) -> Result<iroh::EndpointId> {
     let ticket: SessionTicket = wire::decode(ticket.as_bytes())?;
     ensure!(
         ticket.version == 1 && !ticket.endpoint.is_empty(),
         "Invalid saved device address"
     );
-    Ok(())
+    Ok(ticket.endpoint.id)
 }
 
 #[derive(Debug, Serialize)]
@@ -192,7 +197,7 @@ impl SessionEndpoint {
             expected_node,
             share,
             None,
-            crate::NetworkMode::Local,
+            crate::Connectivity::LocalNetwork,
         )
         .await
     }
@@ -202,8 +207,8 @@ impl SessionEndpoint {
         trust: TrustSnapshot,
         expected_node: String,
         share: Option<Arc<sharing::Share>>,
-        key: Option<iroh::SecretKey>,
-        mode: crate::NetworkMode,
+        transport: Option<crate::connectivity::Transport>,
+        connectivity: crate::Connectivity,
     ) -> Result<Self> {
         ensure!(
             STANDARD
@@ -225,28 +230,30 @@ impl SessionEndpoint {
             protocols.push(wire::Protocol::Browse.alpn().to_vec());
             protocols.push(wire::Protocol::NestedDownload.alpn().to_vec());
         }
-        let base = Endpoint::builder(presets::Minimal);
-        let base = if mode == crate::NetworkMode::PublicRelay {
-            base.preset(presets::N0)
+        // Only a guided device's saved transport is announced and port-mapped.
+        let role = if transport.is_some() {
+            crate::connectivity::Role::Host
         } else {
-            base
+            crate::connectivity::Role::Plain
         };
-        let mut builder = base
-            .relay_mode(match mode {
-                crate::NetworkMode::Local => RelayMode::Disabled,
-                crate::NetworkMode::PublicRelay => RelayMode::Default,
+        let (key, port) = transport.map_or((None, None), |t| (Some(t.key), t.port));
+        let endpoint = connectivity
+            .bind(role, port, |builder| {
+                let builder = builder.alpns(protocols.clone());
+                match &key {
+                    Some(key) => builder.secret_key(key.clone()),
+                    None => builder,
+                }
             })
-            .alpns(protocols);
-        if let Some(key) = key {
-            builder = builder.secret_key(key);
-        }
-        let endpoint = builder.bind().await?;
-        if mode == crate::NetworkMode::PublicRelay
-            && timeout(DEADLINE, endpoint.online()).await.is_err()
-        {
-            endpoint.close().await;
-            anyhow::bail!("Connection relay did not become ready");
-        }
+            .await?;
+        let endpoint = connectivity
+            .ready(
+                endpoint,
+                role,
+                DEADLINE,
+                "Connection relay did not become ready",
+            )
+            .await?;
         let node_public_key = identity.public_key();
         let peers = Peers::new(
             &node_public_key,
@@ -283,6 +290,11 @@ impl SessionEndpoint {
             version: 1,
             endpoint: self.endpoint.addr(),
         })?)
+    }
+
+    /// The IPv4 port to reuse after a restart.
+    pub fn port(&self) -> Option<u16> {
+        crate::connectivity::ipv4_port(&self.endpoint)
     }
 
     pub fn received_messages(&self) -> u64 {

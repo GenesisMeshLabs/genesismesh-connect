@@ -80,7 +80,7 @@ impl Drop for AuthorityProcess {
 async fn approved_pairing_enrolls_without_copying_keys_and_requires_final_peer_proof() -> Result<()>
 {
     use connect_core::{
-        NetworkMode,
+        Connectivity,
         session::{
             bridge::{AuthorityBridge, BridgeAuthority, BridgeRoute},
             pairing::{PairCard, PairClient, PairGrant, PairHost},
@@ -105,7 +105,7 @@ async fn approved_pairing_enrolls_without_copying_keys_and_requires_final_peer_p
         authority.refresh(&mut host_store).await?,
         authority.clone(),
         "Home computer".into(),
-        NetworkMode::Local,
+        Connectivity::LocalNetwork,
     )
     .await?;
     let client_key = key();
@@ -152,7 +152,7 @@ async fn approved_pairing_enrolls_without_copying_keys_and_requires_final_peer_p
         authority.refresh(&mut host_store).await?,
         authority.clone(),
         "Home computer".into(),
-        NetworkMode::Local,
+        Connectivity::LocalNetwork,
     )
     .await?;
     let card = PairCard::parse(&pair.card().link()?)?;
@@ -1737,5 +1737,147 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
     reader.close().await;
     server.close().await;
     process.command(json!({"op":"stop"}))?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "Requires CONNECT_NA_PYTHON; guided pairing on the local network, its saved ports and the network's setting"]
+async fn guided_pairing_works_on_the_local_network_and_survives_a_computer_restart() -> Result<()> {
+    use connect_core::{
+        Connectivity,
+        device::{DeviceController, PairedDevice},
+        session::{
+            bridge::BridgeRoute,
+            pairing::{PairCard, PairGrant},
+        },
+    };
+    let (mut process, info) = AuthorityProcess::start()?;
+    let pin: TrustPin = serde_json::from_value(info["pin"].clone())?;
+    let dir = tempfile::tempdir()?;
+    let mut computer = DeviceController::prepare(
+        &dir.path().join("computer"),
+        info["url"].as_str().unwrap().into(),
+        pin,
+    )?;
+    computer.enable_managed_connectivity()?;
+    let computer_node = computer.status()?.node_public_key;
+    let invitation = process.command(json!({"op":"invite","node_public_key":computer_node}))?;
+    computer
+        .enroll(invitation["invite"].as_str().unwrap())
+        .await?;
+    computer
+        .set_network_connectivity(Connectivity::LocalNetwork)
+        .await?;
+    let status = computer.status()?.connectivity;
+    assert!(status.network_computer);
+    assert_eq!(status.effective, Connectivity::LocalNetwork);
+    assert!(
+        computer
+            .set_own_connectivity(Some(Connectivity::LocalNetwork))
+            .await
+            .is_err(),
+        "The network computer's choice is the network's setting"
+    );
+
+    let pair = computer.create_pairing("Home computer".into()).await?;
+    let card = PairCard::parse(&pair.card().link()?)?;
+    assert_eq!(card.connectivity(), Connectivity::LocalNetwork);
+    let mut phone = DeviceController::prepare_remote(&dir.path().join("phone"), card.pin.clone())?;
+    let mut joining = phone
+        .request_pairing(card.clone(), "My phone".into())
+        .await?;
+    let request = pair.pending().context("No pending approval")?;
+    let invitation =
+        process.command(json!({"op":"invite","node_public_key":request.node.clone()}))?;
+    computer.start(&request.node).await?;
+    let host = computer.status()?;
+    let completion = pair.approve(
+        &request.id,
+        PairGrant {
+            invitation: invitation["invite"].as_str().unwrap().into(),
+            route: BridgeRoute {
+                host_node: host.node_public_key.clone(),
+                ticket: host.bridge_ticket.context("Missing authority connection")?,
+            },
+            session_ticket: host.ticket.context("Missing device connection")?,
+        },
+    )?;
+    let grant = joining.grant().await?;
+    phone.use_bridge(grant.route).await?;
+    phone.enroll(&grant.invitation).await?;
+    phone.start(&card.host_node).await?;
+    phone
+        .send(&grant.session_ticket, "Phone verifies computer")
+        .await?;
+    let phone_ticket = phone.status()?.ticket.context("Missing phone connection")?;
+    phone.remember_pairing(PairedDevice {
+        name: card.host_name.clone(),
+        node: card.host_node.clone(),
+        ticket: grant.session_ticket,
+    })?;
+    let finish = joining.finish(phone_ticket);
+    let owner = async {
+        let joined = completion.await?;
+        computer
+            .send(&joined.ticket, "Computer verifies phone")
+            .await?;
+        computer.remember_pairing(PairedDevice {
+            name: request.name.clone(),
+            node: request.node.clone(),
+            ticket: joined.ticket,
+        })?;
+        joined
+            .confirm
+            .send(true)
+            .map_err(|_| anyhow::anyhow!("Phone disconnected"))?;
+        Ok::<_, anyhow::Error>(())
+    };
+    let (a, b) = tokio::join!(finish, owner);
+    a?;
+    b?;
+    joining.close().await;
+    pair.close().await;
+
+    let status = phone.status()?.connectivity;
+    assert!(!status.network_computer);
+    assert_eq!(status.network, Connectivity::LocalNetwork);
+    assert_eq!(status.effective, Connectivity::LocalNetwork);
+    phone.refresh().await?;
+    assert_eq!(
+        phone.status()?.connectivity.network,
+        Connectivity::LocalNetwork,
+        "The network computer's authenticated answer keeps the setting"
+    );
+    phone
+        .set_own_connectivity(Some(Connectivity::PublicRelays))
+        .await?;
+    assert_eq!(
+        phone.status()?.connectivity.effective,
+        Connectivity::LocalNetwork,
+        "A looser device choice never widens the network's setting"
+    );
+    phone.set_own_connectivity(None).await?;
+
+    // Restarting the network computer reuses its ports, so the phone's saved
+    // addresses keep working without relays or a new pairing.
+    let port = computer.session()?.port();
+    assert!(port.is_some());
+    computer.stop().await;
+    computer.start(&request.node).await?;
+    assert_eq!(computer.session()?.port(), port);
+    phone.refresh().await?;
+    let saved = phone
+        .paired_device()
+        .context("Missing saved computer")?
+        .ticket
+        .clone();
+    phone
+        .send(&saved, "Phone reaches the restarted computer")
+        .await?;
+
+    phone.stop().await;
+    computer.stop().await;
+    process.command(json!({"op":"stop"}))?;
+    process.child.wait()?;
     Ok(())
 }

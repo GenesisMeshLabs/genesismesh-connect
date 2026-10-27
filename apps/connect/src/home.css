@@ -508,3 +508,36 @@
     font-size: 1.8rem;
   }
 }
+.connection-choices {
+  border: 0;
+  padding: 0;
+  margin: 14px 0 0;
+}
+.connection-choices legend {
+  font-size: 0.8rem;
+  font-weight: 550;
+  color: #c8d4c8;
+  margin-bottom: 6px;
+}
+.everyday .connection-choice {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin: 10px 0 16px;
+  cursor: pointer;
+}
+.everyday .connection-choice input {
+  width: auto;
+  min-height: 0;
+  margin: 4px 0 0;
+  padding: 0;
+  accent-color: #c8ed9d;
+}
+.connection-choice strong {
+  display: block;
+  font-size: 0.87rem;
+  color: #eef5ea;
+}
+.connection-choice .home-muted {
+  display: block;
+}

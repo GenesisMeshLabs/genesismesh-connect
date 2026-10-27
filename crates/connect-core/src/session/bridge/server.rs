@@ -10,7 +10,14 @@ pub struct AuthorityBridge {
     node: String,
     peers: Mutex<super::super::Peers>,
     forwarded: Arc<AtomicU64>,
+    published: Arc<Published>,
     task: Mutex<Option<JoinHandle<()>>>,
+}
+
+/// The connection setting and session address devices receive from `Settings`.
+struct Published {
+    connectivity: crate::Connectivity,
+    session_ticket: Mutex<Option<String>>,
 }
 
 impl AuthorityBridge {
@@ -26,7 +33,7 @@ impl AuthorityBridge {
             peer,
             authority,
             None,
-            crate::NetworkMode::Local,
+            crate::Connectivity::LocalNetwork,
         )
         .await
     }
@@ -35,8 +42,8 @@ impl AuthorityBridge {
         trust: TrustSnapshot,
         peer: String,
         authority: LocalAuthority,
-        key: Option<iroh::SecretKey>,
-        mode: crate::NetworkMode,
+        transport: Option<crate::connectivity::Transport>,
+        connectivity: crate::Connectivity,
     ) -> Result<Self> {
         ensure!(
             STANDARD.decode(&peer).is_ok_and(|key| key.len() == 32)
@@ -53,37 +60,44 @@ impl AuthorityBridge {
         };
         own_credential(&credentials)?;
         let state = watch::channel(Some(Arc::new(credentials))).0;
-        let base = Endpoint::builder(presets::Minimal);
-        let base = if mode == crate::NetworkMode::PublicRelay {
-            base.preset(presets::N0)
+        // Only a guided device's saved transport is announced and port-mapped.
+        let role = if transport.is_some() {
+            crate::connectivity::Role::Host
         } else {
-            base
+            crate::connectivity::Role::Plain
         };
-        let mut builder = base
-            .relay_mode(match mode {
-                crate::NetworkMode::Local => RelayMode::Disabled,
-                crate::NetworkMode::PublicRelay => RelayMode::Default,
+        let (key, port) = transport.map_or((None, None), |t| (Some(t.key), t.port));
+        let endpoint = connectivity
+            .bind(role, port, |builder| {
+                let builder = builder.alpns(vec![
+                    Protocol::Authority.alpn().to_vec(),
+                    Protocol::Enrollment.alpn().to_vec(),
+                ]);
+                match &key {
+                    Some(key) => builder.secret_key(key.clone()),
+                    None => builder,
+                }
             })
-            .alpns(vec![
-                Protocol::Authority.alpn().to_vec(),
-                Protocol::Enrollment.alpn().to_vec(),
-            ]);
-        if let Some(key) = key {
-            builder = builder.secret_key(key);
-        }
-        let endpoint = builder.bind().await?;
-        if mode == crate::NetworkMode::PublicRelay
-            && timeout(DEADLINE, endpoint.online()).await.is_err()
-        {
-            endpoint.close().await;
-            anyhow::bail!("Authority relay did not become ready");
-        }
+            .await?;
+        let endpoint = connectivity
+            .ready(
+                endpoint,
+                role,
+                DEADLINE,
+                "Authority relay did not become ready",
+            )
+            .await?;
         let forwarded = Arc::new(AtomicU64::new(0));
+        let published = Arc::new(Published {
+            connectivity,
+            session_ticket: Mutex::new(None),
+        });
         let task = tokio::spawn(accept(
             endpoint.clone(),
             state.clone(),
             authority,
             forwarded.clone(),
+            published.clone(),
         ));
         Ok(Self {
             endpoint,
@@ -91,8 +105,22 @@ impl AuthorityBridge {
             node,
             peers: Mutex::new(peers),
             forwarded,
+            published,
             task: Mutex::new(Some(task)),
         })
+    }
+    /// The session address devices receive with the connection setting, so a
+    /// saved address can follow this computer after it changes networks.
+    pub fn publish_session(&self, ticket: Option<String>) -> Result<()> {
+        if let Some(ticket) = &ticket {
+            crate::session::validate_ticket(ticket)?;
+        }
+        *self
+            .published
+            .session_ticket
+            .lock()
+            .expect("bridge publication mutex poisoned") = ticket;
+        Ok(())
     }
     pub fn ticket(&self) -> Result<String> {
         Ok(serde_json::to_string(&Ticket {
@@ -152,6 +180,10 @@ impl AuthorityBridge {
         }
         *peers = next;
         Ok(())
+    }
+    /// The IPv4 port to reuse after a restart.
+    pub fn port(&self) -> Option<u16> {
+        crate::connectivity::ipv4_port(&self.endpoint)
     }
     pub fn forwarded_renewals(&self) -> u64 {
         self.forwarded.load(Ordering::Relaxed)
@@ -241,15 +273,18 @@ struct Budgets {
     renewals: Mutex<Budget>,
     collections: Mutex<Budget>,
     enrollments: Mutex<Budget>,
+    settings: Mutex<Budget>,
 }
 async fn exchange(
     connection: &Connection,
-    local_id: iroh::EndpointId,
+    endpoint: &Endpoint,
     credentials: &Credentials,
     authority: &LocalAuthority,
     budgets: &Budgets,
     forwarded: &AtomicU64,
+    published: &Published,
 ) -> Result<()> {
+    let local_id = endpoint.id();
     own_credential(credentials)?;
     if connection.alpn() == Protocol::Enrollment.alpn() {
         return enrollment::serve(
@@ -279,7 +314,7 @@ async fn exchange(
                 .await
                 .and_then(|docs| Ok(serde_json::to_value(docs)?))
         }
-        Operation::Renew | Operation::Evaluate | Operation::Attestation => {
+        Operation::Renew | Operation::Evaluate | Operation::Attestation | Operation::Settings => {
             let peer = authenticate_for(
                 connection,
                 local_id,
@@ -304,10 +339,10 @@ async fn exchange(
                 Utc::now(),
             )?;
             ensure!(
-                (if matches!(request.operation, Operation::Renew) {
-                    &budgets.renewals
-                } else {
-                    &budgets.collections
+                (match request.operation {
+                    Operation::Renew => &budgets.renewals,
+                    Operation::Settings => &budgets.settings,
+                    _ => &budgets.collections,
                 })
                 .lock()
                 .expect("bridge budget mutex poisoned")
@@ -342,6 +377,29 @@ async fn exchange(
                                 .context("Missing attestation")?,
                         )
                         .await
+                }
+                Operation::Settings => {
+                    credentials
+                        .trust
+                        .certificate(&peer, &credentials.expected_node, Utc::now())?;
+                    ensure!(
+                        signed.as_object().is_some_and(|o| o.is_empty()),
+                        "Unsupported settings fields"
+                    );
+                    let session_ticket = published
+                        .session_ticket
+                        .lock()
+                        .expect("bridge publication mutex poisoned")
+                        .clone();
+                    Ok(serde_json::to_value(super::NetworkSettings {
+                        connectivity: published.connectivity,
+                        authority_ticket: serde_json::to_string(&Ticket {
+                            version: 1,
+                            service: Service::Authority,
+                            endpoint: endpoint.addr(),
+                        })?,
+                        session_ticket,
+                    })?)
                 }
                 Operation::Trust => unreachable!(),
             }
@@ -456,6 +514,7 @@ async fn accept(
     state: watch::Sender<Option<Arc<Credentials>>>,
     authority: LocalAuthority,
     forwarded: Arc<AtomicU64>,
+    published: Arc<Published>,
 ) {
     let mut tasks = JoinSet::new();
     // Each short download window obtains fresh authority documents and a live
@@ -465,6 +524,8 @@ async fn accept(
         renewals: Mutex::new(Budget::new(8)),
         collections: Mutex::new(Budget::new(480)),
         enrollments: Mutex::new(Budget::new(3)),
+        // Each device asks once per trust refresh (every 30 seconds).
+        settings: Mutex::new(Budget::new(120)),
     });
     loop {
         tokio::select! {
@@ -473,14 +534,14 @@ async fn accept(
                 if tasks.len() >= 4 || !arrivals.allow() { incoming.refuse(); continue; }
                 let mut changes = state.subscribe();
                 let Some(credentials) = changes.borrow_and_update().clone() else { incoming.refuse(); continue };
-                let (authority, forwarded, budgets, local_id) = (authority.clone(), forwarded.clone(), budgets.clone(), endpoint.id());
+                let (authority, forwarded, budgets, local, published) = (authority.clone(), forwarded.clone(), budgets.clone(), endpoint.clone(), published.clone());
                 tasks.spawn(async move {
                     let incoming = timeout(DEADLINE, incoming);
                     let connection = tokio::select! { biased; _ = changes.changed() => return, result = incoming => match result { Ok(Ok(c)) => c, _ => return } };
                     limit_streams(&connection);
                     tokio::select! { biased;
                         _ = changes.changed() => {},
-                        _ = timeout(DEADLINE, exchange(&connection, local_id, &credentials, &authority, &budgets, &forwarded)) => {},
+                        _ = timeout(DEADLINE, exchange(&connection, &local, &credentials, &authority, &budgets, &forwarded, &published)) => {},
                     }
                     connection.close(0u32.into(), b"authority operation ended");
                 });

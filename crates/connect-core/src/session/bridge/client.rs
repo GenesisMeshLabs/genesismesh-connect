@@ -9,15 +9,30 @@ pub struct BridgeRoute {
     pub host_node: String,
 }
 
+/// The endpoint a valid authority ticket names.
+pub(crate) fn endpoint_of(ticket: &str) -> Result<iroh::EndpointId> {
+    let ticket: Ticket = wire::decode(ticket.as_bytes())?;
+    ensure!(
+        ticket.version == 1 && !ticket.endpoint.is_empty(),
+        "Invalid desktop authority ticket"
+    );
+    Ok(ticket.endpoint.id)
+}
+
 #[derive(Clone)]
 pub struct BridgeAuthority {
     route: BridgeRoute,
     pub(super) destination: EndpointAddr,
+    connectivity: crate::Connectivity,
+    /// Guided devices look their network computer up on the local network.
+    guided: bool,
     endpoint: Arc<OnceCell<Endpoint>>,
     pub(super) outgoing: Arc<Semaphore>,
 }
 
 impl BridgeAuthority {
+    /// Reaches the desktop the way its ticket was created; a device that knows
+    /// its own setting uses `with_connectivity`.
     pub fn new(route: BridgeRoute) -> Result<Self> {
         let ticket: Ticket = wire::decode(route.ticket.as_bytes())?;
         ensure!(
@@ -32,10 +47,31 @@ impl BridgeAuthority {
         );
         Ok(Self {
             route,
+            connectivity: crate::Connectivity::of_destination(&ticket.endpoint),
             destination: ticket.endpoint,
+            guided: false,
             endpoint: Arc::new(OnceCell::new()),
             outgoing: Arc::new(Semaphore::new(2)),
         })
+    }
+
+    /// A guided device's client: the device's own setting, and local
+    /// network lookups of its network computer.
+    pub fn with_connectivity(self, connectivity: crate::Connectivity) -> Self {
+        Self {
+            connectivity,
+            guided: true,
+            endpoint: Arc::new(OnceCell::new()),
+            ..self
+        }
+    }
+
+    /// Close this client's endpoint, shared with its clones, before a
+    /// replacement takes over.
+    pub async fn close(&self) {
+        if let Some(endpoint) = self.endpoint.get() {
+            endpoint.close().await;
+        }
     }
 
     pub fn route(&self) -> &BridgeRoute {
@@ -45,22 +81,37 @@ impl BridgeAuthority {
     pub(super) async fn endpoint(&self) -> Result<&Endpoint> {
         self.endpoint
             .get_or_try_init(|| async {
-                let base = Endpoint::builder(presets::Minimal);
-                let base = if self.destination.relay_urls().next().is_some() {
-                    base.preset(presets::N0)
-                } else {
-                    base
-                };
-                Ok(base
-                    .relay_mode(if self.destination.relay_urls().next().is_some() {
-                        RelayMode::Default
-                    } else {
-                        RelayMode::Disabled
-                    })
-                    .bind()
-                    .await?)
+                let role = crate::connectivity::Role::Client;
+                let endpoint = self.connectivity.builder(role).bind().await?;
+                if self.guided {
+                    crate::connectivity::discover(&endpoint, role);
+                }
+                Ok(endpoint)
             })
             .await
+    }
+
+    /// The network computer's current connection setting and addresses. The
+    /// answer must name the same endpoints this device already trusts.
+    pub async fn settings(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+    ) -> Result<super::NetworkSettings> {
+        let value = self
+            .authenticated(identity, trust, Operation::Settings, &serde_json::json!({}))
+            .await?;
+        let settings: super::NetworkSettings = serde_json::from_value(value)?;
+        ensure!(
+            settings.authority_ticket.len() <= 16 * 1024
+                && endpoint_of(&settings.authority_ticket)? == self.destination.id,
+            "The network computer answered for another endpoint"
+        );
+        if let Some(ticket) = &settings.session_ticket {
+            ensure!(ticket.len() <= 16 * 1024, "Session address too long");
+            crate::session::ticket_endpoint(ticket)?;
+        }
+        Ok(settings)
     }
 
     /// Public, signed documents solve trust bootstrap after suspension. The

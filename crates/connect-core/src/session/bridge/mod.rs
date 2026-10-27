@@ -5,6 +5,7 @@ mod server;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use client::endpoint_of;
 pub use client::{BridgeAuthority, BridgeRoute};
 pub use server::AuthorityBridge;
 
@@ -13,9 +14,11 @@ use crate::authority::{EnrolledDevice, LocalAuthority, TrustDocuments, TrustStor
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use iroh::{
-    Endpoint, EndpointAddr, RelayMode,
-    endpoint::{Connection, RecvStream, SendStream, presets},
+    Endpoint, EndpointAddr,
+    endpoint::{Connection, RecvStream, SendStream},
 };
+#[cfg(test)]
+use iroh::{RelayMode, endpoint::presets};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -63,6 +66,19 @@ enum Operation {
     Renew,
     Evaluate,
     Attestation,
+    Settings,
+}
+
+/// What a network computer tells its devices about reaching it. It is only
+/// sent over a mutually authenticated bridge connection, so a device can treat
+/// it as its own network computer's choice. It never grants permission.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NetworkSettings {
+    pub connectivity: crate::Connectivity,
+    /// The bridge's current ticket: the same endpoint, with fresh addresses.
+    pub authority_ticket: String,
+    /// The network computer's current session ticket, while its session runs.
+    pub session_ticket: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]

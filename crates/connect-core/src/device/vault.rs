@@ -76,6 +76,22 @@ struct Record {
     #[serde(default)]
     #[zeroize(skip)]
     saved_share: Option<crate::session::sharing::ShareConfig>,
+    /// The network computer's choice; on that computer, the owner's own.
+    #[serde(default)]
+    #[zeroize(skip)]
+    network_connectivity: crate::Connectivity,
+    /// This device's stricter choice, if any.
+    #[serde(default)]
+    #[zeroize(skip)]
+    own_connectivity: Option<crate::Connectivity>,
+    /// Ports the session and bridge endpoints listened on, reused so saved
+    /// addresses stay valid when the app restarts.
+    #[serde(default)]
+    #[zeroize(skip)]
+    session_port: Option<u16>,
+    #[serde(default)]
+    #[zeroize(skip)]
+    bridge_port: Option<u16>,
 }
 
 pub(super) struct Vault {
@@ -106,6 +122,10 @@ impl Vault {
             auto_connect: false,
             consumer_mode: false,
             saved_share: None,
+            network_connectivity: crate::Connectivity::default(),
+            own_connectivity: None,
+            session_port: None,
+            bridge_port: None,
         };
         persist(path, &record, true)?;
         Ok(Self {
@@ -217,6 +237,34 @@ impl Vault {
         };
         Ok(iroh::SecretKey::from(*seed))
     }
+    /// The saved transport identity and its last port.
+    pub fn saved_transport(&mut self, bridge: bool) -> Result<crate::connectivity::Transport> {
+        Ok(crate::connectivity::Transport {
+            key: self.transport(bridge)?,
+            port: if bridge {
+                self.record.bridge_port
+            } else {
+                self.record.session_port
+            },
+        })
+    }
+    pub fn save_transport_port(&mut self, bridge: bool, port: Option<u16>) -> Result<()> {
+        let saved = if bridge {
+            self.record.bridge_port
+        } else {
+            self.record.session_port
+        };
+        if port.is_none() || saved == port {
+            return Ok(());
+        }
+        self.update(|record| {
+            if bridge {
+                record.bridge_port = port
+            } else {
+                record.session_port = port
+            }
+        })
+    }
     pub fn paired(&self) -> Option<&super::PairedDevice> {
         self.record
             .peers
@@ -255,6 +303,72 @@ impl Vault {
     }
     pub fn auto_connect(&self) -> bool {
         self.record.auto_connect
+    }
+    pub fn network_connectivity(&self) -> crate::Connectivity {
+        self.record.network_connectivity
+    }
+    pub fn own_connectivity(&self) -> Option<crate::Connectivity> {
+        self.record.own_connectivity
+    }
+    pub fn save_network_connectivity(&mut self, connectivity: crate::Connectivity) -> Result<()> {
+        self.update(|record| record.network_connectivity = connectivity)
+    }
+    pub fn save_own_connectivity(
+        &mut self,
+        connectivity: Option<crate::Connectivity>,
+    ) -> Result<()> {
+        self.update(|record| record.own_connectivity = connectivity)
+    }
+    /// Apply the network computer's authenticated answer in one write: fresh
+    /// addresses for the saved authority route and for the computer's saved
+    /// session, and its connection setting. If either address names another
+    /// endpoint, the whole answer is refused and nothing changes. Returns
+    /// whether the authority route changed.
+    pub fn apply_network_answer(
+        &mut self,
+        authority_ticket: String,
+        session_ticket: Option<String>,
+        connectivity: crate::Connectivity,
+    ) -> Result<bool> {
+        let route = self.record.bridge_route.clone();
+        if let Some(route) = &route {
+            ensure!(
+                crate::session::bridge::endpoint_of(&authority_ticket)?
+                    == crate::session::bridge::endpoint_of(&route.ticket)?,
+                "The authority address names another endpoint"
+            );
+        }
+        let host = route.as_ref().map(|r| r.host_node.clone());
+        let saved = host
+            .as_ref()
+            .and_then(|host| self.record.peers.iter().find(|p| &p.node == host))
+            .map(|p| p.ticket.clone());
+        if let (Some(ticket), Some(saved)) = (&session_ticket, &saved) {
+            ensure!(
+                crate::session::ticket_endpoint(ticket)? == crate::session::ticket_endpoint(saved)?,
+                "The device address names another endpoint"
+            );
+        }
+        let route_changed = route.as_ref().is_some_and(|r| r.ticket != authority_ticket);
+        let session = session_ticket.filter(|ticket| saved.as_ref().is_some_and(|s| s != ticket));
+        if !route_changed && session.is_none() && self.record.network_connectivity == connectivity {
+            return Ok(false);
+        }
+        self.update(|record| {
+            if route_changed && let Some(route) = record.bridge_route.as_mut() {
+                route.ticket = authority_ticket;
+            }
+            if let (Some(ticket), Some(host)) = (&session, &host) {
+                for peer in record.peers.iter_mut().filter(|p| &p.node == host) {
+                    peer.ticket = ticket.clone();
+                }
+                if let Some(paired) = record.paired.as_mut().filter(|p| &p.node == host) {
+                    paired.ticket = ticket.clone();
+                }
+            }
+            record.network_connectivity = connectivity;
+        })?;
+        Ok(route_changed)
     }
     pub fn consumer_mode(&self) -> bool {
         self.record.consumer_mode

@@ -78,13 +78,15 @@ pub struct ProbeEndpoint {
 
 impl ProbeEndpoint {
     pub async fn bind(mode: NetworkMode) -> Result<Self> {
-        // No public address lookup/publishing: peers exchange explicit tickets.
+        // No public address lookup/publishing and no router port mapping:
+        // peers exchange explicit tickets.
         let relay_mode = match mode {
             NetworkMode::Local => RelayMode::Disabled,
             NetworkMode::PublicRelay => RelayMode::Default,
         };
         let endpoint = Endpoint::builder(presets::Minimal)
             .relay_mode(relay_mode)
+            .portmapper_config(iroh::endpoint::PortmapperConfig::Disabled)
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await
