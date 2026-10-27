@@ -182,6 +182,24 @@ struct Done {
     saved_as: Option<String>,
     at: std::time::SystemTime,
 }
+/// The authority could not be asked just now, for example under load: not a
+/// refusal, so the sender asks again.
+#[derive(Debug)]
+struct Unavailable;
+impl std::fmt::Display for Unavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The network computer could not be asked just now.")
+    }
+}
+/// The answer to a window whose decision failed: busy when the authority
+/// could not be asked, denied otherwise.
+fn undecided(error: &anyhow::Error) -> Header {
+    if error.is::<Unavailable>() {
+        Header::Busy
+    } else {
+        Header::Denied
+    }
+}
 /// Why a window was not taken.
 enum Refusal {
     Denied,
@@ -738,7 +756,11 @@ impl Share {
         token: &str,
     ) -> Result<Decided> {
         let mut store = self.trust.lock().await;
-        let trust = self.authority.refresh(&mut store).await?;
+        let trust = self
+            .authority
+            .refresh(&mut store)
+            .await
+            .context(Unavailable)?;
         drop(store);
         trust.certificate(peer, &credentials.expected_node, Utc::now())?;
         trust.certificate(
@@ -759,9 +781,12 @@ impl Share {
         let attestation = self
             .authority
             .attestation(&credentials.identity, &trust, &attestation_id)
-            .await?["attestation"]
+            .await
+            .context(Unavailable)?["attestation"]
             .clone();
         // The whole file, never the window: chunking never bypasses a size gate.
+        // A decision that says no is a refusal; one that could not be had is
+        // not.
         let decision = self
             .authority
             .evaluate(
@@ -773,7 +798,8 @@ impl Share {
                     "peer_node":credentials.expected_node,"sha256":request.sha256,"size":request.size}),
                 "connect.inbox.write",
             )
-            .await?["decision"]
+            .await
+            .context(Unavailable)?["decision"]
             .clone();
         trust.read_decision(
             &decision,
@@ -836,18 +862,20 @@ pub(in crate::session) async fn serve(
         Ok(token) => token,
         Err(refusal) => return refuse(connection, send, refusal.header(), None).await,
     };
+    // A sender over its rate tries again in a moment.
     if share.incoming.admit(&sender, &request).is_err() {
-        return refuse(connection, send, Header::Denied, None).await;
+        return refuse(connection, send, Header::Busy, None).await;
     }
     // Windows from several senders take turns.
     let Ok(Ok(turn)) = timeout(WAIT_FOR_TURN, share.budget.clone().acquire_owned()).await else {
         return refuse(connection, send, Header::Busy, None).await;
     };
-    let Ok(decided) = share
+    let decided = match share
         .decide_incoming(credentials, &peer, &request, &token)
         .await
-    else {
-        return refuse(connection, send, Header::Denied, Some(turn)).await;
+    {
+        Ok(decided) => decided,
+        Err(error) => return refuse(connection, send, undecided(&error), Some(turn)).await,
     };
     let (mut file, mut whole) = match share.incoming.claim(&sender, &token, &request) {
         Ok(claimed) => claimed,
@@ -1002,7 +1030,9 @@ pub(in crate::session) async fn transmit(
         } => (intent, decision, attestation, prepared),
         Header::Denied => anyhow::bail!("This device isn't accepting files from you."),
         Header::Busy => {
-            anyhow::bail!("This device is receiving other files. Try again shortly.")
+            anyhow::bail!(
+                "This device is receiving other files, or its network computer did not answer. Try again shortly."
+            )
         }
         Header::Resume { token, received } => {
             uuid::Uuid::parse_str(&token)?;
@@ -1428,6 +1458,21 @@ mod tests {
         assert!(tokens.iter().all(|token| !incoming.saving(token).exists()));
         assert_eq!(std::fs::read_dir(folder.path())?.count(), 2);
         Ok(())
+    }
+
+    #[test]
+    fn an_authority_that_cannot_be_asked_is_not_a_refusal() {
+        let unreachable = anyhow::anyhow!("connection refused").context(Unavailable);
+        assert!(matches!(undecided(&unreachable), Header::Busy));
+        // However deep it sits, as long as the decision could not be had.
+        assert!(matches!(
+            undecided(&unreachable.context("Sending failed")),
+            Header::Busy
+        ));
+        assert!(matches!(
+            undecided(&anyhow::anyhow!("Read denied by authority")),
+            Header::Denied
+        ));
     }
 
     #[test]

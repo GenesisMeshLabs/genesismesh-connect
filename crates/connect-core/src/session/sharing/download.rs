@@ -439,8 +439,15 @@ impl Share {
             self.downloads.forget(&token);
             return Err(Expired.into());
         };
+        // An authority that could not be asked just now, for example under
+        // load, is not a refusal: the requester asks again.
+        const UNREACHABLE: Busy = Busy("The network computer could not be asked just now.");
         let mut store = self.trust.lock().await;
-        let trust = self.authority.refresh(&mut store).await?;
+        let trust = self
+            .authority
+            .refresh(&mut store)
+            .await
+            .context(UNREACHABLE)?;
         drop(store);
         trust.certificate(peer, &credentials.expected_node, Utc::now())?;
         trust.certificate(
@@ -460,11 +467,12 @@ impl Share {
         let attestation = self
             .authority
             .attestation(&credentials.identity, &trust, &attestation_id)
-            .await?["attestation"]
+            .await
+            .context(UNREACHABLE)?["attestation"]
             .clone();
         let decision = self.authority.evaluate(&credentials.identity,&trust,&attestation_id,&context,
             json!({"collection_id":request.collection_id,"file_name":relative_name(request),"peer_node":credentials.expected_node,
-                "sha256":intent["sha256"],"size":request.size}),"connect.collection.read").await?["decision"].clone();
+                "sha256":intent["sha256"],"size":request.size}),"connect.collection.read").await.context(UNREACHABLE)?["decision"].clone();
         trust.read_decision(
             &decision,
             &attestation,
@@ -679,7 +687,9 @@ pub(in crate::session) async fn receive(
             "This file isn't available with the current folder permission. Share the folder again on the computer to allow larger files."
         ),
         Header::Busy => {
-            anyhow::bail!("The sharing device is busy with other downloads. Try again shortly.")
+            anyhow::bail!(
+                "The sharing device is busy with other downloads, or its network computer did not answer. Try again shortly."
+            )
         }
         Header::Expired => anyhow::bail!("The sharing device no longer has this download."),
     };
@@ -803,6 +813,13 @@ pub(in crate::session) async fn receive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_authority_that_cannot_be_asked_is_busy() {
+        let error = anyhow::anyhow!("connection refused")
+            .context(Busy("The network computer could not be asked just now."));
+        assert!(error.is::<Busy>() && !error.is::<Expired>());
+    }
 
     #[tokio::test]
     async fn snapshots_left_behind_go_and_an_idle_download_gives_its_place() -> Result<()> {
