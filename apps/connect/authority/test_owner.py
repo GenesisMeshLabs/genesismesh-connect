@@ -94,12 +94,39 @@ class OwnerTests(unittest.TestCase):
                 with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"Bad",["not a key"])
                 with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"Wrong subject",[phone],"someone-else")
                 with self.assertRaises(ValueError): owner.space_share(host,"../escape","Escape",[phone])
+                # Devices refuse every control character in a name; so does this.
+                for bad in ("Tab\tname","Delete\x7f","C1\x85"):
+                    with self.assertRaises(Refused,msg=repr(bad)): owner.space_share(host,str(uuid.uuid4()),bad,[phone])
+                # A folder shared before Spaces has a policy but no entry: no
+                # device can claim it, only this computer can adopt it.
+                legacy=str(uuid.uuid4())
+                owner.share(host,phone,legacy,owner.subject(host))
+                with self.assertRaises(Refused): owner.space_share(other,legacy,"Taken",[phone])
+                with self.assertRaises(Refused): owner.space_share(host,legacy,"Taken",[phone])
+                adopted=owner.space_share(host,legacy,"Old folder",[phone,tablet],owner.subject(host),adopt=True)
+                self.assertEqual((adopted["policy_version"],adopted["recipients"]),(2,sorted([phone,tablet])))
+                self.assertTrue(owner.space_remove(host,legacy))
+                self.assertEqual(active("connect-"+legacy),[])
                 # Renewal re-grants Spaces close to their end, with a new attestation.
                 spaces=owner.space_list()
                 spaces[0]["valid_until"]=(datetime.now(timezone.utc)+timedelta(days=2)).isoformat()
                 owner._save_spaces(spaces)
-                self.assertEqual(owner.space_renew(),[collection])
-                renewed=owner.space_list()[0]
+                # A renewal that fails for one Space keeps the others it made.
+                broken=owner.space_share(host,str(uuid.uuid4()),"Broken",[phone])
+                spaces=owner.space_list()
+                for space in spaces:
+                    space["valid_until"]=(datetime.now(timezone.utc)+timedelta(days=2)).isoformat()
+                owner._save_spaces(spaces)
+                grant=owner._grant
+                def failing(host_node,subject,collection_id,recipients):
+                    if collection_id==broken["collection"]: raise Refused("Simulated authority failure")
+                    return grant(host_node,subject,collection_id,recipients)
+                owner._grant=failing
+                try: self.assertEqual(owner.space_renew(),[collection])
+                finally: owner._grant=grant
+                self.assertEqual(owner.space_renew(days=3),[broken["collection"]],"It is renewed on the next pass")
+                self.assertTrue(owner.space_remove(host,broken["collection"]))
+                renewed=next(s for s in owner.space_list() if s["collection"]==collection)
                 self.assertEqual(renewed["policy_version"],3)
                 self.assertNotEqual(renewed["attestation_id"],changed["attestation_id"])
                 self.assertEqual(owner.space_renew(),[])

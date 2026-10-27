@@ -26,6 +26,9 @@ struct Published {
     reported: Mutex<std::collections::BTreeMap<String, String>>,
     /// The owner runtime, where this computer runs one.
     owner: Mutex<Option<crate::owner::OwnerHandle>>,
+    /// The Space registry as the network computer last published it, so
+    /// listing never waits for the owner runtime.
+    spaces: Mutex<Option<Vec<crate::owner::Space>>>,
 }
 
 impl AuthorityBridge {
@@ -102,6 +105,7 @@ impl AuthorityBridge {
             members: Mutex::new(None),
             reported: Mutex::new(Default::default()),
             owner: Mutex::new(None),
+            spaces: Mutex::new(None),
         });
         let task = tokio::spawn(accept(
             endpoint.clone(),
@@ -140,6 +144,15 @@ impl AuthorityBridge {
             .members
             .lock()
             .expect("bridge publication mutex poisoned") = Some(members);
+    }
+    /// The Space registry devices list from; the network computer publishes it
+    /// at least every 30 seconds.
+    pub fn publish_spaces(&self, spaces: Vec<crate::owner::Space>) {
+        *self
+            .published
+            .spaces
+            .lock()
+            .expect("bridge publication mutex poisoned") = Some(spaces);
     }
     /// Answer devices' Space requests through this owner runtime.
     pub fn serve_owner(&self, owner: crate::owner::OwnerHandle) {
@@ -536,10 +549,11 @@ async fn ask(owner: &crate::owner::OwnerHandle, call: crate::owner::OwnerCall) -
         .context("The owner runtime stopped")?
 }
 
-/// One Space operation for an authenticated, saved device, through the owner
-/// runtime. The device can only act as the host of its own Spaces, share
-/// with devices this computer saved (or this computer), and see the Spaces
-/// that it hosts or that name it.
+/// One Space operation for an authenticated, saved device. Lists come from
+/// the published registry; changes go through the owner runtime. The device
+/// can only act as the host of its own Spaces, share with devices this
+/// computer saved (or this computer), and see the Spaces that it hosts or
+/// that name it.
 async fn spaces(
     operation: Operation,
     request: Value,
@@ -572,8 +586,12 @@ async fn spaces(
                 request.as_object().is_some_and(|o| o.is_empty()),
                 "Unsupported spaces fields"
             );
-            let list: Vec<crate::owner::Space> =
-                serde_json::from_value(ask(&owner, crate::owner::OwnerCall::List).await?)?;
+            let list = published
+                .spaces
+                .lock()
+                .expect("bridge publication mutex poisoned")
+                .clone()
+                .context("The shared folders are not ready")?;
             Ok(serde_json::to_value(SpacesAnswer {
                 spaces: list
                     .into_iter()
@@ -605,20 +623,39 @@ async fn spaces(
                 )
                 .await?,
             )?;
+            // The registry as of this change, until the next publication.
+            if let Some(list) = published
+                .spaces
+                .lock()
+                .expect("bridge publication mutex poisoned")
+                .as_mut()
+            {
+                list.retain(|s| s.collection != space.collection);
+                list.push(space.clone());
+            }
             Ok(serde_json::to_value(
                 SpaceView::of(space, node).context("Unexpected shared folder")?,
             )?)
         }
         Operation::UnshareSpace => {
             let request: UnshareSpaceRequest = serde_json::from_value(request)?;
-            ask(
+            let removed = ask(
                 &owner,
                 crate::owner::OwnerCall::Remove {
                     host: node.to_owned(),
-                    collection: request.collection,
+                    collection: request.collection.clone(),
                 },
             )
-            .await
+            .await?;
+            if let Some(list) = published
+                .spaces
+                .lock()
+                .expect("bridge publication mutex poisoned")
+                .as_mut()
+            {
+                list.retain(|s| s.collection != request.collection || s.host != node);
+            }
+            Ok(removed)
         }
         _ => anyhow::bail!("Unsupported spaces operation"),
     }

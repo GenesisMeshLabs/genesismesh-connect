@@ -421,7 +421,21 @@ fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
                 .is_err()
         );
 
-        // Only the PC can stop its Spaces.
+        // Only the PC can change or stop its Spaces: the phone cannot take
+        // the Space over through the server, nor stop it.
+        let decoy = directory.path().join("decoy");
+        std::fs::create_dir(&decoy)?;
+        assert!(
+            runtime
+                .block_on(phone.share_space(
+                    Some(shared.collection_id.clone()),
+                    decoy,
+                    "Taken".into(),
+                    vec![server_node.clone()],
+                ))
+                .is_err(),
+            "The server refuses a Space that belongs to another device"
+        );
         assert!(
             runtime
                 .block_on(phone.unshare_space(&shared.collection_id))
@@ -447,6 +461,23 @@ fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
                 .is_err(),
             "A stopped Space serves nothing"
         );
+        // Even a device that kept serving the folder releases nothing: the
+        // authority no longer has an active policy for it.
+        runtime.block_on(pc.set_space(shared.clone()))?;
+        let refused = runtime.block_on(phone.session()?.browse_from(
+            &pc_node,
+            &pc_ticket,
+            None,
+            Vec::new(),
+            Some(shared.collection_id.clone()),
+        ));
+        assert!(
+            refused
+                .err()
+                .is_some_and(|e| e.to_string().contains("access was not allowed")),
+            "The authority denies a stopped Space"
+        );
+        runtime.block_on(pc.drop_space(&shared.collection_id))?;
         Ok::<_, anyhow::Error>((pc, phone))
     })();
     stop(child)?;

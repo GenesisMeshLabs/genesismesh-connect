@@ -163,9 +163,10 @@ central denial audit.
 Receipts contain filenames, identities and hashes, but no file contents. Treat
 that metadata as private. Each shared folder keeps its receipts for 90 days,
 the period devices keep their own history. Before each write it drops receipts
-older than that and, if the store is still near its limits (2,048 entries,
-32 MiB, 512 KiB per envelope), the oldest ones until 1,792 entries and 24 MiB
-remain, so sharing never stops for lack of room. Preparation reserves space
+older than that, and once a folder holds 1,792 receipts or 24 MiB of them it
+drops the oldest to stay below that, so a busy folder keeps about its latest
+1,800 receipts and sharing never stops for lack of room. The store's hard
+limits (2,048 entries, 32 MiB, 512 KiB per envelope) remain as a backstop. Preparation reserves space
 for one maximum-size confirmation envelope. Copy receipts elsewhere if you
 need them longer; keeping the full history on the network computer is part of
 Activity. A failure after data

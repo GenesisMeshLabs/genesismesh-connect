@@ -125,8 +125,10 @@ pub struct DeviceController {
     state_directory: std::path::PathBuf,
     sharing: Option<Arc<Shares>>,
     pairing: Option<Arc<crate::session::pairing::PairHost>>,
-    /// On the network computer: its owner runtime, for devices' Spaces.
+    /// On the network computer: its owner runtime, for devices' Space requests,
+    /// and the registry devices list from.
     owner: Option<crate::owner::OwnerHandle>,
+    spaces: Option<Vec<crate::owner::Space>>,
     /// When this device last asked its network computer for its settings.
     settings_checked: Option<std::time::Instant>,
 }
@@ -253,6 +255,7 @@ impl DeviceController {
             sharing: None,
             pairing: None,
             owner: None,
+            spaces: None,
             settings_checked: None,
         })
     }
@@ -567,6 +570,13 @@ impl DeviceController {
         }
         self.owner = Some(owner);
     }
+    /// On the network computer: the Space registry devices list from.
+    pub fn publish_spaces(&mut self, spaces: Vec<crate::owner::Space>) {
+        if let Some(host) = &self.bridge_host {
+            host.publish_spaces(spaces.clone());
+        }
+        self.spaces = Some(spaces);
+    }
     /// Ask the network computer for a Space on `directory`, shared with
     /// `recipients`, then share it. `collection` changes an existing Space.
     pub async fn share_space(
@@ -618,9 +628,10 @@ impl DeviceController {
             "Only the device sharing a folder can stop sharing it"
         );
         self.drop_space(collection).await?;
+        // The network computer's own Spaces are removed by its owner runtime.
         let (Some(client), Some(device)) = (self.bridge_client.clone(), self.device.as_ref())
         else {
-            return Ok(true);
+            return Ok(false);
         };
         let identity = device.session_identity()?;
         let confirmed = async {
@@ -1017,6 +1028,9 @@ impl DeviceController {
                 host.publish_members(self.vault.peers().to_vec());
                 if let Some(owner) = &self.owner {
                     host.serve_owner(owner.clone());
+                }
+                if let Some(spaces) = &self.spaces {
+                    host.publish_spaces(spaces.clone());
                 }
             }
             let endpoint = Arc::new(

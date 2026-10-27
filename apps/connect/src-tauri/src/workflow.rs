@@ -384,8 +384,10 @@ async fn answer_owner(
 /// shared before Spaces a place in the registry.
 async fn keep_spaces(app: tauri::AppHandle) {
     let mut renewed: Option<std::time::Instant> = None;
+    let mut wait = std::time::Duration::from_secs(5);
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        tokio::time::sleep(wait).await;
+        wait = std::time::Duration::from_secs(30);
         if let Err(error) = spaces_once(&app, &mut renewed).await {
             app.state::<WorkflowState>().slot.lock().await.problem = Some(error.to_string());
         }
@@ -398,7 +400,12 @@ async fn spaces_once(
 ) -> anyhow::Result<()> {
     let state = app.state::<WorkflowState>();
     let desktop = app.state::<crate::desktop::DesktopState>();
-    // This computer's own view first; the two locks are never held together.
+    // Sharing and stopping take the owner lock too, so this snapshot of this
+    // computer's own Spaces holds until the registry work below is done.
+    let mut owner = state.slot.lock().await;
+    if owner.runtime.is_none() {
+        return Ok(());
+    }
     let status = {
         let slot = desktop.slot.lock().await;
         match slot.controller.as_ref() {
@@ -407,12 +414,6 @@ async fn spaces_once(
         }
     };
     let renew = renewed.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(24 * 3600));
-    let legacy: Vec<_> = status
-        .shares
-        .iter()
-        .filter(|share| share.name.is_empty())
-        .cloned()
-        .collect();
     let mut recipients: Vec<String> = Vec::new();
     for node in status.devices.iter().map(|d| &d.node) {
         if node != &status.node_public_key && !recipients.contains(node) {
@@ -422,66 +423,90 @@ async fn spaces_once(
     recipients.truncate(31);
     let node = status.node_public_key.clone();
     let subject = status.sharing_subject.clone();
-    let (spaces, moved) = {
-        let mut owner = state.slot.lock().await;
-        let Some(mut runtime) = owner.runtime.take() else {
-            return Ok(());
-        };
-        let outcome = tokio::task::spawn_blocking(move || {
-            let result = (|| {
-                if renew {
-                    runtime.space_renew()?;
-                }
-                let mut moved = Vec::new();
-                if let Some(subject) = subject.filter(|_| !recipients.is_empty()) {
-                    for share in legacy {
-                        let name: String = share
-                            .directory
-                            .file_name()
-                            .map_or_else(
-                                || "Shared folder".into(),
-                                |s| s.to_string_lossy().into_owned(),
-                            )
-                            .chars()
-                            .take(64)
-                            .collect();
-                        let space = runtime.space_share(
-                            &node,
-                            &share.collection_id,
-                            &name,
-                            &recipients,
-                            Some(&subject),
-                        )?;
-                        moved.push((space, share.directory));
+    let shares = status.shares.clone();
+    let mut runtime = owner.runtime.take().expect("runtime checked above");
+    let outcome = tokio::task::spawn_blocking(move || {
+        let result = (|| {
+            if renew {
+                runtime.space_renew()?;
+            }
+            // A folder shared before Spaces keeps its policy and gets an entry.
+            let mut moved = Vec::new();
+            if let Some(subject) = subject.filter(|_| !recipients.is_empty()) {
+                for share in shares.iter().filter(|share| share.name.is_empty()) {
+                    let name = folder_name(&share.directory);
+                    if let Ok(space) = runtime.space_adopt(
+                        &node,
+                        &share.collection_id,
+                        &name,
+                        &recipients,
+                        &subject,
+                    ) {
+                        moved.push((space, share.directory.clone()));
                     }
                 }
-                Ok::<_, anyhow::Error>((runtime.space_list()?, moved))
-            })();
-            (runtime, result)
-        })
-        .await
-        .map_err(|_| anyhow::anyhow!("The network computer is not ready"))?;
-        owner.runtime = Some(outcome.0);
-        outcome.1?
-    };
+            }
+            // This computer's Spaces it no longer shares are removed again,
+            // for example after a stop the runtime could not finish.
+            let mut spaces = runtime.space_list()?;
+            for space in spaces.iter().filter(|space| {
+                space.host == node && !shares.iter().any(|s| s.collection_id == space.collection)
+            }) {
+                let _ = runtime.space_remove(&node, &space.collection);
+            }
+            spaces = runtime.space_list()?;
+            Ok::<_, anyhow::Error>((spaces, moved))
+        })();
+        (runtime, result)
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("The network computer is not ready"))?;
+    owner.runtime = Some(outcome.0);
+    let (spaces, moved) = outcome.1?;
     if renew {
         *renewed = Some(std::time::Instant::now());
     }
     let mut slot = desktop.slot.lock().await;
+    drop(owner);
     let Some(device) = slot.controller.as_mut() else {
         return Ok(());
     };
     for (space, directory) in moved {
-        let view = SpaceView::of(space, &status.node_public_key)
-            .ok_or_else(|| anyhow::anyhow!("Unexpected shared folder"))?;
-        device
-            .set_space(DeviceController::space_config(view, directory)?)
-            .await?;
+        // Only a folder still shared as it was gets its new form.
+        let still = device
+            .status()?
+            .shares
+            .iter()
+            .any(|s| s.collection_id == space.collection && s.name.is_empty());
+        if let Some(view) = SpaceView::of(space, &status.node_public_key).filter(|_| still) {
+            device
+                .set_space(DeviceController::space_config(view, directory)?)
+                .await?;
+        }
     }
+    device.publish_spaces(spaces.clone());
     let views = spaces
         .into_iter()
         .filter_map(|space| SpaceView::of(space, &status.node_public_key))
         .collect();
     device.apply_spaces(views)?;
     Ok(())
+}
+
+/// A Space's name from its folder: at most 64 characters, none of them
+/// control characters.
+pub(crate) fn folder_name(directory: &std::path::Path) -> String {
+    let name: String = directory
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(64)
+        .collect();
+    if name.trim().is_empty() {
+        "Shared folder".into()
+    } else {
+        name
+    }
 }

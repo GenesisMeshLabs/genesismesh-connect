@@ -344,6 +344,10 @@ async fn run(paths: &Paths) -> Result<()> {
     let control = tokio::spawn(serve(listener, node.clone()));
     let spaces = tokio::spawn(answer_owner(node.clone(), owner_requests));
     let mut renewed: Option<Instant> = None;
+    // Devices can list Spaces from the start.
+    if let Err(error) = keep_spaces(&mut *node.lock().await, &mut renewed) {
+        eprintln!("Shared folders could not be checked: {error:#}");
+    }
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     loop {
         tokio::select! {
@@ -400,6 +404,8 @@ fn keep_spaces(node: &mut Node, renewed: &mut Option<Instant>) -> Result<()> {
     }
     let own = node.device.status()?.node_public_key;
     let spaces = tokio::task::block_in_place(|| node.owner.space_list())?;
+    // Devices list Spaces from this copy, never waiting for the runtime.
+    node.device.publish_spaces(spaces.clone());
     node.device.apply_spaces(
         spaces
             .into_iter()

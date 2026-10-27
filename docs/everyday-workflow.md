@@ -174,9 +174,15 @@ browse it; the files come straight from the sharing device, which asks the
 authority for a decision on each page and each download. Every device learns
 the list with its trust refresh. **Stop sharing** stops serving the Space on
 the device at once and deactivates its policy, so no decision allows it
-afterwards; files other devices already saved stay on them. If the network
-computer cannot be reached at that moment, the device asks again at its next
-refresh. There are no remote path fields in the normal UI.
+afterwards, even from a device that kept serving the folder; files other
+devices already saved stay on them. If the network computer cannot be reached
+at that moment, the device asks again at its next refresh, and the network
+computer removes again any of its own Spaces it no longer shares. A new Space
+never takes over an existing permission: a device cannot claim a folder another
+device shares, or one shared before Spaces. Devices list Spaces from a copy the
+network computer refreshes every 30 seconds, so a busy network computer never
+holds up their file operations. There are no remote path fields in the normal
+UI.
 
 The everyday interface has Files, Devices and Settings, with bottom navigation
 on phones. Choose a device by name to browse its files. Technical controls and
@@ -190,7 +196,8 @@ receipts and window hashes are verified, and the whole-file SHA-256 must match
 before native viewing/export. No local paths or bulk bytes cross frontend IPC.
 
 Current bounds: up to 16 Spaces per device, up to 16 subfolder levels, files up to
-1 GiB, at most 512 entries scanned per folder, pages of 32, one active transfer,
+1 GiB, at most 512 entries scanned per folder, pages of 32, one active transfer
+per Space,
 bounded cache/receipt storage. Links, junctions, unsafe
 names and oversized files are omitted; source versions are checked on each
 window. Downloads offer progress/cancel, small UTF-8 text previews and OS
@@ -212,7 +219,10 @@ Mobile viewing, export and large-file physical acceptance are still pending.
 A Space's policy and attestation last 90 days. The network computer renews
 every Space with less than 30 days left once a day, and the sharing device
 picks up the renewed attestation at its next refresh without interrupting
-transfers. A folder the network computer shared before Spaces existed becomes
+transfers. Renewal keeps a Space's devices as its host chose them, including a
+device the network computer has since forgotten; that device cannot renew its
+own certificate, so it loses access within a day, and revoking it is part of
+Requests. A folder the network computer shared before Spaces existed becomes
 a Space under its folder name, shared with every saved device, the first time
 the updated app runs there. An app from before Spaces still browses the first
 Space shared with it. Saved sharing is restored only for the guided consumer

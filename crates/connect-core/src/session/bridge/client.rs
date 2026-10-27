@@ -154,10 +154,12 @@ impl BridgeAuthority {
             .await?;
         let answer: super::SpacesAnswer = serde_json::from_value(value)?;
         ensure!(answer.spaces.len() <= 64, "Too many shared folders");
-        for space in &answer.spaces {
-            space.check()?;
-        }
-        Ok(answer.spaces)
+        // One entry this device cannot use never hides the others.
+        Ok(answer
+            .spaces
+            .into_iter()
+            .filter(|space| space.check().is_ok())
+            .collect())
     }
 
     /// Ask the network computer for a Space on one of this device's folders,

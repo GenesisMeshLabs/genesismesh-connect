@@ -2143,3 +2143,102 @@ async fn members_learn_each_other_from_the_network_computer_and_connect() -> Res
     process.child.wait()?;
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "Requires CONNECT_NA_PYTHON; a renewed attestation takes over a running share's decisions"]
+async fn a_running_share_decides_with_its_renewed_attestation() -> Result<()> {
+    use connect_core::session::sharing::{ReadRequest, Share, ShareConfig};
+    use std::sync::Arc;
+    let (mut process, info) = AuthorityProcess::start()?;
+    let authority = LocalAuthority::new(info["url"].as_str().unwrap())?;
+    let pin: TrustPin = serde_json::from_value(info["pin"].clone())?;
+    let dir = tempfile::tempdir()?;
+    let root = dir.path().join("collection");
+    std::fs::create_dir(&root)?;
+    std::fs::write(root.join("sample.txt"), b"Renewed grants keep working.")?;
+    let mut host_store = TrustStore::create(&dir.path().join("host.json"), pin.clone())?;
+    let host_key = key();
+    let invitation =
+        process.command(json!({"op":"edge_invite","node_public_key":public(&host_key)}))?;
+    let (host, _) = authority
+        .enroll_host(
+            host_key,
+            &key(),
+            invitation["invite"].as_str().unwrap(),
+            &mut host_store,
+        )
+        .await?;
+    let mut client_store = TrustStore::create(&dir.path().join("client.json"), pin.clone())?;
+    let client_key = key();
+    let invitation =
+        process.command(json!({"op":"invite","node_public_key":public(&client_key)}))?;
+    let client = authority
+        .enroll(
+            client_key,
+            invitation["invite"].as_str().unwrap(),
+            &mut client_store,
+        )
+        .await?;
+    let grant = |process: &mut AuthorityProcess| -> Result<String> {
+        let policy = process.command(json!({"op":"read_policy","host_node":host.public_key(),"peer_node":client.public_key(),"collection":"allowed"}))?;
+        Ok(policy["attestation_id"].as_str().unwrap().to_owned())
+    };
+    let first = grant(&mut process)?;
+    let share = Arc::new(Share::open(
+        ShareConfig {
+            collection_id: "allowed".into(),
+            directory: root,
+            attestation_id: first.clone(),
+            policy_id: "connect-read".into(),
+            ..Default::default()
+        },
+        authority.clone(),
+        pin,
+        &dir.path().join("sharing"),
+    )?);
+    let host_endpoint = SessionEndpoint::bind_with_share(
+        host.session_identity()?,
+        authority.refresh(&mut host_store).await?,
+        client.public_key(),
+        Some(share.clone()),
+    )
+    .await?;
+    let client_endpoint = SessionEndpoint::bind(
+        client.session_identity()?,
+        authority.refresh(&mut client_store).await?,
+        host.public_key(),
+    )
+    .await?;
+    let ticket = host_endpoint.ticket()?;
+    let read = || {
+        client_endpoint.read_file(
+            &ticket,
+            ReadRequest {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                collection_id: "allowed".into(),
+                file_name: "sample.txt".into(),
+                expected_sha256: None,
+            },
+        )
+    };
+    assert!(
+        read().await.is_ok(),
+        "The first attestation allows the read"
+    );
+    // The network computer renews: a new attestation, and the old one ends.
+    let renewed = grant(&mut process)?;
+    process.command(json!({"op":"revoke_attestation","attestation_id":first}))?;
+    assert!(
+        read().await.is_err(),
+        "A share still on the ended attestation releases nothing"
+    );
+    share.renew(&renewed)?;
+    assert_eq!(share.config().attestation_id, renewed);
+    let report = read().await?;
+    assert_eq!(report.text.as_deref(), Some("Renewed grants keep working."));
+    host_endpoint.close().await;
+    client_endpoint.close().await;
+    process.command(json!({"op":"stop"}))?;
+    process.child.wait()?;
+    Ok(())
+}

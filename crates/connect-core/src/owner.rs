@@ -58,6 +58,7 @@ pub struct Space {
 /// a device's behalf. The host is always the authenticated device.
 #[derive(Debug)]
 pub enum OwnerCall {
+    /// Create or change a Space for `host`; never adopts an existing policy.
     Share {
         host: String,
         collection: String,
@@ -68,7 +69,6 @@ pub enum OwnerCall {
         host: String,
         collection: String,
     },
-    List,
 }
 pub struct OwnerRequest {
     pub call: OwnerCall,
@@ -319,6 +319,21 @@ impl OwnerRuntime {
         }
         Ok(serde_json::from_value(self.request(request)?)?)
     }
+    /// Give a folder this computer shared before Spaces its registry entry,
+    /// keeping its existing policy. Never offered to other devices.
+    pub fn space_adopt(
+        &mut self,
+        host: &str,
+        collection: &str,
+        name: &str,
+        recipients: &[String],
+        subject: &str,
+    ) -> Result<Space> {
+        Ok(serde_json::from_value(self.request(json!({
+            "op":"space_adopt","host":host,"collection":collection,"name":name,
+            "recipients":recipients,"subject":subject,
+        }))?)?)
+    }
     /// Stop a Space: its policy is deactivated. False if it did not exist.
     pub fn space_remove(&mut self, host: &str, collection: &str) -> Result<bool> {
         Ok(serde_json::from_value(self.request(
@@ -354,7 +369,6 @@ impl OwnerRuntime {
             OwnerCall::Remove { host, collection } => {
                 json!(self.space_remove(&host, &collection)?)
             }
-            OwnerCall::List => serde_json::to_value(self.space_list()?)?,
         })
     }
     pub fn share(&mut self, host: &str, peer: &str, collection: &str) -> Result<Value> {

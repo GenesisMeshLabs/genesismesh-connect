@@ -14,6 +14,7 @@ import sqlite3
 import tempfile
 import threading
 import tomllib
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -44,7 +45,10 @@ MAX_RECIPIENTS = 31
 
 
 def space_name(value):
-    if not isinstance(value, str) or not value.strip() or len(value.strip()) > 64 or any(ord(c) < 32 for c in value):
+    # The same control characters devices refuse (Unicode category Cc), so a
+    # name stored here never makes a device drop the list.
+    if (not isinstance(value, str) or not value.strip() or len(value.strip()) > 64
+            or any(unicodedata.category(c) == "Cc" for c in value)):
         raise Refused("Name the shared folder with 1 to 64 characters.")
     return value.strip()
 
@@ -220,6 +224,21 @@ class Owner:
             raise Refused(f"The network authority refused this operation ({response.status_code}).")
         return response.json()
 
+    def policy_versions(self, policy_id):
+        """Every stored version of one policy, through the signed admin route,
+        so attached networks answer too. Empty when the policy does not exist."""
+        if not self.config:
+            raise Refused("Open the network first.")
+        path = f"/admin/boundary-policies/{policy_id}/history"
+        audience = base64.b64encode(bytes(self.na_key.verify_key)).decode()
+        headers = sign_admin_request(self.operator, self.config["operator"]["key_id"], method="GET", path=path, audience=audience)
+        response = self.session.get(self.origin+path,headers=headers,timeout=5,allow_redirects=False)
+        if response.status_code == 400 and response.json().get("error", {}).get("code") == "boundary_policy_not_found":
+            return []
+        if response.status_code != 200 or len(response.content) > 512*1024:
+            raise Refused(f"The network authority refused this operation ({response.status_code}).")
+        return response.json()["versions"]
+
     def invite(self, public_key, host=False):
         public_key=node(public_key)
         body={"roles":["role:client"],"recipient_public_key":public_key,"max_validity_hours":24,"token_expiry_hours":1}
@@ -293,9 +312,11 @@ class Owner:
         return {"policy_id": policy_id, "policy_version": result["version"],
             "attestation_id": attestation["attestation_id"], "valid_until": valid_until.isoformat()}
 
-    def space_share(self, host_node, collection_id, space, recipients, subject=None):
+    def space_share(self, host_node, collection_id, space, recipients, subject=None, adopt=False):
         """Create a Space, or change its name and devices. Only its host may
-        change it; the policy names exactly the chosen devices."""
+        change it; the policy names exactly the chosen devices. A new Space
+        never takes over an existing policy: only this computer, moving a
+        folder it shared before Spaces (`adopt`), may give one a registry entry."""
         host_node = node(host_node)
         expected = self.subject(host_node)
         subject = expected if subject is None else subject
@@ -313,6 +334,8 @@ class Owner:
         if existing is not None and existing["host"] != host_node:
             raise Refused("This shared folder belongs to another device.")
         if existing is None:
+            if self.policy_versions("connect-" + collection_id) and not adopt:
+                raise Refused("This folder already has a permission on this network.")
             if sum(1 for s in spaces if s["host"] == host_node) >= MAX_HOST_SPACES:
                 raise Refused("A device can share up to 16 folders.")
             if len(spaces) >= MAX_SPACES:
@@ -336,10 +359,13 @@ class Owner:
         if existing["host"] != host_node:
             raise Refused("This shared folder belongs to another device.")
         policy_id = "connect-" + collection_id
-        active = [p for p in self.service.db.load_active_boundary_policies().policies
-                  if p.policy_id == policy_id] if self.service else []
-        for policy in active:
-            self.admin(f"/admin/boundary-policies/{policy_id}/deactivate", {"version": policy.version})
+        # The registry entry goes only once no version is active, so a failure
+        # here leaves the Space listed and the removal can be asked again.
+        for version in self.policy_versions(policy_id):
+            if version["active"]:
+                self.admin(f"/admin/boundary-policies/{policy_id}/deactivate", {"version": version["version"]})
+        if any(v["active"] for v in self.policy_versions(policy_id)):
+            raise Refused("The shared folder's permission is still active. Try again.")
         self._save_spaces([s for s in spaces if s["collection"] != collection_id])
         return True
 
@@ -354,10 +380,14 @@ class Owner:
         renewed = []
         for entry in spaces:
             if datetime.fromisoformat(entry["valid_until"]) <= limit:
-                entry.update(self._grant(entry["host"], entry["subject"], entry["collection"], entry["recipients"]))
+                # One failure leaves that Space for the next pass; every
+                # renewal is saved as it is made.
+                try:
+                    entry.update(self._grant(entry["host"], entry["subject"], entry["collection"], entry["recipients"]))
+                except Exception:
+                    continue
+                self._save_spaces(spaces)
                 renewed.append(entry["collection"])
-        if renewed:
-            self._save_spaces(spaces)
         return renewed
 
     def backup(self):

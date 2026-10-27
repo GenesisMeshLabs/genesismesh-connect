@@ -723,11 +723,9 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
             vec![computer.clone()],
         ),
     ];
-    let answers = listed.clone();
     let runtime = tokio::spawn(async move {
         while let Some(request) = requests.recv().await {
             let result = match &request.call {
-                crate::owner::OwnerCall::List => Ok(serde_json::to_value(&answers).unwrap()),
                 crate::owner::OwnerCall::Share {
                     host,
                     collection,
@@ -751,6 +749,17 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
         ticket: ticket(port),
     };
     bridge.publish_members(vec![saved(&me, 7000), saved(&tablet, 7001)]);
+    assert!(
+        client.spaces(identity(&f), f.trust()?).await.is_err(),
+        "No answer before the computer has published its Spaces"
+    );
+    // Lists come from the published registry, never from the owner runtime;
+    // an entry a device cannot use does not hide the others.
+    let mut unusable = space(&uuid::Uuid::new_v4().to_string(), &tablet, vec![me.clone()]);
+    unusable.name = "Bad\u{7f}name".into();
+    let mut published = listed.clone();
+    published.push(unusable);
+    bridge.publish_spaces(published);
 
     let spaces = client.spaces(identity(&f), f.trust()?).await?;
     assert_eq!(spaces.len(), 2, "Its own Space and the one naming it");
@@ -769,6 +778,15 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
         )
         .await?;
     assert_eq!(shared.host, me);
+    let own = client.spaces(identity(&f), f.trust()?).await?;
+    assert_eq!(
+        own.iter()
+            .find(|s| s.collection == collection)
+            .and_then(|s| s.grant.as_ref())
+            .map(|g| g.recipients.len()),
+        Some(2),
+        "A change shows at once, before the next publication"
+    );
     for recipients in [vec![stranger.clone()], vec![me.clone()], vec![]] {
         assert!(
             client
@@ -791,11 +809,16 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
     let calls = calls.lock().unwrap().clone();
     assert_eq!(
         calls.len(),
-        3,
+        2,
         "Refused requests never reach the owner: {calls:?}"
     );
-    assert!(calls[1].contains(&format!("host: \"{me}\"")));
-    assert!(calls[2].starts_with("Remove") && calls[2].contains(&format!("host: \"{me}\"")));
+    assert!(calls[0].starts_with("Share") && calls[0].contains(&format!("host: \"{me}\"")));
+    assert!(calls[1].starts_with("Remove") && calls[1].contains(&format!("host: \"{me}\"")));
+    assert_eq!(
+        client.spaces(identity(&f), f.trust()?).await?.len(),
+        1,
+        "A removal shows at once"
+    );
 
     // A device the computer has not saved gets nothing, even when selected.
     bridge.publish_members(vec![saved(&tablet, 7001)]);

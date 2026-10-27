@@ -420,15 +420,7 @@ pub async fn share_folder(
             return Ok(false);
         };
         let directory = folder.path().to_owned();
-        let name: String = directory
-            .file_name()
-            .map_or_else(
-                || "Shared folder".into(),
-                |s| s.to_string_lossy().into_owned(),
-            )
-            .chars()
-            .take(64)
-            .collect();
+        let name = crate::workflow::folder_name(&directory);
         let mut owner = state.slot.lock().await;
         let mut slot = desktop.slot.lock().await;
         let device = slot
@@ -497,6 +489,9 @@ pub async fn stop_sharing(
     desktop: tauri::State<'_, DesktopState>,
 ) -> Result<bool, String> {
     let mut owner = state.slot.lock().await;
+    if owner.runtime.is_none() && state.directory.join("owner.json").is_file() {
+        return Err("Your network is still opening. Try again in a moment.".into());
+    }
     let mut slot = desktop.slot.lock().await;
     let device = slot.controller.as_mut().ok_or("Device is unavailable")?;
     let status = device.status().map_err(error)?;
@@ -515,9 +510,8 @@ pub async fn stop_sharing(
                 // Stop serving first: nothing is released while the network
                 // computer forgets it.
                 device.drop_space(&id).await.map_err(error)?;
-                runtime
-                    .space_remove(&status.node_public_key, &id)
-                    .map_err(error)?;
+                // If this fails, the next pass over the Spaces removes it.
+                confirmed &= runtime.space_remove(&status.node_public_key, &id).is_ok();
             }
             None => confirmed &= device.unshare_space(&id).await.map_err(error)?,
         }

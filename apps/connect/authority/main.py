@@ -31,6 +31,7 @@ def main():
                 elif op=="share" and set(request)=={"op","host","peer","collection","subject"}: result=owner.share(request["host"],request["peer"],request["collection"],request["subject"])
                 elif op=="space_share" and set(request)=={"op","host","collection","name","recipients"}: result=owner.space_share(request["host"],request["collection"],request["name"],request["recipients"])
                 elif op=="space_share" and set(request)=={"op","host","collection","name","recipients","subject"}: result=owner.space_share(request["host"],request["collection"],request["name"],request["recipients"],request["subject"])
+                elif op=="space_adopt" and set(request)=={"op","host","collection","name","recipients","subject"}: result=owner.space_share(request["host"],request["collection"],request["name"],request["recipients"],request["subject"],adopt=True)
                 elif op=="space_remove" and set(request)=={"op","host","collection"}: result=owner.space_remove(request["host"],request["collection"])
                 elif op=="space_list" and set(request)=={"op"}: result=owner.space_list()
                 elif op=="space_renew" and set(request)=={"op"}: result=owner.space_renew()
