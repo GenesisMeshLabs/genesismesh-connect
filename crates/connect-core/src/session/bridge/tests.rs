@@ -472,3 +472,44 @@ async fn enrollment_checks_the_host_and_selected_node_before_forwarding_an_invit
     bridge.close().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn settings_come_only_from_the_authenticated_host_and_name_its_endpoints() -> Result<()> {
+    let f = Fixture::new();
+    let http = authority(&f).await?;
+    let bridge = host(&f, &http).await?;
+    let client = BridgeAuthority::new(route(&bridge, &f))?;
+    let settings = client.settings(identity(&f), f.trust()?).await?;
+    assert_eq!(settings.connectivity, crate::Connectivity::LocalNetwork);
+    assert_eq!(
+        endpoint_of(&settings.authority_ticket)?,
+        endpoint_of(&bridge.ticket()?)?
+    );
+    assert_eq!(settings.session_ticket, None);
+    let session = serde_json::to_string(&json!({
+        "version": 1,
+        "endpoint": EndpointAddr::new(iroh::SecretKey::generate().public())
+            .with_ip_addr(([192, 0, 2, 7], 7000).into()),
+    }))?;
+    bridge.publish_session(Some(session.clone()))?;
+    assert!(bridge.publish_session(Some("not a ticket".into())).is_err());
+    let settings = client.settings(identity(&f), f.trust()?).await?;
+    assert_eq!(settings.session_ticket, Some(session));
+    let mut wrong_route = route(&bridge, &f);
+    wrong_route.host_node = public(&support::key());
+    assert!(
+        BridgeAuthority::new(wrong_route)?
+            .settings(identity(&f), f.trust()?)
+            .await
+            .is_err(),
+        "Another host key must not be trusted for settings"
+    );
+    let wrong_identity = SessionIdentity::new(f.server.clone(), f.server_cert.clone())?;
+    assert!(
+        client.settings(wrong_identity, f.trust()?).await.is_err(),
+        "Only the selected device receives settings"
+    );
+    assert!(http.requests.lock().unwrap().is_empty());
+    bridge.close().await;
+    Ok(())
+}

@@ -17,10 +17,11 @@ pub const fn secure_storage_supported() -> bool {
 
 use crate::session::sharing::{Share, ShareConfig};
 use crate::{
+    Connectivity,
     authority::{EnrolledDevice, LocalAuthority, TrustPin, TrustStore},
     session::{
         SessionEndpoint, SessionReport,
-        bridge::{AuthorityBridge, BridgeAuthority, BridgeRoute},
+        bridge::{AuthorityBridge, BridgeAuthority, BridgeRoute, NetworkSettings},
     },
 };
 use anyhow::{Context, Result, ensure};
@@ -63,6 +64,39 @@ pub struct DeviceStatus {
     pub sharing_config: Option<ShareConfig>,
     pub paired_device: Option<PairedDevice>,
     pub devices: Vec<PairedDevice>,
+    pub connectivity: ConnectivityStatus,
+}
+
+/// How this device reaches the others, and who decided it.
+#[derive(Serialize)]
+pub struct ConnectivityStatus {
+    /// The network computer's setting (on that computer, the owner's own).
+    pub network: Connectivity,
+    /// This device's stricter choice, if any.
+    pub own: Option<Connectivity>,
+    /// What this device actually uses.
+    pub effective: Connectivity,
+    /// Whether this device holds the network's setting.
+    pub network_computer: bool,
+}
+
+fn connectivity_of(vault: &Vault) -> Connectivity {
+    if vault.consumer_mode() {
+        Connectivity::effective(vault.network_connectivity(), vault.own_connectivity())
+    } else {
+        Connectivity::LocalNetwork
+    }
+}
+
+/// Guided profiles reach their network computer under the current setting;
+/// advanced profiles keep reaching it the way its ticket was created.
+fn bridge_client(route: BridgeRoute, vault: &Vault) -> Result<BridgeAuthority> {
+    let client = BridgeAuthority::new(route)?;
+    Ok(if vault.consumer_mode() {
+        client.with_connectivity(connectivity_of(vault))
+    } else {
+        client
+    })
 }
 
 pub struct DeviceController {
@@ -133,7 +167,7 @@ impl DeviceController {
         let bridge_client = vault
             .bridge_route()
             .cloned()
-            .map(BridgeAuthority::new)
+            .map(|route| bridge_client(route, &vault))
             .transpose()?;
         ensure!(
             device.is_none() || authority.is_some() || bridge_client.is_some(),
@@ -199,7 +233,93 @@ impl DeviceController {
             sharing_config: self.sharing.as_ref().map(|share| share.config().clone()),
             paired_device: self.vault.paired().cloned(),
             devices: self.vault.peers().to_vec(),
+            connectivity: ConnectivityStatus {
+                network: self.vault.network_connectivity(),
+                own: self.vault.own_connectivity(),
+                effective: self.connectivity(),
+                network_computer: self.network_computer(),
+            },
         })
+    }
+
+    /// Advanced profiles keep their local-network sessions; guided profiles
+    /// follow the network computer's setting, or this device's stricter one.
+    fn connectivity(&self) -> Connectivity {
+        connectivity_of(&self.vault)
+    }
+
+    /// The guided network computer: it runs the authority this network uses.
+    fn network_computer(&self) -> bool {
+        self.vault.consumer_mode() && self.authority.is_some() && self.bridge_client.is_none()
+    }
+
+    /// Change how every device reaches this network. Running connections close
+    /// and reopen; devices learn the new setting from their next trust refresh.
+    pub async fn set_network_connectivity(&mut self, connectivity: Connectivity) -> Result<()> {
+        ensure!(
+            self.network_computer(),
+            "Change the connection setting on your network computer"
+        );
+        if self.vault.network_connectivity() == connectivity {
+            return Ok(());
+        }
+        self.stop().await;
+        if let Some(pairing) = self.pairing.take() {
+            pairing.close().await;
+        }
+        self.vault.save_network_connectivity(connectivity)?;
+        self.reconnect_saved().await
+    }
+
+    /// Make this device stricter than its network, or follow the network again.
+    pub async fn set_own_connectivity(&mut self, own: Option<Connectivity>) -> Result<()> {
+        ensure!(
+            self.vault.consumer_mode() && !self.network_computer(),
+            "Your network computer sets the connection for every device"
+        );
+        if self.vault.own_connectivity() == own {
+            return Ok(());
+        }
+        self.stop().await;
+        self.vault.save_own_connectivity(own)?;
+        self.rebuild_bridge_client()?;
+        self.reconnect_saved().await
+    }
+
+    fn rebuild_bridge_client(&mut self) -> Result<()> {
+        self.bridge_client = self
+            .vault
+            .bridge_route()
+            .cloned()
+            .map(|route| bridge_client(route, &self.vault))
+            .transpose()?;
+        Ok(())
+    }
+
+    /// Accept the network computer's authenticated answer: fresh addresses for
+    /// the same endpoints, and its connection setting. Returns whether this
+    /// device's own connections must reopen under a different setting.
+    fn accept_settings(&mut self, settings: NetworkSettings) -> Result<bool> {
+        let before = self.connectivity();
+        if let Some(host) = self.vault.bridge_route().map(|r| r.host_node.clone()) {
+            let previous = self.vault.bridge_route().map(|r| r.ticket.clone());
+            self.vault.refresh_route(settings.authority_ticket)?;
+            if self.vault.bridge_route().map(|r| r.ticket.clone()) != previous {
+                self.rebuild_bridge_client()?;
+            }
+            if let Some(ticket) = settings.session_ticket {
+                self.vault.refresh_peer_ticket(&host, ticket)?;
+            }
+        }
+        if self.vault.network_connectivity() != settings.connectivity {
+            self.vault
+                .save_network_connectivity(settings.connectivity)?;
+        }
+        let changed = self.connectivity() != before;
+        if changed {
+            self.rebuild_bridge_client()?;
+        }
+        Ok(changed)
     }
 
     pub async fn enroll(&mut self, invite: &str) -> Result<()> {
@@ -324,7 +444,7 @@ impl DeviceController {
             trust,
             authority,
             name,
-            crate::NetworkMode::PublicRelay,
+            self.connectivity(),
         )
         .await?;
         self.pairing = Some(host.clone());
@@ -343,6 +463,9 @@ impl DeviceController {
             "This device already belongs to a network. Its identity was preserved."
         );
         self.enable_managed_connectivity()?;
+        if self.vault.network_connectivity() != card.connectivity() {
+            self.vault.save_network_connectivity(card.connectivity())?;
+        }
         crate::session::pairing::PairClient::request(card, &self.vault.key(), &mut self.trust, name)
             .await
     }
@@ -358,7 +481,7 @@ impl DeviceController {
             self.endpoint.is_none(),
             "Stop the session before changing the authority connection"
         );
-        let client = BridgeAuthority::new(route.clone())?;
+        let client = bridge_client(route.clone(), &self.vault)?;
         let Some(device) = self.device.as_mut() else {
             // This is an explicit host pin, not evidence that a host was verified.
             // Enrollment verifies its certificate + connection proof before any invite.
@@ -414,7 +537,8 @@ impl DeviceController {
         self.sync_peers()?;
         let outcome = self.refresh_inner(true).await;
         self.record_outcome(&outcome);
-        outcome
+        let trust = outcome?;
+        self.follow_network(trust).await
     }
 
     /// Call every 30 seconds while running, and immediately after resume. Every
@@ -425,7 +549,31 @@ impl DeviceController {
         }
         let outcome = self.refresh_inner(false).await;
         self.record_outcome(&outcome);
-        outcome
+        let trust = outcome?;
+        self.follow_network(trust).await
+    }
+
+    /// Ask the network computer for its connection setting and current
+    /// addresses. An older or unreachable computer leaves everything as it is:
+    /// this answer never affects trust, only how this device reaches others.
+    async fn follow_network(&mut self, trust: crate::session::TrustSnapshot) -> Result<()> {
+        if !self.vault.consumer_mode() {
+            return Ok(());
+        }
+        let (Some(client), Some(device)) = (self.bridge_client.clone(), self.device.as_ref())
+        else {
+            return Ok(());
+        };
+        let Ok(settings) = client.settings(device.session_identity()?, trust).await else {
+            return Ok(());
+        };
+        if self.accept_settings(settings)? && self.endpoint.is_some() {
+            self.stop().await;
+            let outcome = self.refresh_inner(true).await;
+            self.record_outcome(&outcome);
+            outcome?;
+        }
+        Ok(())
     }
 
     pub fn is_running(&self) -> bool {
@@ -435,7 +583,7 @@ impl DeviceController {
         self.endpoint.is_some() || self.pairing.is_some() || self.vault.auto_connect()
     }
 
-    fn record_outcome(&mut self, outcome: &Result<()>) {
+    fn record_outcome<T>(&mut self, outcome: &Result<T>) {
         self.problem = outcome.as_ref().err().map(ToString::to_string);
         if outcome.is_err()
             && let Some(endpoint) = &self.endpoint
@@ -454,7 +602,7 @@ impl DeviceController {
         }
     }
 
-    async fn refresh_inner(&mut self, start: bool) -> Result<()> {
+    async fn refresh_inner(&mut self, start: bool) -> Result<crate::session::TrustSnapshot> {
         let device = self.device.as_mut().context("Enroll this device first")?;
         if device.renewal_due() {
             if let Some(endpoint) = &self.endpoint {
@@ -495,6 +643,7 @@ impl DeviceController {
                     .await?
             }
         };
+        let snapshot = trust.clone();
         if let Some(host) = &self.pairing {
             host.refresh(device.session_identity()?, trust.clone())?;
         }
@@ -502,9 +651,12 @@ impl DeviceController {
             endpoint.refresh(device.session_identity()?, trust.clone())?;
             if let Some(host) = &self.bridge_host {
                 host.refresh(device.session_identity()?, trust)?;
+                // Addresses change with the network; devices pick them up.
+                host.publish_session(Some(endpoint.ticket()?))?;
             }
         } else if start {
             let peer = self.vault.peer().context("Choose a peer first")?.to_owned();
+            let connectivity = connectivity_of(&self.vault);
             let bridge_host = if self.bridge_client.is_none() {
                 Some(
                     AuthorityBridge::bind_with_transport(
@@ -516,44 +668,48 @@ impl DeviceController {
                             .context("Missing local authority")?
                             .clone(),
                         if self.vault.consumer_mode() {
-                            Some(self.vault.transport(true)?)
+                            Some(self.vault.saved_transport(true)?)
                         } else {
                             None
                         },
-                        if self.vault.consumer_mode() {
-                            crate::NetworkMode::PublicRelay
-                        } else {
-                            crate::NetworkMode::Local
-                        },
+                        connectivity,
                     )
                     .await?,
                 )
             } else {
                 None
             };
-            self.endpoint = Some(Arc::new(
+            if let Some(host) = &bridge_host
+                && self.vault.consumer_mode()
+            {
+                self.vault.save_transport_port(true, host.port())?;
+            }
+            let endpoint = Arc::new(
                 SessionEndpoint::bind_with_transport(
                     device.session_identity()?,
                     trust,
                     peer,
                     self.sharing.clone(),
                     if self.vault.consumer_mode() {
-                        Some(self.vault.transport(false)?)
+                        Some(self.vault.saved_transport(false)?)
                     } else {
                         None
                     },
-                    if self.vault.consumer_mode() {
-                        crate::NetworkMode::PublicRelay
-                    } else {
-                        crate::NetworkMode::Local
-                    },
+                    connectivity,
                 )
                 .await?,
-            ));
+            );
+            if self.vault.consumer_mode() {
+                self.vault.save_transport_port(false, endpoint.port())?;
+            }
+            if let Some(host) = &bridge_host {
+                host.publish_session(Some(endpoint.ticket()?))?;
+            }
+            self.endpoint = Some(endpoint);
             self.bridge_host = bridge_host;
             self.sync_peers()?;
         }
-        Ok(())
+        Ok(snapshot)
     }
 
     pub fn session(&self) -> Result<Arc<SessionEndpoint>> {
@@ -636,5 +792,115 @@ impl DeviceController {
         if let Some(host) = self.bridge_host.take() {
             host.close().await;
         }
+    }
+}
+
+#[cfg(all(test, any(windows, target_os = "linux")))]
+mod tests {
+    use super::*;
+
+    fn authority_ticket(id: iroh::EndpointId, port: u16) -> String {
+        serde_json::to_string(&serde_json::json!({
+            "version": 1,
+            "service": "authority",
+            "endpoint": iroh::EndpointAddr::new(id).with_ip_addr(([192, 0, 2, 1], port).into()),
+        }))
+        .unwrap()
+    }
+    fn settings(id: iroh::EndpointId, port: u16, connectivity: Connectivity) -> NetworkSettings {
+        NetworkSettings {
+            connectivity,
+            authority_ticket: authority_ticket(id, port),
+            session_ticket: None,
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires a native OS credential store; Linux runner uses an isolated Secret Service"]
+    async fn a_device_follows_its_network_computer_and_only_accepts_the_same_endpoint() -> Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("device");
+        let pin = TrustPin {
+            network_name: "disposable-connectivity-test".into(),
+            root_public_key: STANDARD.encode([5; 32]),
+        };
+        let mut device = DeviceController::prepare_remote(&path, pin)?;
+        device.enable_managed_connectivity()?;
+        let host = iroh::SecretKey::generate().public();
+        device
+            .use_bridge(BridgeRoute {
+                ticket: authority_ticket(host, 7000),
+                host_node: STANDARD.encode([9; 32]),
+            })
+            .await?;
+        assert_eq!(
+            device.status()?.connectivity.effective,
+            Connectivity::PublicRelays
+        );
+        assert!(device.accept_settings(settings(host, 7001, Connectivity::LocalNetwork))?);
+        let status = device.status()?;
+        assert_eq!(status.connectivity.network, Connectivity::LocalNetwork);
+        assert_eq!(status.connectivity.effective, Connectivity::LocalNetwork);
+        assert!(!status.connectivity.network_computer);
+        assert_eq!(
+            device.vault.bridge_route().map(|r| r.ticket.clone()),
+            Some(authority_ticket(host, 7001)),
+            "Fresh addresses for the same endpoint replace the saved ones"
+        );
+        assert!(
+            !device.accept_settings(settings(host, 7001, Connectivity::LocalNetwork))?,
+            "An unchanged answer reopens nothing"
+        );
+        let other = iroh::SecretKey::generate().public();
+        assert!(
+            device
+                .accept_settings(settings(other, 7002, Connectivity::PublicRelays))
+                .is_err()
+        );
+        assert_eq!(
+            device.status()?.connectivity.network,
+            Connectivity::LocalNetwork,
+            "An answer naming another endpoint changes nothing"
+        );
+        assert_eq!(
+            device.vault.bridge_route().map(|r| r.ticket.clone()),
+            Some(authority_ticket(host, 7001))
+        );
+        assert!(
+            device
+                .set_network_connectivity(Connectivity::PublicRelays)
+                .await
+                .is_err(),
+            "Only the network computer sets the network's connection"
+        );
+        device
+            .set_own_connectivity(Some(Connectivity::PublicRelays))
+            .await?;
+        assert_eq!(
+            device.status()?.connectivity.effective,
+            Connectivity::LocalNetwork,
+            "A looser device choice never widens a private network"
+        );
+        assert!(device.accept_settings(settings(host, 7001, Connectivity::PublicRelays))?);
+        assert_eq!(
+            device.status()?.connectivity.effective,
+            Connectivity::PublicRelays
+        );
+        device
+            .set_own_connectivity(Some(Connectivity::LocalNetwork))
+            .await?;
+        assert_eq!(
+            device.status()?.connectivity.effective,
+            Connectivity::LocalNetwork,
+            "A device may stay stricter than a public network"
+        );
+        drop(device);
+        let reopened = DeviceController::open(&path)?;
+        let status = reopened.status()?;
+        assert_eq!(status.connectivity.network, Connectivity::PublicRelays);
+        assert_eq!(status.connectivity.own, Some(Connectivity::LocalNetwork));
+        assert_eq!(status.connectivity.effective, Connectivity::LocalNetwork);
+        Ok(())
     }
 }

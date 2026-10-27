@@ -8,6 +8,7 @@ import {
   formatBytes,
   folderCrumbs,
   friendlyProblem,
+  connectionSummary,
   type HomeStatus,
   type FilePage,
   type FileEntry,
@@ -108,6 +109,7 @@ function render(status: HomeStatus) {
       ? "Managed on this computer"
       : "Managed by your network computer",
   );
+  renderConnection(status);
   visible("add-device-button", status.owner && status.devices.length < 32);
   visible("share-button", status.owner && !!status.peer);
   visible("browse-button", !!status.peer);
@@ -128,8 +130,8 @@ function render(status: HomeStatus) {
   text(
     "peer-state",
     status.ready
-      ? "Ready to connect Â· identity checked on connection"
-      : "Connection paused Â· keep both apps open",
+      ? "Ready to connect · identity checked on connection"
+      : "Connection paused · keep both apps open",
   );
   visible("files-empty", status.owner ? !status.sharing : !page);
   visible("files-add-device", status.owner && !status.peer);
@@ -174,6 +176,24 @@ function render(status: HomeStatus) {
     visible("pair-card", false);
     selectView("files");
   }
+}
+// A choice being made is not replaced by the next status poll.
+let connectionDirty = false;
+function renderConnection(status: HomeStatus) {
+  const connection = status.configured ? status.connection : null;
+  visible("connection-card", !!connection);
+  if (!connection) return;
+  text("connection-summary", connectionSummary(connection));
+  visible("connection-owner", connection.network_computer);
+  visible("connection-device", !connection.network_computer);
+  if (busy || connectionDirty) return;
+  el<HTMLInputElement>("connection-public").checked = connection.network === "public_relays";
+  el<HTMLInputElement>("connection-local").checked = connection.network === "local_network";
+  const localOnly = el<HTMLInputElement>("connection-local-only");
+  localOnly.checked = connection.effective === "local_network";
+  // A private network already keeps this device on the local network.
+  localOnly.disabled = connection.network === "local_network";
+  el<HTMLButtonElement>("save-device-connection").disabled = localOnly.disabled;
 }
 function renderDevices(status: HomeStatus) {
   const list = el("saved-devices");
@@ -469,7 +489,7 @@ async function open(file: FileEntry, button: HTMLButtonElement) {
         (el("download-progress") as HTMLProgressElement).value = progress.total ? progress.received / progress.total * 100 : 100;
         text("preview-detail", progress.state === "verifying" ? "Checking file…" : `${formatBytes(progress.received)} of ${formatBytes(progress.total)}`);
         if (progress.state === "complete") {
-          text("preview-detail", `${formatBytes(progress.total)} Â· Ready`);
+          text("preview-detail", `${formatBytes(progress.total)} · Ready`);
           text("preview-content", progress.text || "");
           visible("preview-content", progress.text !== null);
           visible("open-download", progress.can_open);
@@ -505,8 +525,48 @@ el("check-connection-button").addEventListener(
   () =>
     void run(el<HTMLButtonElement>("check-connection-button"), async () => {
       await invoke("check_connection");
-      text("peer-state", "Connected Â· device identity verified");
+      text("peer-state", "Connected · device identity verified");
       message("Secure connection succeeded.");
+    }),
+);
+for (const id of ["connection-public", "connection-local", "connection-local-only"])
+  el(id).addEventListener("change", () => {
+    connectionDirty = true;
+  });
+el("save-connection").addEventListener(
+  "click",
+  () =>
+    void run(el<HTMLButtonElement>("save-connection"), async () => {
+      const setting = el<HTMLInputElement>("connection-local").checked
+        ? "local_network"
+        : "public_relays";
+      try {
+        await invoke("set_network_connection", { setting });
+      } finally {
+        connectionDirty = false;
+      }
+      message(
+        setting === "local_network"
+          ? "Your devices now connect only on this local network."
+          : "Your devices can now reach each other from anywhere.",
+      );
+    }),
+);
+el("save-device-connection").addEventListener(
+  "click",
+  () =>
+    void run(el<HTMLButtonElement>("save-device-connection"), async () => {
+      const enabled = el<HTMLInputElement>("connection-local-only").checked;
+      try {
+        await invoke("set_device_local_only", { enabled });
+      } finally {
+        connectionDirty = false;
+      }
+      message(
+        enabled
+          ? "This device now connects only on the local network."
+          : "This device follows your network’s connection setting.",
+      );
     }),
 );
 el("save-name").addEventListener("click", () => {

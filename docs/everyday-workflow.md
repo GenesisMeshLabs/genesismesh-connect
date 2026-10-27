@@ -46,10 +46,10 @@ node and enrollment still performs the existing authority/SDK verification.
 The iPhone generates its own node key. Its private record uses a non-syncing
 WhenUnlockedThisDeviceOnly Keychain item; the app container holds an opaque UUID
 reference. Windows uses DPAPI. Separate persisted transport keys allow approved
-devices to reconnect. Consumer sessions and authority bridges use public Iroh
-relays and n0 endpoint address publication/resolution to find the same endpoint
-after an address change. Address lookup does not establish Genesis Mesh trust.
-The temporary pairing endpoint itself is not published in the address directory.
+devices to reconnect. How sessions and authority bridges find each other
+depends on the network's connection setting (below). Address lookup does not
+establish Genesis Mesh trust. The temporary pairing endpoint itself is never
+published for lookup.
 
 Keep both apps open and the computer awake. This is a foreground companion app,
 not a system-wide VPN, background iPhone service or unattended Windows service.
@@ -58,6 +58,41 @@ Devices before browsing or checking a connection. Adding a second device keeps
 the first; forgetting a device stops its local connections without revoking its
 membership throughout the network. Existing single-device profiles migrate
 without replacing their keys. See [platform evidence and limits](cross-platform.md).
+
+## Choose how devices connect
+
+**Settings → Connection** on the network computer chooses for every device:
+
+- **Public relays** (the default): n0's public Iroh relays and address lookup
+  help devices find each other from anywhere. Relays see connection metadata
+  such as IP addresses and timing, never file contents, which stay end-to-end
+  encrypted.
+- **Private: this local network only**: no relay and no address publication.
+  Devices connect directly while they share a network with the computer.
+
+The setting changes how devices find each other, never what they may do;
+Genesis Mesh still authenticates every node and authorizes every operation.
+Join links carry the setting they were created under. Afterwards each device
+asks the network computer for its setting with every trust refresh (every 30
+seconds while running), over the authenticated authority bridge, and reopens
+its connections when the setting changes. That answer also carries the
+computer's current addresses; a device accepts them only for the same endpoint
+it already trusts. An older network computer that cannot answer leaves the
+device's setting unchanged.
+
+A device can be stricter than its network (**Only connect on the local network
+from this device**), never looser. Changing the setting keeps every pairing
+and identity; nothing is paired again.
+
+In private mode, devices find each other through saved addresses and, on
+Windows, macOS, Linux and Android, local network discovery (mDNS). iPhones rely
+on saved addresses until Connect has Apple's multicast entitlement. Guided
+devices reuse their listening port after a restart, so saved addresses stay
+valid; if another program has taken the port, a new one is used and devices on
+other platforms find it through discovery. Desktops also ask the router to open
+a port (UPnP, NAT-PMP, PCP), which can improve direct connections; on macOS the
+router probe may show a local network prompt. Your own relay on an always-on
+server, for private connections away from home, is planned.
 
 ## Share and browse
 

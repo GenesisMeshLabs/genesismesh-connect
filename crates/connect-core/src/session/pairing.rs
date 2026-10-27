@@ -57,6 +57,11 @@ impl PairCard {
         valid_name(&self.host_name)?;
         Ok(())
     }
+    /// The network's connection setting when this card was created. The
+    /// network computer's later answers keep a device up to date.
+    pub fn connectivity(&self) -> crate::Connectivity {
+        crate::Connectivity::of_destination(&self.endpoint)
+    }
     pub fn link(&self) -> Result<String> {
         Ok(format!(
             "{PREFIX}{}",
@@ -115,25 +120,23 @@ impl PairHost {
         trust: TrustSnapshot,
         authority: LocalAuthority,
         name: String,
-        mode: crate::NetworkMode,
+        connectivity: crate::Connectivity,
     ) -> Result<Arc<Self>> {
         valid_name(&name)?;
         trust.certificate(&identity.certificate, &identity.public_key(), Utc::now())?;
-        let endpoint = Endpoint::builder(presets::Minimal)
-            .relay_mode(if mode == crate::NetworkMode::PublicRelay {
-                RelayMode::Default
-            } else {
-                RelayMode::Disabled
-            })
-            .alpns(vec![Protocol::Pair.alpn().to_vec()])
-            .bind()
+        // The temporary pairing endpoint is never published for lookup.
+        let endpoint = connectivity
+            .ready(
+                connectivity
+                    .builder(false)
+                    .alpns(vec![Protocol::Pair.alpn().to_vec()])
+                    .bind()
+                    .await?,
+                false,
+                DEADLINE,
+                "Pairing relay is unavailable; try again",
+            )
             .await?;
-        if mode == crate::NetworkMode::PublicRelay
-            && timeout(DEADLINE, endpoint.online()).await.is_err()
-        {
-            endpoint.close().await;
-            anyhow::bail!("Pairing relay is unavailable; try again");
-        }
         let mut secret = [0; 32];
         getrandom::fill(&mut secret)?;
         let addr = endpoint.addr();
@@ -475,12 +478,8 @@ impl PairClient {
     ) -> Result<Self> {
         card.validate()?;
         valid_name(&name)?;
-        let endpoint = Endpoint::builder(presets::Minimal)
-            .relay_mode(if card.endpoint.relay_urls().next().is_some() {
-                RelayMode::Default
-            } else {
-                RelayMode::Disabled
-            })
+        let endpoint = crate::Connectivity::of_destination(&card.endpoint)
+            .builder(false)
             .bind()
             .await?;
         let outcome = timeout(Duration::from_secs(25), async {

@@ -238,6 +238,41 @@
                 Save name
               </button>
             </section>
+            <section id="connection-card" class="home-card" hidden>
+              <h2>Connection</h2>
+              <p id="connection-summary"></p>
+              <fieldset id="connection-owner" class="connection-choices" hidden>
+                <legend>How your devices reach each other</legend>
+                <label class="connection-choice"
+                  ><input type="radio" name="connection" id="connection-public" value="public_relays" /><span
+                    ><strong>Public relays</strong
+                    ><span class="home-muted"
+                      >Works from anywhere. Iroh relays help your devices find each other. They can see addresses and timing, never your files.</span
+                    ></span
+                  ></label
+                >
+                <label class="connection-choice"
+                  ><input type="radio" name="connection" id="connection-local" value="local_network" /><span
+                    ><strong>Private: this local network only</strong
+                    ><span class="home-muted"
+                      >No outside relay or lookup service. Devices connect only while they share a network with this computer.</span
+                    ></span
+                  ></label
+                >
+                <button id="save-connection" class="secondary">Save connection</button>
+              </fieldset>
+              <div id="connection-device" hidden>
+                <label class="connection-choice"
+                  ><input type="checkbox" id="connection-local-only" /><span
+                    ><strong>Only connect on the local network from this device</strong
+                    ><span class="home-muted"
+                      >Your network computer chooses for every device. This device can only be stricter.</span
+                    ></span
+                  ></label
+                >
+                <button id="save-device-connection" class="secondary">Save</button>
+              </div>
+            </section>
             <section class="home-card">
               <h2>Sharing</h2>
               <p>

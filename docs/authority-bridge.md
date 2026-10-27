@@ -10,9 +10,11 @@ The real-authority tests run on one Windows host with separate device identities
 and real Iroh/QUIC connections. Physical iPhone, cellular and off-LAN behavior
 remain unverified. A separate [enrollment channel](remote-enrollment.md) now adds
 initial onboarding through the same desktop endpoint. Apple key storage remains
-pending. All bridge endpoints currently use local mode with relays disabled.
+pending. Guided bridge endpoints follow the network's
+[connection setting](everyday-workflow.md#choose-how-devices-connect);
+advanced profiles use local mode with relays disabled.
 
-## Two fixed operations
+## Fixed operations
 
 On the control ALPN, every connection permits one bidirectional stream and one operation, selected
 by a strict versioned request. There is no URL, method, path or header parameter.
@@ -21,6 +23,7 @@ by a strict versioned request. There is no URL, method, path or header parameter
 | --- | --- | --- |
 | `trust` | GET `/na/key-history`, then GET `/crl` | Explicit desktop reachability ticket; signed documents must verify against the client's independently pinned root/network and persisted checkpoints |
 | `renew` | POST `/renew` | Mutual node authentication plus a valid node-signed body naming the exact certificate authenticated in that connection |
+| `settings` | None | Mutual node authentication with a currently valid certificate and an empty body; returns the network's connection setting and the computer's current bridge and session tickets, which the device accepts only for the endpoints it already trusts |
 
 Trust documents are public and can be fetched before node authentication. This
 allows a client resuming after several minutes to obtain current trust before

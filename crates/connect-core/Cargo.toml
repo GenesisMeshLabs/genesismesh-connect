@@ -29,6 +29,16 @@ genesis-mesh-sdk = { git = "https://github.com/GenesisMeshLabs/sdk-rust", tag = 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 
+# Desktops can be the network computer, so let Iroh ask the router to open a
+# port (UPnP, NAT-PMP, PCP) for direct connections.
+[target.'cfg(any(windows, target_os = "macos", target_os = "linux"))'.dependencies]
+iroh = { workspace = true, features = ["portmapper"] }
+
+# Local network discovery for the private connection setting. iOS needs
+# Apple's multicast entitlement first and relies on saved addresses.
+[target.'cfg(any(windows, target_os = "macos", target_os = "linux", target_os = "android"))'.dependencies]
+iroh-mdns-address-lookup = "=0.6.1"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["net", "io-util"] }
 

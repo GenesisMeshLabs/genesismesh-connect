@@ -161,6 +161,10 @@ mod tests {
             auto_connect: false,
             consumer_mode: false,
             saved_share: None,
+            network_connectivity: Default::default(),
+            own_connectivity: None,
+            session_port: None,
+            bridge_port: None,
         }
     }
     #[test]

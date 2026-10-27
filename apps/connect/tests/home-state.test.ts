@@ -6,6 +6,7 @@ import {
   formatBytes,
   folderCrumbs,
   friendlyProblem,
+  connectionSummary,
   type HomeStatus,
 } from "../src/home-state.ts";
 const blank: HomeStatus = {
@@ -21,6 +22,7 @@ const blank: HomeStatus = {
   request: null,
   problem: null,
   legacy: false,
+  connection: null,
 };
 test("approval remains visible while a certificate is being installed", () => {
   assert.equal(primaryScreen(blank), "welcome");
@@ -58,4 +60,35 @@ test("breadcrumbs preserve Unicode names and return explicit parent paths", () =
     {name:"Été 2026",directory:["Photos","Été 2026"]},
   ]);
   assert.deepEqual(directory,["Photos","Été 2026"]);
+});
+
+test("the connection summary says what this device uses and who chose it", () => {
+  assert.equal(connectionSummary(null), "");
+  const network = { own: null, network_computer: true } as const;
+  assert.match(
+    connectionSummary({ ...network, network: "public_relays", effective: "public_relays" }),
+    /from anywhere/,
+  );
+  assert.match(
+    connectionSummary({ ...network, network: "local_network", effective: "local_network" }),
+    /only on this local network/,
+  );
+  assert.match(
+    connectionSummary({
+      network: "local_network",
+      own: null,
+      effective: "local_network",
+      network_computer: false,
+    }),
+    /network computer keeps every device/,
+  );
+  assert.match(
+    connectionSummary({
+      network: "public_relays",
+      own: "local_network",
+      effective: "local_network",
+      network_computer: false,
+    }),
+    /This device connects only on the local network.*also allows public relays/,
+  );
 });

@@ -25,6 +25,12 @@ are under the ignored `temp/` directory.
   to store owner keys through the Rust host's native credential store. Only
   opaque references persist in managed key files. A native target's sidecar is
   built on that OS/architecture, never relabeled from another platform.
+- The network computer's connection setting (public relays, or private: local
+  network only) reaches every guided device through the authority bridge; see
+  [choose how devices connect](everyday-workflow.md#choose-how-devices-connect).
+  Local network discovery (mDNS) is built for Windows, macOS, Linux and Android;
+  iOS needs Apple's multicast entitlement first and uses saved addresses.
+  Router port mapping (UPnP, NAT-PMP, PCP) is built for desktops only.
 - New sharing hosts get separate sovereign identities and executor namespaces.
   Existing `connect-host` profiles remain usable. Collection policy selectors
   match the collection so unrelated folders do not veto one another.

@@ -11,6 +11,25 @@ export interface HomeStatus {
   request: { id: string; name: string; node: string; code: string } | null;
   problem: string | null;
   legacy: boolean;
+  connection: ConnectionStatus | null;
+}
+export type Connectivity = "public_relays" | "local_network";
+export interface ConnectionStatus {
+  network: Connectivity;
+  own: Connectivity | null;
+  effective: Connectivity;
+  network_computer: boolean;
+}
+/** One plain sentence for Settings: what this device uses, and who chose it. */
+export function connectionSummary(connection: ConnectionStatus | null) {
+  if (!connection) return "";
+  if (connection.effective === "public_relays")
+    return "Public relays: your devices reach each other from anywhere.";
+  if (connection.network === "public_relays")
+    return "This device connects only on the local network. Your network also allows public relays.";
+  return connection.network_computer
+    ? "Private: your devices connect only on this local network."
+    : "Private: your network computer keeps every device on the local network.";
 }
 export interface FileEntry {
   name: string;

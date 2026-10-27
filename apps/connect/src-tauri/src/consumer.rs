@@ -4,7 +4,8 @@ use crate::{desktop::DesktopState, workflow::WorkflowState};
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 use connect_core::session::sharing::ShareConfig;
 use connect_core::{
-    device::{DeviceController, PairedDevice},
+    Connectivity,
+    device::{ConnectivityStatus, DeviceController, PairedDevice},
     session::{
         pairing::{PairCard, PairGrant, PairRequest},
         sharing::{ReadReport, ReadRequest, browse::Page},
@@ -37,6 +38,7 @@ pub struct HomeStatus {
     request: Option<PairRequest>,
     problem: Option<String>,
     legacy: bool,
+    connection: Option<ConnectivityStatus>,
 }
 #[tauri::command]
 pub async fn home_status(
@@ -92,7 +94,42 @@ pub async fn home_status(
             && owner.runtime.is_none()
             && !state.directory.join("owner.json").is_file()
             && device.as_ref().is_some_and(|d| d.paired_device.is_none()),
+        connection: device.map(|d| d.connectivity),
     })
+}
+/// How every device reaches this network. Only the network computer decides.
+#[tauri::command]
+pub async fn set_network_connection(
+    setting: Connectivity,
+    desktop: tauri::State<'_, DesktopState>,
+) -> Result<(), String> {
+    desktop
+        .slot
+        .lock()
+        .await
+        .controller
+        .as_mut()
+        .ok_or("Set up this computer first")?
+        .set_network_connectivity(setting)
+        .await
+        .map_err(error)
+}
+/// Keep this device on the local network even when the network allows relays.
+#[tauri::command]
+pub async fn set_device_local_only(
+    enabled: bool,
+    desktop: tauri::State<'_, DesktopState>,
+) -> Result<(), String> {
+    desktop
+        .slot
+        .lock()
+        .await
+        .controller
+        .as_mut()
+        .ok_or("Join your network first")?
+        .set_own_connectivity(enabled.then_some(Connectivity::LocalNetwork))
+        .await
+        .map_err(error)
 }
 #[derive(Serialize)]
 pub struct JoinLink {
