@@ -95,6 +95,16 @@ pub struct ConnectivityStatus {
     pub guided: bool,
 }
 
+/// What a device made of the network computer's list of Spaces.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct AppliedSpaces {
+    /// This device's Spaces the computer lists but this device no longer
+    /// shares: the computer is asked again to forget them.
+    pub stale: Vec<String>,
+    /// Spaces this device shares that the computer stopped: they stop here.
+    pub ended: Vec<String>,
+}
+
 fn connectivity_of(vault: &Vault) -> Connectivity {
     if vault.consumer_mode() {
         Connectivity::effective(vault.network_connectivity(), vault.own_connectivity())
@@ -653,10 +663,10 @@ impl DeviceController {
         Ok(confirmed.is_ok())
     }
     /// Take the network computer's list of Spaces for this device: keep it for
-    /// display, and use renewed grants for the Spaces this device shares.
-    /// Returns this device's Spaces the computer lists but this device no
-    /// longer shares.
-    pub fn apply_spaces(&mut self, views: Vec<SpaceView>) -> Result<Vec<String>> {
+    /// display, and use renewed grants for the Spaces this device shares. The
+    /// computer can take a removed device off a Space's devices, never add
+    /// one.
+    pub fn apply_spaces(&mut self, views: Vec<SpaceView>) -> Result<AppliedSpaces> {
         let own = self.status()?.node_public_key;
         let mut saved = self.vault.saved_shares().to_vec();
         let mut renewed = false;
@@ -670,6 +680,11 @@ impl DeviceController {
                 stale.push(view.collection.clone());
                 continue;
             };
+            let before = config.recipients.len();
+            config
+                .recipients
+                .retain(|node| grant.recipients.contains(node));
+            renewed |= config.recipients.len() != before;
             if config.attestation_id != grant.attestation_id {
                 if let Some(share) = self
                     .sharing
@@ -682,11 +697,23 @@ impl DeviceController {
                 renewed = true;
             }
         }
+        // A Space this device shares that the computer no longer lists was
+        // stopped there, for example when its last device was removed.
+        let ended = saved
+            .iter()
+            .filter(|share| {
+                !share.name.is_empty()
+                    && !views
+                        .iter()
+                        .any(|view| view.host == own && view.collection == share.collection_id)
+            })
+            .map(|share| share.collection_id.clone())
+            .collect();
         if renewed {
             self.vault.save_shares(saved)?;
         }
         self.vault.save_spaces(views)?;
-        Ok(stale)
+        Ok(AppliedSpaces { stale, ended })
     }
     pub async fn create_pairing(
         &mut self,
@@ -888,13 +915,16 @@ impl DeviceController {
                 .collect()
         }));
         // A profile at its size limit keeps the last list.
-        let Ok(stale) = self.apply_spaces(views) else {
+        let Ok(applied) = self.apply_spaces(views) else {
             return Ok(());
         };
-        for collection in stale {
+        for collection in applied.stale {
             let _ = client
                 .unshare_space(identity.clone(), trust.clone(), collection)
                 .await;
+        }
+        for collection in applied.ended {
+            self.drop_space(&collection).await?;
         }
         Ok(())
     }
@@ -1444,7 +1474,9 @@ mod tests {
         let mut device = DeviceController::prepare_remote(&dir.path().join("device"), pin)?;
         let own = device.status()?.node_public_key;
         let phone = STANDARD.encode([5; 32]);
-        let (kept, stopped, theirs) = (
+        let (removed, newcomer) = (STANDARD.encode([6; 32]), STANDARD.encode([8; 32]));
+        let (kept, stopped, theirs, ended) = (
+            uuid::Uuid::new_v4().to_string(),
             uuid::Uuid::new_v4().to_string(),
             uuid::Uuid::new_v4().to_string(),
             uuid::Uuid::new_v4().to_string(),
@@ -1455,14 +1487,29 @@ mod tests {
             attestation_id: uuid::Uuid::new_v4().to_string(),
             policy_id: format!("connect-{kept}"),
             name: "Photos".into(),
-            recipients: vec![phone.clone()],
+            recipients: vec![phone.clone(), removed.clone()],
             ..Default::default()
         };
-        device.vault.save_shares(vec![config.clone()])?;
+        // A Space the computer stopped, and a folder shared before Spaces.
+        let gone = ShareConfig {
+            collection_id: ended.clone(),
+            name: "Only the removed device".into(),
+            recipients: vec![removed.clone()],
+            ..config.clone()
+        };
+        let legacy = ShareConfig {
+            collection_id: uuid::Uuid::new_v4().to_string(),
+            name: String::new(),
+            ..config.clone()
+        };
+        device
+            .vault
+            .save_shares(vec![config.clone(), gone, legacy])?;
+        // The computer took the removed device off; it never adds one.
         let grant = |collection: &str, attestation: String| SpaceGrant {
             policy_id: format!("connect-{collection}"),
             attestation_id: attestation,
-            recipients: vec![phone.clone()],
+            recipients: vec![phone.clone(), newcomer.clone()],
             valid_until: "2027-01-01T00:00:00+00:00".into(),
         };
         let renewed = uuid::Uuid::new_v4().to_string();
@@ -1489,7 +1536,13 @@ mod tests {
                 grant: None,
             },
         ];
-        assert_eq!(device.apply_spaces(views.clone())?, vec![stopped.clone()]);
+        assert_eq!(
+            device.apply_spaces(views.clone())?,
+            AppliedSpaces {
+                stale: vec![stopped.clone()],
+                ended: vec![ended.clone()],
+            }
+        );
         assert_eq!(
             device.vault.saved_shares()[0].attestation_id,
             renewed,
@@ -1497,8 +1550,8 @@ mod tests {
         );
         assert_eq!(
             device.vault.saved_shares()[0].recipients,
-            config.recipients,
-            "Only its host changes a Space's devices"
+            vec![phone.clone()],
+            "Only its host adds devices to a Space; the computer takes removed ones off"
         );
         let listed = device.status()?.spaces;
         assert_eq!(listed.len(), 3);

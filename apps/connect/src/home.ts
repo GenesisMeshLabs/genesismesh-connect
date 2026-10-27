@@ -203,10 +203,14 @@ function renderConnection(status: HomeStatus) {
 function renderDevices(status: HomeStatus) {
   const list = el("saved-devices");
   // Polling must not replace a focused button every two seconds.
-  const stamp = JSON.stringify(status.devices);
+  const stamp = JSON.stringify([status.owner, status.devices]);
   if (list.dataset.state === stamp) return;
   list.dataset.state = stamp;
   list.replaceChildren();
+  visible(
+    "devices-note",
+    !status.owner && status.devices.some((device) => device.member),
+  );
   for (const device of status.devices) {
     const row = document.createElement("section");
     row.className = "home-card device-row";
@@ -232,16 +236,26 @@ function renderDevices(status: HomeStatus) {
       message("");
     }));
     row.append(details, choose);
-    // Members come from the network computer, which decides who belongs.
+    // Members come from the network computer, which decides who belongs:
+    // there a device is removed from the network, elsewhere only forgotten.
     if (!device.authority_connection && !device.member) {
       const forget = document.createElement("button");
-      forget.textContent = "Forget";
       forget.className = "secondary";
-      forget.addEventListener("click", () => void run(forget, async () => {
-        if (!window.confirm(`Forget ${device.name} on this device? This stops its local connections. Network membership and folder policies must be revoked separately.`)) return;
-        await invoke("forget_device", { id: device.id });
-        message(`${device.name} forgotten on this device.`);
-      }));
+      if (status.owner) {
+        forget.textContent = "Remove from network";
+        forget.addEventListener("click", () => void run(forget, async () => {
+          if (!window.confirm(`Remove ${device.name} from your network? It loses access at once: the folders it shares stop, and the others no longer include it. To join again, it needs a fresh setup of Connect.`)) return;
+          await invoke("remove_device", { id: device.id });
+          message(`${device.name} was removed from your network.`);
+        }));
+      } else {
+        forget.textContent = "Forget";
+        forget.addEventListener("click", () => void run(forget, async () => {
+          if (!window.confirm(`Forget ${device.name} on this device? This stops its local connections. Network membership and folder policies must be revoked separately.`)) return;
+          await invoke("forget_device", { id: device.id });
+          message(`${device.name} forgotten on this device.`);
+        }));
+      }
       const options = document.createElement("details");
       options.className = "device-options";
       const summary = document.createElement("summary");

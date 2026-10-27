@@ -34,6 +34,7 @@ def main():
                 elif op=="space_remove" and set(request)=={"op","host","collection"}: result=owner.space_remove(request["host"],request["collection"])
                 elif op=="space_list" and set(request)=={"op"}: result=owner.space_list()
                 elif op=="space_renew" and set(request)=={"op"}: result=owner.space_renew()
+                elif op=="remove_device" and set(request)=={"op","node"}: result=owner.remove_device(request["node"])
                 elif op=="backup" and set(request)=={"op"}: result=owner.backup()
                 elif op=="restore" and set(request)=={"op","staging","root","config","keys"}: result=owner.restore(request["staging"],request["root"],request["config"],request["keys"])
                 else: raise Refused("Unsupported network setup operation.")

@@ -57,6 +57,19 @@ pub struct Space {
     pub valid_until: String,
 }
 
+/// What removing a device from the network did.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Removal {
+    /// Certificates revoked now; none when it was removed before, or never
+    /// joined as a device of its own.
+    pub revoked: u32,
+    /// Spaces stopped: those it shared, and those left with nobody.
+    pub stopped: Vec<String>,
+    /// Spaces that no longer name it.
+    pub changed: Vec<String>,
+}
+
 /// The Spaces `host` still has in the registry but no longer shares: saved
 /// shares count, running or not, so a folder that could not be opened is
 /// never mistaken for a stopped one.
@@ -361,6 +374,14 @@ impl OwnerRuntime {
         Ok(serde_json::from_value(self.request(
             json!({"op":"space_remove","host":host,"collection":collection}),
         )?)?)
+    }
+    /// Take a device off the network: its certificates are revoked, its
+    /// Spaces stop, and the Spaces shared with it no longer name it. Asking
+    /// again finishes what a failure left undone.
+    pub fn remove_device(&mut self, node: &str) -> Result<Removal> {
+        Ok(serde_json::from_value(
+            self.request(json!({"op":"remove_device","node":node}))?,
+        )?)
     }
     pub fn space_list(&mut self) -> Result<Vec<Space>> {
         Ok(serde_json::from_value(

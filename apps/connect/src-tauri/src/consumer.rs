@@ -666,6 +666,60 @@ pub async fn select_device(
         .map_err(error)
 }
 
+/// On the network computer: take a device off the network. It is revoked
+/// first, so nothing accepts it while its Spaces change; asking again
+/// finishes a removal that failed part way.
+#[tauri::command]
+pub async fn remove_device(
+    id: String,
+    state: tauri::State<'_, WorkflowState>,
+    desktop: tauri::State<'_, DesktopState>,
+) -> Result<(), String> {
+    let mut owner = state.slot.lock().await;
+    let mut runtime = owner
+        .runtime
+        .take()
+        .ok_or("Remove devices on your network computer.")?;
+    let saved = {
+        let slot = desktop.slot.lock().await;
+        slot.controller
+            .as_ref()
+            .ok_or("Device is unavailable")
+            .and_then(|device| device.status().map_err(|_| "Device is unavailable"))
+            .map(|status| status.devices.iter().any(|d| d.node == id))
+    };
+    if !matches!(saved, Ok(true)) {
+        owner.runtime = Some(runtime);
+        return Err(saved
+            .err()
+            .unwrap_or("Choose a device of this network")
+            .into());
+    }
+    let node = id.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let removed = runtime
+            .remove_device(&node)
+            .and_then(|_| runtime.space_list());
+        (runtime, removed)
+    })
+    .await
+    .map_err(|_| "Could not remove the device")?;
+    owner.runtime = Some(outcome.0);
+    let spaces = outcome.1.map_err(error)?;
+    let mut slot = desktop.slot.lock().await;
+    let device = slot.controller.as_mut().ok_or("Device is unavailable")?;
+    device.forget_device(&id).await.map_err(error)?;
+    let own = device.status().map_err(error)?.node_public_key;
+    device.publish_spaces(spaces.clone());
+    let views = spaces
+        .into_iter()
+        .filter_map(|space| connect_core::session::bridge::SpaceView::of(space, &own))
+        .collect();
+    for collection in device.apply_spaces(views).map_err(error)?.ended {
+        device.drop_space(&collection).await.map_err(error)?;
+    }
+    Ok(())
+}
 #[tauri::command]
 pub async fn forget_device(
     id: String,

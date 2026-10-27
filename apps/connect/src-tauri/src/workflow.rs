@@ -492,7 +492,11 @@ async fn spaces_once(
         .into_iter()
         .filter_map(|space| SpaceView::of(space, &status.node_public_key))
         .collect();
-    device.apply_spaces(views)?;
+    // This computer's Spaces stopped in the registry, for example when the
+    // last device they named was removed, stop here too.
+    for collection in device.apply_spaces(views)?.ended {
+        device.drop_space(&collection).await?;
+    }
     if problem.is_some() {
         slot.problem = problem;
     }

@@ -69,6 +69,7 @@ and stop using the desktop as the network computer; see the
 ```sh
 sudo genesismesh-connect status
 sudo genesismesh-connect pair --name "Home server"   # prints an invitation, then asks to approve
+sudo genesismesh-connect remove "Phone"               # takes a device off the network
 sudo genesismesh-connect connection public            # or: private
 sudo genesismesh-connect recovery home.gmrecovery
 ```
@@ -79,6 +80,12 @@ six-digit code; compare it with the device and answer `y` to allow it. These
 commands reach the running service through a control socket in its state
 directory that only the service user can open; they are never exposed to the
 network. Approving from the phone instead of a terminal comes with Requests.
+
+`remove NAME` takes the device with that name off the network: its
+certificates are revoked, the Spaces it shares or that only it could see stop,
+and the others no longer name it (see
+[remove a device](everyday-workflow.md#remove-a-device)). It joins again only
+after a fresh setup of Connect on it.
 
 `recovery NAME` writes `/var/lib/genesismesh-connect/recovery/NAME` and shows
 its key once; it never replaces an existing file. Copy the file somewhere safe,

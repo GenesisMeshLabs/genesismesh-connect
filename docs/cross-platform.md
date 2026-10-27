@@ -13,9 +13,10 @@ are under the ignored `temp/` directory.
   keep their existing protected-record/reference formats.
 - Up to 32 saved devices, selected by name in Devices. The old single-device
   record migrates without changing keys. Selection does not erase another peer.
-  Removing a peer cancels local sessions; it does not revoke network membership
-  or policies on other devices. The authority route cannot be forgotten until
-  another route is configured.
+  Forgetting a peer cancels local sessions; it does not revoke network
+  membership or policies on other devices. Only the network computer removes a
+  device from the network, which revokes it and takes it off every Space. The
+  authority route cannot be forgotten until another route is configured.
 - Devices learn the network's other devices (name, node key, current address)
   from the network computer over the authority bridge and accept authenticated
   connections from them; together with paired devices, at most 32. The list

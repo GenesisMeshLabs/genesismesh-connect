@@ -147,6 +147,59 @@ class OwnerTests(unittest.TestCase):
                 with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"One more",[phone])
             finally: owner.close()
 
+    def test_removing_a_device_revokes_it_and_takes_it_off_every_space(self):
+        import base64
+        import uuid
+        from datetime import datetime, timezone
+        import nacl.signing
+        from genesis_mesh.crypto.node_auth import sign_executor_proof, sign_node_request
+        with tempfile.TemporaryDirectory() as directory:
+            owner=Owner(Path(directory)/"owner")
+            try:
+                owner.create("Removal")
+                computer,tablet=(generate_keypair().public_key_b64 for _ in range(2))
+                phone=nacl.signing.SigningKey.generate()
+                phone_node=base64.b64encode(bytes(phone.verify_key)).decode()
+                client=owner.service.app.test_client()
+                def signed(body):
+                    stamped={**body,"timestamp":datetime.now(timezone.utc).isoformat(),"nonce":str(uuid.uuid4())}
+                    return sign_node_request(stamped,phone)
+                # The phone joins as a device does: its own subject and an executor key.
+                executor=nacl.signing.SigningKey.generate()
+                join={"node_public_key":phone_node,"invite_token":owner.invite(phone_node,True)["invite"],"validity_hours":24,
+                    "executor_public_key":base64.b64encode(bytes(executor.verify_key)).decode(),
+                    "timestamp":datetime.now(timezone.utc).isoformat(),"nonce":str(uuid.uuid4())}
+                joined=client.post("/join",json=sign_node_request(sign_executor_proof(join,executor),phone))
+                self.assertEqual(joined.status_code,201,joined.get_json())
+                cert_id=joined.get_json()["cert_id"]
+                home,only,photos,tablets=(str(uuid.uuid4()) for _ in range(4))
+                owner.space_share(computer,home,"Home",[phone_node,tablet])
+                owner.space_share(computer,only,"Phone only",[phone_node])
+                owner.space_share(phone_node,photos,"Phone photos",[computer])
+                owner.space_share(tablet,tablets,"Tablet",[computer])
+                removal=owner.remove_device(phone_node)
+                self.assertEqual(removal["revoked"],1)
+                self.assertEqual(sorted(removal["stopped"]),sorted([only,photos]))
+                self.assertEqual(removal["changed"],[home])
+                # Its certificate is revoked and it cannot renew.
+                self.assertIn(cert_id,[c.certificate_id for c in owner.service.db.get_active_crl().revoked_certificates])
+                renewal=client.post("/renew",json=signed({"cert_id":cert_id,"node_public_key":phone_node,"validity_hours":24}))
+                self.assertGreaterEqual(renewal.status_code,400)
+                # The Spaces left name only the devices still there.
+                spaces={s["collection"]:s for s in owner.space_list()}
+                self.assertEqual(sorted(spaces),sorted([home,tablets]))
+                self.assertEqual(spaces[home]["recipients"],[tablet])
+                active=[p for p in owner.service.db.load_active_boundary_policies().policies]
+                for policy in active:
+                    for gate in policy.gates:
+                        if gate.gate_id=="peer": self.assertNotIn(phone_node,gate.config["values"])
+                self.assertFalse([p for p in active if p.policy_id in ("connect-"+only,"connect-"+photos)])
+                # Asking again changes nothing; a key that never joined has nothing to revoke.
+                self.assertEqual(owner.remove_device(phone_node),{"revoked":0,"stopped":[],"changed":[]})
+                self.assertEqual(owner.remove_device(generate_keypair().public_key_b64)["revoked"],0)
+                with self.assertRaises(Refused): owner.remove_device("invalid")
+            finally: owner.close()
+
     def test_an_inbox_lets_its_devices_write_and_nothing_else(self):
         import uuid
         with tempfile.TemporaryDirectory() as directory:

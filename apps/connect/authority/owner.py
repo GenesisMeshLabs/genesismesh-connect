@@ -236,15 +236,18 @@ class Owner:
             raise Refused(f"The network authority refused this operation ({response.status_code}).")
         return response.json()
 
+    def read(self, path, params=None):
+        """A signed admin read; the signature covers the query too."""
+        if not self.config:
+            raise Refused("Open the network first.")
+        audience = base64.b64encode(bytes(self.na_key.verify_key)).decode()
+        headers = sign_admin_request(self.operator, self.config["operator"]["key_id"], method="GET", path=path, audience=audience, query=params)
+        return self.session.get(self.origin+path,params=params,headers=headers,timeout=5,allow_redirects=False)
+
     def policy_versions(self, policy_id):
         """Every stored version of one policy, through the signed admin route,
         so attached networks answer too. Empty when the policy does not exist."""
-        if not self.config:
-            raise Refused("Open the network first.")
-        path = f"/admin/boundary-policies/{policy_id}/history"
-        audience = base64.b64encode(bytes(self.na_key.verify_key)).decode()
-        headers = sign_admin_request(self.operator, self.config["operator"]["key_id"], method="GET", path=path, audience=audience)
-        response = self.session.get(self.origin+path,headers=headers,timeout=5,allow_redirects=False)
+        response = self.read(f"/admin/boundary-policies/{policy_id}/history")
         if response.status_code == 400 and response.json().get("error", {}).get("code") == "boundary_policy_not_found":
             return []
         # Every change and renewal adds a version with its full policy, so the
@@ -391,6 +394,37 @@ class Owner:
 
     def space_list(self):
         return self._spaces()
+
+    def remove_device(self, host_node):
+        """Take a device off the network. Every certificate of its key is
+        revoked at the authority, so no device and no decision accepts it
+        again; the Spaces it shares stop, and those shared with it no longer
+        name it (one left with nobody stops). Asking again finishes what a
+        failure left undone."""
+        host_node = node(host_node)
+        response = self.read("/admin/edge-nodes", {"node_sovereign_id": self.subject(host_node)})
+        if response.status_code != 200 or len(response.content) > 512*1024:
+            raise Refused(f"The network authority refused this operation ({response.status_code}).")
+        revoked = 0
+        for edge in response.json()["edge_nodes"]:
+            if edge["node_public_key"] == host_node and edge["cert_id"]:
+                result = self.admin("/admin/revoke", {"cert_id": edge["cert_id"], "reason": "cessation_of_operation"})
+                revoked += len(result.get("edge_node", {}).get("revoked_cert_ids", []))
+        stopped, changed = [], []
+        for entry in self._spaces():
+            if entry["host"] == host_node:
+                self.space_remove(host_node, entry["collection"])
+                stopped.append(entry["collection"])
+            elif host_node in entry["recipients"]:
+                others = [r for r in entry["recipients"] if r != host_node]
+                if others:
+                    self.space_share(entry["host"], entry["collection"], entry["name"], others,
+                        entry["subject"], kind=entry.get("kind", "folder"))
+                    changed.append(entry["collection"])
+                else:
+                    self.space_remove(entry["host"], entry["collection"])
+                    stopped.append(entry["collection"])
+        return {"revoked": revoked, "stopped": stopped, "changed": changed}
 
     def space_renew(self, days=RENEW_DAYS):
         """Renew every Space whose policy ends within `days`. Returns the

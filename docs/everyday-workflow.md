@@ -90,9 +90,8 @@ Keep both apps open and the computer awake. This is a foreground companion app,
 not a system-wide VPN, background iPhone service or unattended Windows service.
 The current controller supports up to 32 saved devices. Choose one by name in
 Devices before browsing or checking a connection. Adding a second device keeps
-the first; forgetting a device stops its local connections without revoking its
-membership throughout the network. Existing single-device profiles migrate
-without replacing their keys. See [platform evidence and limits](cross-platform.md).
+the first. Existing single-device profiles migrate without replacing their
+keys. See [platform evidence and limits](cross-platform.md).
 
 Every device also learns the network's other devices from the network
 computer: with each trust refresh it asks, over the authenticated authority
@@ -101,13 +100,31 @@ They appear in Devices as **On your network**, and devices connect to each
 other directly, without going through the network computer. Being listed
 grants nothing: every file operation still needs the authority's decision,
 and a device that shares nothing with you says so. The network computer
-decides who belongs, so a listed device cannot be forgotten on another device;
-when the network computer forgets a device, the others drop it at their next
-refresh. The forgotten device itself can no longer use the authority bridge,
-so it cannot renew its certificate and its connections pause within minutes;
-it keeps showing its last list until it joins a network again. Opening
-Devices asks the network computer right away instead of waiting for the next
-refresh.
+decides who belongs, so a listed device cannot be forgotten on another device.
+Opening Devices asks the network computer right away instead of waiting for
+the next refresh.
+
+### Remove a device
+
+On the network computer, open **Devices**, then **More → Remove from network**
+beside the device. On a server node, run
+`sudo genesismesh-connect remove "Device name"` (`status` lists the names).
+Removal:
+
+- revokes every certificate of the device's key at the authority, in one
+  revocation list, so no device and no decision accepts it again;
+- stops the Spaces the device shares, and the Spaces only it could see;
+- takes it off every other Space, whose policy then names only the devices
+  still there;
+- drops it from the network computer's devices; the others drop it at their
+  next refresh, along with the Spaces that stopped.
+
+The removed device cannot renew its certificate or use the authority bridge,
+and other devices refuse it as soon as they see the revocation. Bytes of a
+window already being sent may still arrive. To join again, it needs a fresh
+setup of Connect: the authority does not enroll the same device key twice.
+Asking again finishes a removal that failed part way. On other devices, Forget
+removes only a device this device saved itself and does not revoke anything.
 
 ## Choose how devices connect
 
