@@ -65,6 +65,12 @@ tpm=no
 systemd-creds has-tpm2 >/dev/null 2>&1 && tpm=yes
 [[ $require_tpm == 1 && $tpm == no ]] && fail "this machine has no usable TPM2; on Azure, use a Trusted Launch VM"
 
+network=no
+[[ -f $state/network-owner/owner.json ]] && network=yes
+# A new key cannot open records sealed under the lost one.
+[[ $network == yes && ! -f $credential ]] && fail \
+  "this server has a network but its master key ($credential) is missing; bring the network back from a recovery file: --uninstall --yes, install again, then restore"
+
 if id "$user" >/dev/null 2>&1; then
   ours || fail "a user named $user already exists and is not this node's"
 else
@@ -112,6 +118,8 @@ chmod 0755 "$command"
 systemctl daemon-reload
 systemctl enable genesismesh-connect-node.service >/dev/null
 # An upgrade takes effect at once; a stopped node stays stopped.
+was_running=no
+systemctl is-active --quiet genesismesh-connect-node.service && was_running=yes
 systemctl try-restart genesismesh-connect-node.service
 
 if [[ $new_key == 0 ]]; then
@@ -122,9 +130,17 @@ else
   echo "No TPM2 found: the master key is sealed to this machine's host key only, which"
   echo "does not protect a copied disk. Prefer a machine with a TPM (Azure Trusted Launch)."
 fi
-if [[ -f $state/network-owner/owner.json ]]; then
-  echo "Upgraded. A running node restarted with the new programs."
-else
+if [[ $network == no ]]; then
   echo "Next: genesismesh-connect init --name \"Home network\"  (or: genesismesh-connect restore FILE)"
   echo "Then: systemctl start genesismesh-connect-node, and genesismesh-connect pair"
+elif [[ $was_running == no ]]; then
+  echo "Upgraded. The node is not running; start it with: systemctl start genesismesh-connect-node"
+else
+  # The unit counts as started once forked: give it time to fail.
+  pid=$(systemctl show -p MainPID --value genesismesh-connect-node.service)
+  sleep 5
+  systemctl is-active --quiet genesismesh-connect-node.service \
+    && [[ $(systemctl show -p MainPID --value genesismesh-connect-node.service) == "$pid" ]] \
+    || fail "the node did not stay up after the upgrade; see: journalctl -u genesismesh-connect-node"
+  echo "Upgraded. The node restarted with the new programs."
 fi
