@@ -111,7 +111,7 @@ struct Saved {
     path: PathBuf,
 }
 /// Whether a download was stopped, and whether its bytes stay to continue.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stop {
     No,
     Keep,
@@ -348,6 +348,73 @@ fn update(jobs: &Mutex<Option<Job>>, id: &str, action: impl FnOnce(&mut Job)) {
         action(job);
     }
 }
+/// What a window's whole-file digest says about the file.
+#[derive(Debug, PartialEq, Eq)]
+enum Change {
+    Same,
+    /// It changed without a new version: start again from the beginning.
+    Restart,
+    /// It changed again: give up on it.
+    Refuse,
+}
+fn change(known: Option<&str>, window: &str, restarted: bool) -> Change {
+    match known {
+        Some(known) if known != window && restarted => Change::Refuse,
+        Some(known) if known != window => Change::Restart,
+        _ => Change::Same,
+    }
+}
+/// What becomes of a download that did not finish.
+#[derive(Debug, PartialEq, Eq)]
+enum Settle {
+    /// Its bytes go.
+    Discard,
+    /// It is listed to continue later.
+    List,
+    /// Nothing is left of it.
+    Leave,
+}
+fn settle(stopped: Stop, refused: bool, recorded: bool) -> Settle {
+    if stopped == Stop::Discard || refused {
+        Settle::Discard
+    } else if recorded {
+        Settle::List
+    } else {
+        Settle::Leave
+    }
+}
+/// Check the whole file against its digest; a small text file comes back to
+/// preview.
+fn verify(mut output: File, expected: &str, size: u64, name: &str) -> Result<Option<String>> {
+    output.seek(SeekFrom::Start(0))?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    loop {
+        let count = output.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    ensure!(
+        digest == expected && output.metadata()?.len() == size,
+        "Downloaded file could not be verified"
+    );
+    if size <= 65536
+        && matches!(
+            extension(name).as_str(),
+            "txt" | "md" | "json" | "csv" | "log"
+        )
+    {
+        output.seek(SeekFrom::Start(0))?;
+        let mut bytes = Vec::new();
+        output.take(65537).read_to_end(&mut bytes)?;
+        Ok(String::from_utf8(bytes).ok())
+    } else {
+        Ok(None)
+    }
+}
 /// The unfinished downloads, for the home screen.
 pub fn unfinished(state: &Downloads) -> Vec<Unfinished> {
     state
@@ -470,32 +537,28 @@ async fn start(
     tauri::async_runtime::spawn(async move {
         let folder_path = cache.join(&folder_id);
         let size = record.size;
-        // Once the bytes are being checked, the folder goes with the job.
-        let mut checking = false;
-        // A final refusal, or a file that keeps changing: nothing to continue.
+        // A file that keeps changing: nothing to continue.
         let mut refused = false;
-        // Held until what stopped is listed again, or by the final check.
-        let mut permit = Some(permit);
-        let (stop, relist) = (canceled.clone(), unfinished.clone());
         let transfer = async {
             std::fs::create_dir_all(&cache)?;
             ensure!(
                 cache_usage(&cache, &folder_id)?.saturating_add(size) <= 2 * MAX_FILE_BYTES,
                 "Download cache is full. Discard an unfinished download before trying again."
             );
-            std::fs::create_dir_all(&folder_path)?;
-            let folder = Folder {
+            // A new download's folder goes again if it cannot be recorded.
+            let mut folder = Folder {
                 path: folder_path.clone(),
-                keep: true,
+                keep: folder_path.exists(),
             };
+            std::fs::create_dir_all(&folder_path)?;
             // Recorded first, so a download that fails from here is listed.
             store(&folder_path.join(RECORD), &record)?;
+            folder.keep = true;
             let mut output = open_bytes(&folder_path, &mut record)?;
             store(&folder_path.join(RECORD), &record)?;
             update(&jobs, &task_id, |job| {
                 job.progress.received = record.received
             });
-            let path = folder_path.join(BYTES).join(&record.name);
             let mut restarted = false;
             let mut token = None;
             let mut digest = record.sha256.clone();
@@ -540,7 +603,8 @@ async fn start(
                         // or it restarted: wait and reach it again. When it no
                         // longer has the snapshot, or refuses the token, the
                         // next attempt asks without it, from where this
-                        // download stands; a refusal without a token is final.
+                        // download stands; a refusal without a token ends this
+                        // attempt, and the download stays listed to continue.
                         Err(error)
                             if attempts < 6
                                 && (request.token.is_some()
@@ -564,28 +628,26 @@ async fn start(
                                 request.request_id = uuid::Uuid::new_v4().to_string();
                             }
                         }
-                        Err(error) => {
-                            refused = request.token.is_none()
-                                && error.to_string().contains("isn't available");
-                            return Err(error);
-                        }
+                        Err(error) => return Err(error),
                     }
                 };
-                // Any fresh snapshot must be of the very same file. One that
-                // changed without a new version starts again, once.
-                if digest.as_ref().is_some_and(|d| d != &window.sha256) {
-                    if restarted {
-                        refused = true;
-                        anyhow::bail!("File digest changed during download");
+                match change(digest.as_deref(), &window.sha256, restarted) {
+                    Change::Same => {}
+                    // The file changed without a new version: from the start.
+                    Change::Restart => {
+                        restarted = true;
+                        output.set_len(0)?;
+                        (token, digest, offset) = (Some(window.token), None, 0);
+                        record.received = 0;
+                        record.sha256 = None;
+                        store(&folder_path.join(RECORD), &record)?;
+                        update(&jobs, &task_id, |job| job.progress.received = 0);
+                        continue;
                     }
-                    restarted = true;
-                    output.set_len(0)?;
-                    (token, digest, offset) = (Some(window.token), None, 0);
-                    record.received = 0;
-                    record.sha256 = None;
-                    store(&folder_path.join(RECORD), &record)?;
-                    update(&jobs, &task_id, |job| job.progress.received = 0);
-                    continue;
+                    Change::Refuse => {
+                        refused = true;
+                        anyhow::bail!("This file keeps changing on the sharing device.");
+                    }
                 }
                 token = Some(window.token);
                 digest = Some(window.sha256);
@@ -603,97 +665,66 @@ async fn start(
                     .clamp(MIN_WINDOW_BYTES, MAX_WINDOW_BYTES)
                     .min(length.saturating_mul(4));
             }
-            update(&jobs, &task_id, |job| {
-                job.progress.state = "verifying".into()
-            });
             output.sync_all()?;
-            checking = true;
             let expected = digest.context("Missing file digest")?;
-            let text_name = record.name.clone();
-            let recorded = folder_path.join(RECORD);
-            let (held, kept_id, kept) = (permit.take(), folder_id.clone(), record.clone());
-            let verified =
-                tokio::task::spawn_blocking(move || -> Result<(Saved, Option<String>)> {
-                    let _permit = held;
-                    let mut folder = folder;
-                    // Drop the open handle before its owning folder, also
-                    // after a stop while this blocking check finishes.
-                    let mut output = output;
-                    let checked = (|| -> Result<Option<String>> {
-                        output.seek(SeekFrom::Start(0))?;
-                        let mut hash = Sha256::new();
-                        let mut buffer = [0u8; 65536];
-                        loop {
-                            let count = output.read(&mut buffer)?;
-                            if count == 0 {
-                                break;
-                            }
-                            hash.update(&buffer[..count]);
-                        }
-                        let digest: String =
-                            hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-                        ensure!(
-                            digest == expected && output.metadata()?.len() == size,
-                            "Downloaded file could not be verified"
-                        );
-                        if size <= 65536
-                            && matches!(
-                                extension(&text_name).as_str(),
-                                "txt" | "md" | "json" | "csv" | "log"
-                            )
-                        {
-                            output.seek(SeekFrom::Start(0))?;
-                            let mut bytes = Vec::new();
-                            (&mut output).take(65537).read_to_end(&mut bytes)?;
-                            Ok(String::from_utf8(bytes).ok())
-                        } else {
-                            Ok(None)
-                        }
-                    })();
-                    match checked {
-                        // Going back while every byte was here: listed
-                        // again, and checked when it continues.
-                        Ok(_) if *stop.borrow() == Stop::Keep => {
-                            relist.lock().expect("download state").insert(kept_id, kept);
-                            anyhow::bail!("Download stopped")
-                        }
-                        Ok(text) => {
-                            // Finished: the folder goes with the job, and
-                            // nothing is left to continue.
-                            folder.keep = false;
-                            std::fs::remove_file(&recorded)?;
-                            Ok((
-                                Saved {
-                                    _folder: folder,
-                                    path,
-                                },
-                                text,
-                            ))
-                        }
-                        // Bytes that do not verify are not kept.
-                        Err(error) => {
-                            folder.keep = false;
-                            Err(error)
-                        }
-                    }
-                })
-                .await??;
-            Ok::<_, anyhow::Error>(verified)
+            Ok::<_, anyhow::Error>((folder, output, expected))
         };
-        let outcome = tokio::select! { biased;
+        let downloaded = tokio::select! { biased;
             _=canceled.changed()=>Err(anyhow::anyhow!("Download canceled")),
             result=transfer=>result,
         };
+        // With every byte here, the check runs to its end; a stop meanwhile
+        // decides what becomes of the download once it has.
+        let outcome = match downloaded {
+            Ok((mut folder, output, expected)) => {
+                update(&jobs, &task_id, |job| {
+                    job.progress.state = "verifying".into()
+                });
+                let name = record.name.clone();
+                let checked =
+                    tokio::task::spawn_blocking(move || verify(output, &expected, size, &name))
+                        .await
+                        .map_err(anyhow::Error::from)
+                        .and_then(|checked| checked);
+                match (checked, *canceled.borrow()) {
+                    // Going back while every byte was here: listed again, and
+                    // checked when it continues.
+                    (Ok(_), Stop::Keep) => Err(anyhow::anyhow!("Download stopped")),
+                    (Ok(text), Stop::No) => {
+                        // Finished: the folder goes with the job, and nothing
+                        // is left to continue.
+                        folder.keep = false;
+                        let _ = std::fs::remove_file(folder_path.join(RECORD));
+                        Ok((
+                            Saved {
+                                path: folder_path.join(BYTES).join(&record.name),
+                                _folder: folder,
+                            },
+                            text,
+                        ))
+                    }
+                    // Canceled, or bytes that do not verify: nothing is kept.
+                    (checked, _) => {
+                        folder.keep = false;
+                        Err(checked
+                            .err()
+                            .unwrap_or_else(|| anyhow::anyhow!("Download canceled")))
+                    }
+                }
+            }
+            Err(error) => Err(error),
+        };
         let stopped = *canceled.borrow();
         if outcome.is_err() {
-            if stopped == Stop::Discard || refused {
-                discard(&folder_path);
-            } else if !checking && folder_path.join(RECORD).is_file() {
-                // Stopped unfinished: listed to continue later.
-                unfinished
-                    .lock()
-                    .expect("download state")
-                    .insert(folder_id, record);
+            match settle(stopped, refused, folder_path.join(RECORD).is_file()) {
+                Settle::Discard => discard(&folder_path),
+                Settle::List => {
+                    unfinished
+                        .lock()
+                        .expect("download state")
+                        .insert(folder_id, record);
+                }
+                Settle::Leave => {}
             }
         }
         // Another download may start only now, and finds this one listed.
@@ -986,6 +1017,47 @@ mod tests {
         assert!(a.same_file(&b), "Progress does not make it another file");
         b.version = "c".repeat(64);
         assert!(!a.same_file(&b));
+    }
+
+    #[test]
+    fn a_file_that_changed_starts_again_once() {
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        assert_eq!(change(None, &a, false), Change::Same);
+        assert_eq!(change(Some(&a), &a, true), Change::Same);
+        assert_eq!(change(Some(&a), &b, false), Change::Restart);
+        assert_eq!(change(Some(&a), &b, true), Change::Refuse);
+    }
+
+    #[test]
+    fn a_stopped_download_is_listed_unless_it_was_dropped() {
+        // Going back, a failure, or a refusal of one window: listed again.
+        assert_eq!(settle(Stop::Keep, false, true), Settle::List);
+        assert_eq!(settle(Stop::No, false, true), Settle::List);
+        // Cancel, Discard, or a file that keeps changing: its bytes go.
+        assert_eq!(settle(Stop::Discard, false, true), Settle::Discard);
+        assert_eq!(settle(Stop::No, true, true), Settle::Discard);
+        // Bytes that did not verify went with their record.
+        assert_eq!(settle(Stop::Keep, false, false), Settle::Leave);
+    }
+
+    #[test]
+    fn only_bytes_that_match_their_digest_are_kept() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let path = folder.path().join("note.txt");
+        std::fs::write(&path, b"hello")?;
+        let digest: String = Sha256::digest(b"hello")
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let open = || File::options().read(true).write(true).open(&path);
+        assert_eq!(
+            verify(open()?, &digest, 5, "note.txt")?.as_deref(),
+            Some("hello")
+        );
+        assert!(verify(open()?, &digest, 5, "note.bin")?.is_none());
+        assert!(verify(open()?, &"0".repeat(64), 5, "note.txt").is_err());
+        assert!(verify(open()?, &digest, 6, "note.txt").is_err());
+        Ok(())
     }
 
     #[test]

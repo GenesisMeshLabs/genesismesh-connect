@@ -27,8 +27,9 @@ let invitation = "",
   expiresAt = 0,
   approval = "";
 let downloadId = "";
-// Going back before a download has its ID stops it as soon as it has one.
-let leaveDownload = false;
+// A stop asked for before a download has its ID, made as soon as it has one:
+// going back keeps it to continue later, Cancel drops it.
+let pendingStop: "keep" | "discard" | null = null;
 // A connection choice being made is not replaced by the next status poll.
 let connectionDirty = false;
 let folderPath: string[] = [];
@@ -686,7 +687,7 @@ async function download(fileName: string, button: HTMLButtonElement, begin: () =
   }
   await run(button, async () => {
     downloadId = "";
-    leaveDownload = false;
+    pendingStop = null;
     text("preview-name", fileName);
     text("preview-detail", "Preparing download…");
     text("preview-content", "");
@@ -698,10 +699,9 @@ async function download(fileName: string, button: HTMLButtonElement, begin: () =
     visible("file-preview", true);
     visible("remote-folder", false);
     downloadId = await begin();
-    if (leaveDownload) {
-      await invoke("cancel_download", { id: downloadId, keep: true });
-      return;
-    }
+    // Stopped while it was being prepared: stop it now, then follow it
+    // until it has stopped, so the next one finds it listed.
+    if (pendingStop) await invoke("cancel_download", { id: downloadId, keep: pendingStop === "keep" });
     try {
       while (true) {
         const progress = await invoke<DownloadProgress>("download_status", { id: downloadId });
@@ -726,7 +726,8 @@ async function download(fileName: string, button: HTMLButtonElement, begin: () =
   });
 }
 el("cancel-download").addEventListener("click", () => {
-  if (downloadId) void invoke("cancel_download", { id: downloadId }).catch((error) => problem(String(error)));
+  if (busy && downloadId) void invoke("cancel_download", { id: downloadId }).catch((error) => problem(String(error)));
+  else if (busy) pendingStop = "discard";
 });
 el("open-download").addEventListener("click", () => void run(el<HTMLButtonElement>("open-download"), async () => {
   await invoke("open_download", { id: downloadId });
@@ -737,7 +738,7 @@ el("save-download").addEventListener("click", () => void run(el<HTMLButtonElemen
 // Going back keeps what arrived, to continue later; Cancel discards it.
 el("close-preview").addEventListener("click", () => {
   if (busy && downloadId) void invoke("cancel_download", { id: downloadId, keep: true }).catch(() => {});
-  else if (busy) leaveDownload = true;
+  else if (busy) pendingStop = "keep";
   visible("file-preview", false);
   visible("remote-folder", !!page);
 });

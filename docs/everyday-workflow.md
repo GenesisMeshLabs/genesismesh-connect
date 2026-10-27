@@ -253,8 +253,10 @@ from there, still checked against the whole file's digest at the end. Going
 back from a download keeps it to continue later; **Cancel** and **Discard**
 drop it. When the app starts it keeps up to 8 unfinished downloads, the
 newest, each for a week. A file that changed on the sharing device without a
-new version starts again from the beginning, once; a download the sharing
-device refuses is not kept. Mobile folder sharing remains pending.
+new version starts again from the beginning, once; one that keeps changing is
+not kept. A download the sharing device refuses stays listed, since the
+refusal may pass; a file with a new version is another download. Mobile
+folder sharing remains pending.
 
 Existing 64-KiB permissions stay unchanged. **Share a folder again** and select
 the folder to issue a new larger-file permission. Both apps need the new build
