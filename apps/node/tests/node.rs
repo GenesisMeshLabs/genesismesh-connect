@@ -93,11 +93,10 @@ fn stop(mut child: Child) -> Result<()> {
 fn a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let (phone_store, phone_credentials) = sealed(directory.path(), "phone")?;
-    // SAFETY: set before this test starts any thread or opens a store.
-    unsafe {
-        std::env::set_var("CONNECT_SEALED_STORE", &phone_store);
-        std::env::set_var("CREDENTIALS_DIRECTORY", &phone_credentials);
-    }
+    connect_core::device::use_sealed_store(
+        phone_store,
+        &phone_credentials.join(connect_core::device::MASTER_KEY_CREDENTIAL),
+    )?;
     let (store, credentials) = sealed(directory.path(), "server")?;
     let server = Server {
         state: directory.path().join("server"),
@@ -171,15 +170,27 @@ fn a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart() -> Result
             "The device follows the server's setting"
         );
 
-        let file = directory.path().join("server.gmrecovery");
-        let recovery = server.control(json!({"op":"recovery","path":file}))?;
+        let recovery = server.control(json!({"op":"recovery","name":"server.gmrecovery"}))?;
         assert_eq!(recovery["key"].as_str().map(str::len), Some(39));
-        assert!(file.is_file());
+        assert!(server.state.join("recovery/server.gmrecovery").is_file());
         assert!(
             server
-                .control(json!({"op":"recovery","path":file}))
+                .control(json!({"op":"recovery","name":"server.gmrecovery"}))
                 .is_err(),
             "A recovery file is never overwritten"
+        );
+        assert!(
+            server
+                .control(json!({"op":"recovery","name":"../outside"}))
+                .is_err(),
+            "Recovery files stay in the state directory"
+        );
+        // One process owns the state at a time.
+        let second = server.command(&["run"])?.output()?;
+        assert!(!second.status.success());
+        assert!(
+            UnixStream::connect(server.state.join("control.sock")).is_ok(),
+            "A refused second run leaves the live socket alone"
         );
         Ok::<_, anyhow::Error>((runtime, phone))
     })();

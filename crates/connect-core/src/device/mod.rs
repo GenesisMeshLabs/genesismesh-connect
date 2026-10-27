@@ -3,6 +3,8 @@
 pub(crate) mod owner_store;
 #[cfg(target_os = "linux")]
 mod sealed_store;
+#[cfg(target_os = "linux")]
+pub use sealed_store::{MASTER_KEY_CREDENTIAL, use_sealed_store};
 mod vault;
 
 /// A compiled native adapter is available. Opening a locked/missing OS store

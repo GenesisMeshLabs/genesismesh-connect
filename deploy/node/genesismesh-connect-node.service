@@ -3,11 +3,14 @@ Description=Genesis Mesh Connect network node
 Documentation=https://github.com/GenesisMeshLabs/genesismesh-connect/blob/main/docs/server-node.md
 After=network-online.target
 Wants=network-online.target
+# Nothing to run until `genesismesh-connect init` or `restore` made a network.
+ConditionPathExists=/var/lib/genesismesh-connect/device
+ConditionPathExists=/var/lib/genesismesh-connect/network-owner/owner.json
 
 [Service]
 Type=simple
-User=genesismesh
-Group=genesismesh
+User=genesismesh-connect
+Group=genesismesh-connect
 StateDirectory=genesismesh-connect
 StateDirectoryMode=0700
 UMask=0077
@@ -18,6 +21,9 @@ Environment=CONNECT_SEALED_STORE=/var/lib/genesismesh-connect/sealed
 ExecStart=/opt/genesismesh-connect/genesismesh-connect-node run --state /var/lib/genesismesh-connect
 Restart=on-failure
 RestartSec=5
+# The node stops first and closes the authority's pipe, so the authority
+# shuts down cleanly instead of receiving the same signal at once.
+KillMode=mixed
 
 NoNewPrivileges=yes
 ProtectSystem=strict

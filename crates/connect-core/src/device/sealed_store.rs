@@ -3,9 +3,9 @@
 //! TPM where it has one (`systemd-creds`, `LoadCredentialEncrypted=`). The key
 //! never reaches disk unencrypted; records are never stored in the clear.
 //!
-//! Used only when the service is started that way: `CONNECT_SEALED_STORE`
-//! names the record directory and `$CREDENTIALS_DIRECTORY` holds
-//! `connect-master-key`. There is no fallback to plaintext.
+//! A program opts in explicitly with [`use_sealed_store`] before it opens any
+//! identity; the server node always does, and the desktop app never does. The
+//! library reads no environment for this. There is no fallback to plaintext.
 use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
     aead::{Aead, Payload},
@@ -14,13 +14,30 @@ use anyhow::{Context, Result, ensure};
 use std::{
     io::Write,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 use zeroize::Zeroizing;
 
-const CREDENTIAL: &str = "connect-master-key";
+/// The credential name systemd delivers the master key under.
+pub const MASTER_KEY_CREDENTIAL: &str = "connect-master-key";
 const INFO: &[u8] = b"genesismesh-connect/sealed-store/v1";
 const NONCE: usize = 12;
 const MAX_RECORD: u64 = 256 * 1024;
+
+static SEALED: OnceLock<(PathBuf, Zeroizing<Vec<u8>>)> = OnceLock::new();
+
+/// Keep this process's identities in a sealed store at `directory`, under
+/// the master key read from `master_key`. Call once, before any identity is
+/// opened; it cannot be undone or replaced.
+pub fn use_sealed_store(directory: PathBuf, master_key: &Path) -> Result<()> {
+    let key = Zeroizing::new(
+        std::fs::read(master_key).context("The service's master key credential is unavailable")?,
+    );
+    Store::open(directory.clone(), &key)?;
+    SEALED
+        .set((directory, key))
+        .map_err(|_| anyhow::anyhow!("The sealed store is already chosen"))
+}
 
 pub(in crate::device) struct Store {
     directory: PathBuf,
@@ -28,19 +45,13 @@ pub(in crate::device) struct Store {
 }
 
 impl Store {
-    /// The sealed store when the service was started with one, otherwise
-    /// `None` and the desktop credential store is used.
+    /// The sealed store when this process chose one, otherwise `None` and
+    /// the desktop credential store is used.
     pub fn configured() -> Result<Option<Self>> {
-        let Some(directory) = std::env::var_os("CONNECT_SEALED_STORE") else {
-            return Ok(None);
-        };
-        let credentials = std::env::var_os("CREDENTIALS_DIRECTORY")
-            .context("The sealed store needs the service's master key credential")?;
-        let key = Zeroizing::new(
-            std::fs::read(Path::new(&credentials).join(CREDENTIAL))
-                .context("The service's master key credential is unavailable")?,
-        );
-        Ok(Some(Self::open(PathBuf::from(directory), &key)?))
+        SEALED
+            .get()
+            .map(|(directory, key)| Self::open(directory.clone(), key))
+            .transpose()
     }
 
     pub fn open(directory: PathBuf, key: &[u8]) -> Result<Self> {
@@ -127,6 +138,8 @@ impl super::vault::credential::Store for Store {
         pending.write_all(&sealed)?;
         pending.as_file().sync_all()?;
         pending.persist(path)?;
+        // A vault may point at this record next; make the rename durable.
+        std::fs::File::open(&self.directory)?.sync_all()?;
         Ok(())
     }
     fn delete(&self, id: &str) -> Result<()> {

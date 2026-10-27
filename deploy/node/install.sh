@@ -2,15 +2,17 @@
 # Install the Genesis Mesh Connect node on a systemd Linux server.
 #
 #   sudo ./install.sh --from DIR [--require-tpm]
-#   sudo ./install.sh --uninstall [--keep-state]
+#   sudo ./install.sh --uninstall (--keep-state | --yes)
 #
 # DIR holds genesismesh-connect-node and genesismesh-authority for this
 # machine's architecture. The master key is sealed with systemd-creds: to the
-# TPM2 and the host key where the machine has a TPM, to the host key alone
-# otherwise (--require-tpm refuses that). Nothing here creates a network; run
-# `genesismesh-connect init` or `genesismesh-connect restore FILE` afterwards.
+# TPM2 (without a PCR policy, so firmware updates cannot lock it) and the host
+# key where the machine has a TPM, to the host key alone otherwise; with
+# --require-tpm, a machine without a TPM is refused. Nothing here creates a
+# network; run `genesismesh-connect init` or `genesismesh-connect restore FILE`.
 set -euo pipefail
 
+user=genesismesh-connect
 prefix=/opt/genesismesh-connect
 unit=/etc/systemd/system/genesismesh-connect-node.service
 credential=/etc/credstore.encrypted/genesismesh-connect-master-key
@@ -22,27 +24,33 @@ fail() { echo "install: $*" >&2; exit 1; }
 [[ $(id -u) == 0 ]] || fail "run as root"
 command -v systemd-creds >/dev/null || fail "systemd-creds is required (systemd 250 or newer)"
 
-from="" require_tpm=0 uninstall=0 keep_state=0
+# Only a user this script created (its home is the node's state) is ours.
+ours() { [[ $(getent passwd "$user" | cut -d: -f6) == "$state" ]]; }
+
+from="" require_tpm=0 uninstall=0 keep_state=0 yes=0
 while [[ $# -gt 0 ]]; do
   case $1 in
     --from) from=${2:?--from needs a directory}; shift 2 ;;
     --require-tpm) require_tpm=1; shift ;;
     --uninstall) uninstall=1; shift ;;
     --keep-state) keep_state=1; shift ;;
+    --yes) yes=1; shift ;;
     *) fail "unknown option $1" ;;
   esac
 done
 
 if [[ $uninstall == 1 ]]; then
+  [[ $keep_state == 1 || $yes == 1 ]] || fail \
+    "uninstalling deletes the network's keys for good; add --yes, or --keep-state to keep them"
   systemctl disable --now genesismesh-connect-node.service 2>/dev/null || true
   rm -f "$unit" "$command"
   rm -rf "$prefix"
   systemctl daemon-reload
   if [[ $keep_state == 0 ]]; then
     # The sealed records are useless without the credential; remove both.
-    rm -rf "$state" "/var/lib/private/genesismesh-connect"
+    rm -rf "$state"
     rm -f "$credential"
-    id genesismesh >/dev/null 2>&1 && userdel genesismesh
+    if id "$user" >/dev/null 2>&1 && ours; then userdel "$user"; fi
   fi
   echo "Genesis Mesh Connect node removed."
   exit 0
@@ -57,31 +65,52 @@ tpm=no
 systemd-creds has-tpm2 >/dev/null 2>&1 && tpm=yes
 [[ $require_tpm == 1 && $tpm == no ]] && fail "this machine has no usable TPM2; on Azure, use a Trusted Launch VM"
 
-id genesismesh >/dev/null 2>&1 || useradd --system --home-dir "$state" --shell /usr/sbin/nologin genesismesh
+if id "$user" >/dev/null 2>&1; then
+  ours || fail "a user named $user already exists and is not this node's"
+else
+  useradd --system --user-group --home-dir "$state" --no-create-home --shell /usr/sbin/nologin "$user"
+fi
 install -d -m 0755 "$prefix"
 install -m 0755 "$from/genesismesh-connect-node" "$from/genesismesh-authority" "$prefix/"
 install -m 0644 "$here/genesismesh-connect-node.service" "$unit"
 
 if [[ ! -f $credential ]]; then
   install -d -m 0700 "$(dirname "$credential")"
+  if [[ $tpm == yes ]]; then
+    keying=(--with-key=host+tpm2 --tpm2-pcrs=)
+  else
+    keying=(--with-key=host)
+  fi
   # 32 random bytes, encrypted before they reach the disk.
-  head -c 32 /dev/urandom | systemd-creds encrypt --name=connect-master-key --with-key=auto - "$credential"
+  head -c 32 /dev/urandom | systemd-creds encrypt --name=connect-master-key "${keying[@]}" - "$credential"
   chmod 0600 "$credential"
 fi
 
-cat >"$command" <<EOF
+cat >"$command" <<'EOF'
 #!/usr/bin/env bash
-# Run a Connect node command as the service user, with its master key.
-exec systemd-run --quiet --pipe --wait --collect \\
-  -p User=genesismesh -p Group=genesismesh \\
-  -p StateDirectory=genesismesh-connect -p StateDirectoryMode=0700 -p UMask=0077 \\
-  -p LoadCredentialEncrypted=connect-master-key:$credential \\
-  -E CONNECT_SEALED_STORE=$state/sealed \\
-  $prefix/genesismesh-connect-node "\$@" --state $state
+# Run a Connect node command as the service user. Only init and restore
+# receive the master key; the service itself is managed with systemctl.
+set -euo pipefail
+case ${1:-} in
+  run) echo "Start the node with: systemctl start genesismesh-connect-node" >&2; exit 1 ;;
+  init|restore) key=(-p LoadCredentialEncrypted=connect-master-key:__CREDENTIAL__ -E CONNECT_SEALED_STORE=__STATE__/sealed) ;;
+  *) key=() ;;
+esac
+# systemd expands $VAR in command lines; keep every argument literal.
+args=()
+for arg in "$@"; do args+=("${arg//\$/\$\$}"); done
+exec systemd-run --quiet --pipe --wait --collect \
+  -p User=__USER__ -p Group=__USER__ \
+  -p StateDirectory=genesismesh-connect -p StateDirectoryMode=0700 -p UMask=0077 \
+  "${key[@]}" \
+  __PREFIX__/genesismesh-connect-node "${args[@]}" --state __STATE__
 EOF
+sed -i "s|__CREDENTIAL__|$credential|g; s|__STATE__|$state|g; s|__USER__|$user|g; s|__PREFIX__|$prefix|g" "$command"
 chmod 0755 "$command"
 systemctl daemon-reload
 systemctl enable genesismesh-connect-node.service >/dev/null
+# An upgrade takes effect at once; a stopped node stays stopped.
+systemctl try-restart genesismesh-connect-node.service
 
 if [[ $tpm == yes ]]; then
   echo "Master key sealed to this machine's TPM2 and host key."

@@ -38,7 +38,8 @@ While the service runs:
   status               Show the network, its connection and its devices
   connection public|private
                        Public relays, or private: local network only
-  recovery FILE        Write a recovery file and show its key once
+  recovery NAME        Write recovery/NAME in the state directory and show its
+                       key once
 
 --state defaults to /var/lib/genesismesh-connect. --authority defaults to the
 genesismesh-authority runtime installed beside this program.";
@@ -124,15 +125,60 @@ impl Paths {
     fn start(&self, directory: &Path) -> Result<OwnerRuntime> {
         OwnerRuntime::start(&self.authority, directory)
     }
+    /// One process at a time owns the network's state: `init`, `restore` or
+    /// `run`. The lock lasts as long as the returned file.
+    fn lock(&self) -> Result<std::fs::File> {
+        self.prepare()?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.state.join(".lock"))?;
+        file.try_lock().map_err(|_| {
+            anyhow::anyhow!(
+                "Another Connect node command is using this network. Try again when it finishes."
+            )
+        })?;
+        Ok(file)
+    }
+}
+
+/// The node keeps its identities only in a sealed store under the master key
+/// systemd delivers; it never uses a desktop keyring or plaintext.
+fn seal() -> Result<()> {
+    let directory = std::env::var_os("CONNECT_SEALED_STORE").map(PathBuf::from);
+    let credentials = std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from);
+    let (Some(directory), Some(credentials)) = (directory, credentials) else {
+        bail!(
+            "The node keeps its keys in a sealed store under a systemd credential. \
+             Use the genesismesh-connect command or the systemd service."
+        );
+    };
+    connect_core::device::use_sealed_store(
+        directory,
+        &credentials.join(connect_core::device::MASTER_KEY_CREDENTIAL),
+    )
 }
 
 pub async fn main(args: Vec<String>) -> Result<()> {
     let options = Options::parse(args)?;
     let paths = options.paths()?;
     match options.command.as_str() {
-        "init" => init(&paths, options.name.as_deref().unwrap_or("Home network")).await,
-        "restore" => restore(&paths, options.argument("recovery file")?),
-        "run" => run(&paths).await,
+        "init" => {
+            seal()?;
+            let _lock = paths.lock()?;
+            init(&paths, options.name.as_deref().unwrap_or("Home network")).await
+        }
+        "restore" => {
+            seal()?;
+            let _lock = paths.lock()?;
+            restore(&paths, options.argument("recovery file")?)
+        }
+        "run" => {
+            seal()?;
+            let _lock = paths.lock()?;
+            run(&paths).await
+        }
         "pair" => pair(&paths, options.name.as_deref().unwrap_or("Network server")).await,
         "status" => status(&paths).await,
         "connection" => {
@@ -145,7 +191,7 @@ pub async fn main(args: Vec<String>) -> Result<()> {
             println!("{}", describe(setting));
             Ok(())
         }
-        "recovery" => recovery_file(&paths, options.argument("recovery file to write")?).await,
+        "recovery" => recovery_file(&paths, options.argument("recovery file name")?).await,
         "" | "help" | "--help" | "-h" => {
             println!("{USAGE}");
             Ok(())
@@ -168,19 +214,65 @@ async fn init(paths: &Paths, name: &str) -> Result<()> {
         !paths.configured(),
         "This server already has a network. It has been preserved."
     );
-    paths.prepare()?;
-    let mut owner = paths.start(&paths.owner)?;
-    let info = owner.create(name)?;
-    let mut device = DeviceController::prepare(&paths.profile, info.url.clone(), info.pin.clone())?;
-    device.enable_managed_connectivity()?;
-    let node = device.status()?.node_public_key;
-    let invitation = owner.invite(&node, true)?;
-    device.enroll_host(&invitation).await?;
+    let mut owner = Some(paths.start(&paths.owner)?);
+    let mut device = None;
+    let outcome = async {
+        let runtime = owner.as_mut().context("Missing network runtime")?;
+        let info = runtime.create(name)?;
+        let controller = device.insert(DeviceController::prepare(
+            &paths.profile,
+            info.url.clone(),
+            info.pin.clone(),
+        )?);
+        controller.enable_managed_connectivity()?;
+        let node = controller.status()?.node_public_key;
+        let invitation = runtime.invite(&node, true)?;
+        controller.enroll_host(&invitation).await?;
+        Ok::<_, anyhow::Error>(info)
+    }
+    .await;
+    let info = match outcome {
+        Ok(info) => info,
+        Err(error) => {
+            // Nothing half-made stays behind: stop the authority, then remove
+            // the network and this server's identity with its sealed record.
+            drop(owner);
+            if let Some(device) = device {
+                device.discard().ok();
+            }
+            std::fs::remove_dir_all(&paths.profile).ok();
+            std::fs::remove_dir_all(&paths.owner).ok();
+            return Err(error);
+        }
+    };
     println!(
-        "Network \"{}\" is ready. Start the service, then add devices with the pair command.",
+        "Network \"{}\" is ready. Start the service, then add devices with the pair command.\n\
+         Write a recovery file soon (the recovery command): it is the only way back if this \
+         server's disk or TPM is lost.",
         info.pin.network_name
     );
     Ok(())
+}
+
+/// Read the recovery key without showing it on a terminal.
+fn read_key() -> Result<Zeroizing<String>> {
+    use std::io::IsTerminal;
+    let terminal = std::io::stdin().is_terminal();
+    eprint!("Recovery key: ");
+    if terminal {
+        std::process::Command::new("stty")
+            .arg("-echo")
+            .status()
+            .ok();
+    }
+    let mut key = Zeroizing::new(String::new());
+    let read = std::io::stdin().read_line(&mut key);
+    if terminal {
+        std::process::Command::new("stty").arg("echo").status().ok();
+        eprintln!();
+    }
+    read?;
+    Ok(key)
 }
 
 fn restore(paths: &Paths, file: &str) -> Result<()> {
@@ -188,17 +280,19 @@ fn restore(paths: &Paths, file: &str) -> Result<()> {
         !paths.configured(),
         "This server already has a network. It has been preserved."
     );
-    paths.prepare()?;
+    ensure!(
+        Path::new(file).is_absolute(),
+        "Give the recovery file's full path"
+    );
     let file = std::fs::canonicalize(file).context("Choose an existing recovery file")?;
-    eprint!("Recovery key: ");
-    let mut key = Zeroizing::new(String::new());
-    std::io::stdin().read_line(&mut key)?;
+    let key = read_key()?;
     let restored = recovery::restore(&file, &key, &paths.owner, &paths.profile, |dir: &Path| {
         paths.start(dir)
     })?;
     println!(
         "Network \"{}\" is back on this server. Devices reconnect when they next reach it. \
-         Retire the computer the recovery file came from.",
+         Retire the computer the recovery file came from, and delete the copy of the file \
+         you placed on this server.",
         restored.info.pin.network_name
     );
     Ok(())
@@ -209,6 +303,8 @@ struct Node {
     info: OwnerInfo,
     device: DeviceController,
     pairing: Option<Arc<PairHost>>,
+    /// Recovery files are written here, inside the service's state.
+    recovery: PathBuf,
 }
 type Shared = Arc<Mutex<Node>>;
 
@@ -217,7 +313,6 @@ async fn run(paths: &Paths) -> Result<()> {
         paths.owner.join("owner.json").exists() && paths.profile.exists(),
         "Create a network with init, or bring one back with restore, first"
     );
-    paths.prepare()?;
     let mut owner = paths.start(&paths.owner)?;
     let info = owner.open()?;
     let mut device = DeviceController::open(&paths.profile)?;
@@ -235,6 +330,7 @@ async fn run(paths: &Paths) -> Result<()> {
         info,
         device,
         pairing: None,
+        recovery: paths.state.join("recovery"),
     }));
     match std::fs::remove_file(&paths.socket) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
@@ -248,6 +344,13 @@ async fn run(paths: &Paths) -> Result<()> {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(30)) => {
                 let mut node = node.lock().await;
+                // Without its authority the network is not available; exit so
+                // systemd restarts the whole node.
+                if !node.owner.is_running() {
+                    node.device.stop().await;
+                    let _ = std::fs::remove_file(&paths.socket);
+                    bail!("The network's authority stopped");
+                }
                 if node.device.needs_maintenance()
                     && let Err(error) = node.device.refresh().await
                 {
@@ -359,18 +462,27 @@ async fn handle(node: &Shared, request: Value) -> Result<Value> {
             Ok(json!(true))
         }
         "recovery" => {
-            let path = PathBuf::from(request["path"].as_str().context("Missing file")?);
+            let name = request["name"].as_str().context("Missing file name")?;
             ensure!(
-                path.is_absolute() && !path.exists(),
-                "Give a new file's full path"
+                !name.is_empty()
+                    && name.len() <= 128
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+                    && !name.starts_with('.'),
+                "Name the recovery file with letters, digits, dots, dashes or underscores"
             );
             let mut node = node.lock().await;
+            std::fs::create_dir_all(&node.recovery)?;
+            std::fs::set_permissions(&node.recovery, std::fs::Permissions::from_mode(0o700))?;
+            let path = node.recovery.join(name);
+            ensure!(!path.exists(), "That recovery file already exists");
             let identity = node.device.recovery_identity()?;
             let pin = node.info.pin.clone();
             let key = tokio::task::block_in_place(|| {
                 recovery::create(&mut node.owner, pin, identity, &path)
             })?;
-            Ok(json!({"key":key.as_str()}))
+            Ok(json!({"key":key.as_str(),"path":path}))
         }
         _ => bail!("Unsupported operation"),
     }
@@ -406,22 +518,35 @@ async fn approve(node: &Shared, id: &str) -> Result<()> {
         .await
         .context("The other device did not finish joining")?
         .context("The other device disconnected")?;
-    let mut node = node.lock().await;
-    if let Err(error) = node
-        .device
-        .send(&joined.ticket, "Connect pairing verification")
+    // The device waits briefly for confirmation, so its final proof is checked
+    // without holding the node while other work runs.
+    let session = node.lock().await.device.session()?;
+    if let Err(error) = session
+        .round_trip_to(
+            Some(&request.node),
+            &joined.ticket,
+            "Connect pairing verification",
+        )
         .await
     {
         let _ = joined.confirm.send(false);
         return Err(error);
     }
+    let mut node = node.lock().await;
     node.device.remember_pairing(PairedDevice {
         name: request.name,
         node: request.node,
         ticket: joined.ticket,
     })?;
     let _ = joined.confirm.send(true);
-    node.pairing = None;
+    // A newer invitation from another terminal stays open.
+    if node
+        .pairing
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, &pair))
+    {
+        node.pairing = None;
+    }
     // The device needs this server's final confirmation before it closes.
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -511,14 +636,13 @@ async fn pair(paths: &Paths, name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn recovery_file(paths: &Paths, file: &str) -> Result<()> {
-    let path = std::path::absolute(file)?;
-    let reply = request(paths, json!({"op":"recovery","path":path})).await?;
+async fn recovery_file(paths: &Paths, name: &str) -> Result<()> {
+    let reply = request(paths, json!({"op":"recovery","name":name})).await?;
     println!(
         "Recovery file written to {}.\n\nRecovery key: {}\n\n\
-         Write the key down now; it is not shown again. Keep it apart from the file: \
-         anyone with both can restore this network.",
-        path.display(),
+         Write the key down now; it is not shown again. Copy the file somewhere safe, \
+         apart from the key, then delete it here: anyone with both can restore this network.",
+        reply["path"].as_str().context("Missing recovery file")?,
         reply["key"].as_str().context("Missing recovery key")?
     );
     Ok(())

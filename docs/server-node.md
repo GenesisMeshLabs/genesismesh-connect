@@ -21,28 +21,38 @@ sudo genesismesh-connect init --name "Home network"
 sudo systemctl start genesismesh-connect-node
 ```
 
-`install.sh` creates the `genesismesh` service user, installs both programs in
-`/opt/genesismesh-connect`, and seals a new 32-byte master key with
+`install.sh` creates the `genesismesh-connect` service user, installs both
+programs in `/opt/genesismesh-connect`, and seals a new 32-byte master key with
 `systemd-creds` into `/etc/credstore.encrypted/`: to the TPM2 and host key
 where a TPM is present, to the host key otherwise. It installs and enables the
-`genesismesh-connect-node` unit and the `genesismesh-connect` command. It never
-creates a network.
+`genesismesh-connect-node` unit (which waits until a network exists) and the
+`genesismesh-connect` command. It never creates a network. Running it again
+upgrades the programs and restarts a running node.
+
+The TPM sealing uses no PCR policy, so a firmware or Secure Boot update cannot
+lock the key away; the key still opens only on that machine's TPM, so a copied
+disk is useless. Losing the TPM or the disk loses the network unless you have a
+recovery file, so write one right after `init`.
 
 At start, systemd decrypts the master key into the service's private
 credential directory (`LoadCredentialEncrypted=`); it never reaches disk
-unencrypted. Owner keys and the server's device identity are kept as records in
+unencrypted (like any process memory, it could reach swap; use encrypted or no
+swap). Owner keys and the server's device identity are kept as records in
 `/var/lib/genesismesh-connect/sealed`, each encrypted under that key with
-AES-256-GCM. There is no plaintext fallback. The unit runs as `genesismesh`
-with no capabilities, a read-only system, private `/tmp` and devices, and only
-the network families it needs.
+AES-256-GCM. The node refuses to run without its sealed store, and there is no
+plaintext fallback. The unit runs as `genesismesh-connect` with no
+capabilities, a read-only system, private `/tmp` and devices, and only the
+network families it needs. One node process owns the state at a time.
 
-`genesismesh-connect` runs a node command as the service user with the same
-credential, through `systemd-run`, so the owner never handles the master key.
+`genesismesh-connect` runs a node command as the service user through
+`systemd-run`; only `init` and `restore` receive the master key, and `run` is
+left to systemd. The owner never handles the master key.
 
 ## Move a desktop network onto the server
 
 Create a recovery file on the desktop (Settings → Recovery), copy it to the
-server somewhere the `genesismesh` user can read, then:
+server somewhere the `genesismesh-connect` user can read, then give its full
+path:
 
 ```sh
 sudo genesismesh-connect restore /tmp/home.gmrecovery    # asks for the recovery key
@@ -50,8 +60,9 @@ sudo systemctl start genesismesh-connect-node
 ```
 
 The server becomes the same network computer: paired devices keep trusting it
-and reconnect when they next reach it. Stop using the desktop as the network
-computer afterwards; see the [recovery file notes](everyday-workflow.md#keep-a-recovery-file).
+and reconnect when they next reach it. Delete the copy you placed in `/tmp`,
+and stop using the desktop as the network computer; see the
+[recovery file notes](everyday-workflow.md#keep-a-recovery-file).
 
 ## Everyday commands
 
@@ -59,7 +70,7 @@ computer afterwards; see the [recovery file notes](everyday-workflow.md#keep-a-r
 sudo genesismesh-connect status
 sudo genesismesh-connect pair --name "Home server"   # prints an invitation, then asks to approve
 sudo genesismesh-connect connection public            # or: private
-sudo genesismesh-connect recovery /var/lib/genesismesh-connect/home.gmrecovery
+sudo genesismesh-connect recovery home.gmrecovery
 ```
 
 `pair` prints a join invitation: on the device, open Connect, choose **Join a
@@ -69,9 +80,9 @@ commands reach the running service through a control socket in its state
 directory that only the service user can open; they are never exposed to the
 network. Approving from the phone instead of a terminal comes with Requests.
 
-`recovery` writes a recovery file and shows its key once. The service writes
-the file, so give a path it can write, such as its state directory, then copy
-the file somewhere safe and delete the server's copy.
+`recovery NAME` writes `/var/lib/genesismesh-connect/recovery/NAME` and shows
+its key once; it never replaces an existing file. Copy the file somewhere safe,
+apart from the key, then delete the server's copy.
 
 ## Limits
 
@@ -85,5 +96,6 @@ the file somewhere safe and delete the server's copy.
   uninstall. Pairing, enrollment and reconnecting after a restart are covered
   by the node's integration test. Not yet tested on a cloud VM with a TPM.
 
-Remove everything with `sudo ./deploy/node/install.sh --uninstall`
-(add `--keep-state` to keep the network's state and master key).
+Remove everything with `sudo ./deploy/node/install.sh --uninstall --yes`, which
+deletes the network's keys for good, or keep the state and master key with
+`--uninstall --keep-state`.
