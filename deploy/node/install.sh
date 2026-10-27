@@ -74,7 +74,9 @@ install -d -m 0755 "$prefix"
 install -m 0755 "$from/genesismesh-connect-node" "$from/genesismesh-authority" "$prefix/"
 install -m 0644 "$here/genesismesh-connect-node.service" "$unit"
 
+new_key=0
 if [[ ! -f $credential ]]; then
+  new_key=1
   install -d -m 0700 "$(dirname "$credential")"
   if [[ $tpm == yes ]]; then
     keying=(--with-key=host+tpm2 --tpm2-pcrs=)
@@ -112,11 +114,17 @@ systemctl enable genesismesh-connect-node.service >/dev/null
 # An upgrade takes effect at once; a stopped node stays stopped.
 systemctl try-restart genesismesh-connect-node.service
 
-if [[ $tpm == yes ]]; then
+if [[ $new_key == 0 ]]; then
+  echo "Kept the existing master key."
+elif [[ $tpm == yes ]]; then
   echo "Master key sealed to this machine's TPM2 and host key."
 else
   echo "No TPM2 found: the master key is sealed to this machine's host key only, which"
   echo "does not protect a copied disk. Prefer a machine with a TPM (Azure Trusted Launch)."
 fi
-echo "Next: genesismesh-connect init --name \"Home network\"  (or: genesismesh-connect restore FILE)"
-echo "Then: systemctl start genesismesh-connect-node, and genesismesh-connect pair"
+if [[ -f $state/network-owner/owner.json ]]; then
+  echo "Upgraded. A running node restarted with the new programs."
+else
+  echo "Next: genesismesh-connect init --name \"Home network\"  (or: genesismesh-connect restore FILE)"
+  echo "Then: systemctl start genesismesh-connect-node, and genesismesh-connect pair"
+fi

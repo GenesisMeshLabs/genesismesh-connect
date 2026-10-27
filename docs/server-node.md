@@ -84,6 +84,34 @@ network. Approving from the phone instead of a terminal comes with Requests.
 its key once; it never replaces an existing file. Copy the file somewhere safe,
 apart from the key, then delete the server's copy.
 
+## On Azure
+
+A Trusted Launch VM gives the node a virtual TPM. This is how the first node
+runs, in Sweden Central:
+
+```sh
+az network nsg create -g RG -n connect-node-nsg -l swedencentral
+az network nsg rule create -g RG --nsg-name connect-node-nsg -n ssh-admin \
+  --priority 100 --direction Inbound --access Allow --protocol Tcp \
+  --source-address-prefixes YOUR-IP/32 --destination-port-ranges 22
+az vm create -g RG -n connect-node -l swedencentral --zone 1 \
+  --image Canonical:ubuntu-24_04-lts:server:latest --size Standard_B2ls_v2 \
+  --security-type TrustedLaunch --enable-secure-boot true --enable-vtpm true \
+  --admin-username azureuser --ssh-key-values @connect-node.pub \
+  --nsg connect-node-nsg --public-ip-sku Standard --public-ip-address-dns-name LABEL \
+  --storage-sku StandardSSD_LRS --os-disk-size-gb 30
+```
+
+- **Size:** the node and its authority use about 110 MB, so a 2 vCPU, 4 GiB
+  B-series VM leaves plenty of room. `Standard_B2als_v2` (AMD) costs a little
+  less, but Sweden Central often has no capacity for it; `Standard_B2ls_v2` is
+  the Intel equivalent.
+- **Inbound:** only SSH, from your own address. Devices reach the node through
+  public relays; nothing else needs to be open.
+- Copy both programs and `deploy/node` to the VM, install with
+  `--require-tpm`, and continue as in [Install](#install). Ubuntu 24.04 on
+  Trusted Launch has everything `systemd-creds` needs for the TPM.
+
 ## Limits
 
 - **Private mode** works for devices on the server's own network. Devices away
@@ -96,7 +124,12 @@ apart from the key, then delete the server's copy.
   uninstall. Integration tests cover pairing, enrollment and reconnecting after
   a restart, and moving a desktop network onto the node: a phone paired with the
   desktop reaches the node from its saved addresses after the restore, without
-  pairing again. Not yet tested on a cloud VM with a TPM.
+  pairing again. On an Azure Trusted Launch VM (Ubuntu 24.04, virtual TPM): the
+  master key sealed to the TPM, init, a device on a home network pairing over
+  the internet through public relays and reaching the node again from its saved
+  addresses, an upgrade that restarts the node on its saved ports, uninstall,
+  and the node starting by itself after a reboot. Not yet tested with a real
+  phone.
 
 Remove everything with `sudo ./deploy/node/install.sh --uninstall --yes`, which
 deletes the network's keys for good, or keep the state and master key with
