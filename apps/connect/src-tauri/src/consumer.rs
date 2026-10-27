@@ -1,8 +1,6 @@
 //! Ordinary user actions. Keys, transport routes and policy identifiers are
 //! obtained from verified native state, not text fields in the normal UI.
 use crate::{desktop::DesktopState, workflow::WorkflowState};
-#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
-use connect_core::session::sharing::ShareConfig;
 use connect_core::{
     Connectivity,
     device::{ConnectivityStatus, DeviceController, PairedDevice},
@@ -26,6 +24,17 @@ pub struct HomeDevice {
     /// Listed by the network computer rather than paired with this device.
     member: bool,
 }
+/// A shared folder as the Files view shows it.
+#[derive(Serialize)]
+pub struct HomeSpace {
+    id: String,
+    name: String,
+    /// The device sharing it, by name.
+    host: String,
+    host_id: String,
+    /// Shared from this device.
+    own: bool,
+}
 #[derive(Serialize)]
 pub struct HomeStatus {
     owner: bool,
@@ -36,6 +45,10 @@ pub struct HomeStatus {
     selected_device: Option<String>,
     ready: bool,
     sharing: Option<String>,
+    /// Shared folders: this device's, and other devices' shared with it.
+    spaces: Vec<HomeSpace>,
+    /// This device can share its folders.
+    can_share: bool,
     joining: Option<String>,
     request: Option<PairRequest>,
     problem: Option<String>,
@@ -88,6 +101,9 @@ pub async fn home_status(
                 .and_then(|c| c.directory.file_name())
                 .map(|s| s.to_string_lossy().into_owned())
         }),
+        spaces: device.as_ref().map(home_spaces).unwrap_or_default(),
+        can_share: cfg!(any(windows, target_os = "macos", target_os = "linux"))
+            && device.as_ref().is_some_and(|d| d.sharing_host),
         joining: owner.joining.clone(),
         request: owner.pairing.as_ref().and_then(|p| p.pending()),
         problem: owner
@@ -101,6 +117,50 @@ pub async fn home_status(
             && device.as_ref().is_some_and(|d| d.paired_device.is_none()),
         connection: device.map(|d| d.connectivity),
     })
+}
+/// This device's Spaces first, then those other devices share with it, with
+/// the sharing device's name where this device knows it.
+fn home_spaces(status: &connect_core::device::DeviceStatus) -> Vec<HomeSpace> {
+    let name_of = |node: &str| {
+        status
+            .devices
+            .iter()
+            .chain(&status.members)
+            .find(|d| d.node == node)
+            .map_or_else(|| "Another device".to_owned(), |d| d.name.clone())
+    };
+    let mut spaces: Vec<HomeSpace> = status
+        .shares
+        .iter()
+        .map(|share| HomeSpace {
+            id: share.collection_id.clone(),
+            name: if share.name.is_empty() {
+                share.directory.file_name().map_or_else(
+                    || "Shared folder".into(),
+                    |s| s.to_string_lossy().into_owned(),
+                )
+            } else {
+                share.name.clone()
+            },
+            host: "This device".into(),
+            host_id: status.node_public_key.clone(),
+            own: true,
+        })
+        .collect();
+    spaces.extend(
+        status
+            .spaces
+            .iter()
+            .filter(|space| space.host != status.node_public_key)
+            .map(|space| HomeSpace {
+                id: space.collection.clone(),
+                name: space.name.clone(),
+                host: name_of(&space.host),
+                host_id: space.host.clone(),
+                own: false,
+            }),
+    );
+    spaces
 }
 /// How every device reaches this network. Only the network computer decides.
 #[tauri::command]
@@ -334,6 +394,8 @@ async fn join(app: &tauri::AppHandle, card: PairCard, name: String) -> anyhow::R
     desktop.slot.lock().await.controller = Some(device);
     result
 }
+/// Share a folder chosen with the native picker as a new Space, with every
+/// other device of the network. Returns false when the owner cancels.
 #[tauri::command]
 pub async fn share_folder(
     state: tauri::State<'_, WorkflowState>,
@@ -342,7 +404,10 @@ pub async fn share_folder(
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = (state, desktop);
-        Err("Sharing mobile documents is being added. Choose a folder on your network computer for now.".into())
+        Err(
+            "Sharing mobile documents is being added. Choose a folder on a computer for now."
+                .into(),
+        )
     }
     #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     {
@@ -354,59 +419,118 @@ pub async fn share_folder(
         else {
             return Ok(false);
         };
+        let directory = folder.path().to_owned();
+        let name = crate::workflow::folder_name(&directory);
         let mut owner = state.slot.lock().await;
         let mut slot = desktop.slot.lock().await;
         let device = slot
             .controller
             .as_mut()
             .ok_or("Set up this computer first")?;
-        let peer = device
-            .paired_device()
-            .cloned()
-            .ok_or("Add your phone before sharing a folder")?;
-        let host = device.status().map_err(error)?.node_public_key;
-        let subject = device
-            .status()
-            .map_err(error)?
-            .sharing_subject
-            .ok_or("This device has no sharing identity")?;
-        let collection = uuid::Uuid::new_v4().to_string();
-        let config = owner
-            .runtime
-            .as_mut()
-            .ok_or("Share from the network computer")?
-            .share_for_subject(&host, &peer.node, &collection, &subject)
-            .map_err(error)?;
-        let config = ShareConfig {
-            directory: folder.path().to_owned(),
-            collection_id: collection,
-            policy_id: config["policy_id"]
-                .as_str()
-                .ok_or("Missing folder permission")?
-                .into(),
-            attestation_id: config["attestation_id"]
-                .as_str()
-                .ok_or("Missing folder permission")?
-                .into(),
-        };
-        device.stop().await;
-        let changed = device.save_managed_share(Some(config)).map_err(error);
-        let resumed = device.reconnect_saved().await.map_err(error);
-        changed?;
-        resumed?;
+        let status = device.status().map_err(error)?;
+        // The network computer first, then the other devices, within the 31
+        // a Space names. Choosing devices comes next.
+        let mut recipients: Vec<String> = Vec::new();
+        for node in status.bridge_host_node.iter().chain(
+            status
+                .devices
+                .iter()
+                .chain(&status.members)
+                .map(|d| &d.node),
+        ) {
+            if node != &status.node_public_key && !recipients.contains(node) {
+                recipients.push(node.clone());
+            }
+        }
+        recipients.truncate(31);
+        if recipients.is_empty() {
+            return Err("Add your phone before sharing a folder".into());
+        }
+        match owner.runtime.as_mut() {
+            // The network computer issues its own Spaces directly.
+            Some(runtime) => {
+                let subject = status
+                    .sharing_subject
+                    .ok_or("This device has no sharing identity")?;
+                let collection = uuid::Uuid::new_v4().to_string();
+                let space = runtime
+                    .space_share(
+                        &status.node_public_key,
+                        &collection,
+                        &name,
+                        &recipients,
+                        Some(&subject),
+                    )
+                    .map_err(error)?;
+                let view =
+                    connect_core::session::bridge::SpaceView::of(space, &status.node_public_key)
+                        .ok_or("Unexpected shared folder")?;
+                let config = connect_core::device::DeviceController::space_config(view, directory)
+                    .map_err(error)?;
+                device.set_space(config).await.map_err(error)?;
+                // Devices see the new Space at once.
+                if let Ok(spaces) = runtime.space_list() {
+                    device.publish_spaces(spaces);
+                }
+            }
+            None => {
+                drop(owner);
+                device
+                    .share_space(None, directory, name, recipients)
+                    .await
+                    .map_err(error)?;
+            }
+        }
         Ok(true)
     }
 }
+/// Stop sharing one Space, or every Space when none is named. Returns whether
+/// the network computer confirmed; otherwise it finishes when reachable.
 #[tauri::command]
-pub async fn stop_sharing(desktop: tauri::State<'_, DesktopState>) -> Result<(), String> {
+pub async fn stop_sharing(
+    id: Option<String>,
+    state: tauri::State<'_, WorkflowState>,
+    desktop: tauri::State<'_, DesktopState>,
+) -> Result<bool, String> {
+    let mut owner = state.slot.lock().await;
+    if owner.runtime.is_none() && state.directory.join("owner.json").is_file() {
+        return Err("Your network is still opening. Try again in a moment.".into());
+    }
     let mut slot = desktop.slot.lock().await;
     let device = slot.controller.as_mut().ok_or("Device is unavailable")?;
-    device.stop().await;
-    device.save_managed_share(None).map_err(error)?;
-    device.reconnect_saved().await.map_err(error)
+    let status = device.status().map_err(error)?;
+    let ids: Vec<String> = match id {
+        Some(id) => vec![id],
+        None => status
+            .shares
+            .iter()
+            .map(|s| s.collection_id.clone())
+            .collect(),
+    };
+    let mut confirmed = true;
+    for id in ids {
+        match owner.runtime.as_mut() {
+            Some(runtime) => {
+                // Stop serving first: nothing is released while the network
+                // computer forgets it.
+                device.drop_space(&id).await.map_err(error)?;
+                // If this fails, the next pass over the Spaces removes it.
+                confirmed &= runtime.space_remove(&status.node_public_key, &id).is_ok();
+                if let Ok(spaces) = runtime.space_list() {
+                    device.publish_spaces(spaces);
+                }
+            }
+            None => confirmed &= device.unshare_space(&id).await.map_err(error)?,
+        }
+    }
+    drop(owner);
+    Ok(confirmed)
 }
+/// A running session and the device to reach: the one sharing `space` when
+/// this device knows that Space, otherwise the selected device.
 pub(crate) async fn session(
     desktop: &DesktopState,
+    space: Option<&str>,
 ) -> Result<
     (
         std::sync::Arc<connect_core::session::SessionEndpoint>,
@@ -418,27 +542,40 @@ pub(crate) async fn session(
     let device = slot.controller.as_mut().ok_or("Join your network first")?;
     device.reconnect_saved().await.map_err(error)?;
     device.refresh().await.map_err(error)?;
-    Ok((
-        device.session().map_err(error)?,
-        device
+    let status = device.status().map_err(error)?;
+    let host = space
+        .and_then(|id| status.spaces.iter().find(|s| s.collection == id))
+        .map(|s| s.host.clone());
+    let peer = match host {
+        Some(host) => status
+            .devices
+            .iter()
+            .chain(&status.members)
+            .find(|d| d.node == host)
+            .cloned()
+            .ok_or("The device sharing this folder isn’t on your network right now")?,
+        None => device
             .paired_device()
             .cloned()
             .ok_or("Add your other device first")?,
-    ))
+    };
+    Ok((device.session().map_err(error)?, peer))
 }
 #[tauri::command]
 pub async fn browse_files(
     after: Option<String>,
     directory: Option<Vec<String>>,
+    space: Option<String>,
     desktop: tauri::State<'_, DesktopState>,
 ) -> Result<Page, String> {
-    let (session, peer) = session(&desktop).await?;
+    let (session, peer) = session(&desktop, space.as_deref()).await?;
     session
         .browse_from(
             &peer.node,
             &peer.ticket,
             after,
             directory.unwrap_or_default(),
+            space,
         )
         .await
         .map_err(error)
@@ -450,7 +587,7 @@ pub async fn open_file(
     sha256: String,
     desktop: tauri::State<'_, DesktopState>,
 ) -> Result<ReadReport, String> {
-    let (session, peer) = session(&desktop).await?;
+    let (session, peer) = session(&desktop, Some(&collection_id)).await?;
     session
         .read_file_from(
             Some(&peer.node),
@@ -467,7 +604,7 @@ pub async fn open_file(
 }
 #[tauri::command]
 pub async fn check_connection(desktop: tauri::State<'_, DesktopState>) -> Result<(), String> {
-    let (session, peer) = session(&desktop).await?;
+    let (session, peer) = session(&desktop, None).await?;
     session
         .round_trip_to(Some(&peer.node), &peer.ticket, "Connect availability check")
         .await

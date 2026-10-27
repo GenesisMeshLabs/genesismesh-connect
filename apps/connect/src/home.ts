@@ -9,6 +9,9 @@ import {
   folderCrumbs,
   friendlyProblem,
   connectionSummary,
+  spaceSummary,
+  filesEmptyText,
+  type HomeSpace,
   type HomeStatus,
   type FilePage,
   type FileEntry,
@@ -26,6 +29,8 @@ let downloadId = "";
 // A connection choice being made is not replaced by the next status poll.
 let connectionDirty = false;
 let folderPath: string[] = [];
+// The shared folder being browsed; null for the selected device's only one.
+let currentSpace: HomeSpace | null = null;
 let page: FilePage | null = null,
   files: FileEntry[] = [];
 const localName = () =>
@@ -117,13 +122,17 @@ function render(status: HomeStatus) {
   renderConnection(status);
   visible("recovery-card", status.owner && status.configured);
   visible("add-device-button", status.owner && status.devices.length < 32);
-  visible("share-button", status.owner && !!status.peer);
-  visible("browse-button", !!status.peer);
-  if (!busy) text("browse-button", status.owner && !page ? `Files on ${status.peer || "another device"}` : "Refresh");
+  visible("share-button", status.can_share && status.devices.length > 0);
+  // Without listed folders, a device browses the selected device's one folder.
+  const legacy = !status.spaces.length && !!status.peer && !status.owner;
+  visible("browse-button", !!currentSpace || legacy);
+  if (!busy) text("browse-button", currentSpace || page ? "Refresh" : `Files on ${status.peer || "another device"}`);
+  renderSpaces(status);
   visible("paired-device", !!status.peer);
   text("peer-name", status.peer || "");
   renderDevices(status);
   if (oldDevice !== status.selected_device) {
+    currentSpace = null;
     folderPath = [];
     input("file-search").value = "";
     page = null;
@@ -139,25 +148,10 @@ function render(status: HomeStatus) {
       ? "Ready to connect · identity checked on connection"
       : "Connection paused · keep both apps open",
   );
-  visible("files-empty", status.owner ? !status.sharing : !page);
+  visible("files-empty", !status.spaces.length && !page);
   visible("files-add-device", status.owner && !status.peer);
-  text(
-    "files-description",
-    status.owner
-      ? "Your shared folders"
-      : `From ${status.peer || "your computer"}`,
-  );
-  text(
-    "files-empty-description",
-    status.owner
-      ? status.peer
-        ? "Share a folder to make it available on your other device."
-        : "Add a device to start sharing."
-      : "Refresh to see your shared files.",
-  );
-  visible("shared-folder", status.owner && !!status.sharing);
-  text("shared-name", status.sharing || "");
-  text("shared-peer", "your approved device");
+  text("files-description", "Shared folders on your network");
+  text("files-empty-description", legacy ? "Refresh to see your shared files." : filesEmptyText(status));
   visible("approval-card", !!status.request);
   approval = status.request?.id || "";
   if (status.request) {
@@ -177,7 +171,7 @@ function render(status: HomeStatus) {
     );
   }
   if (!oldPeer && status.peer) {
-    if (!status.owner && !busy) setTimeout(() => void browse(false), 0);
+    if (!status.owner && !status.spaces.length && !busy) setTimeout(() => void browse(false), 0);
     if (hadStatus) message(`${status.peer} added.`);
     visible("pair-card", false);
     selectView("files");
@@ -226,6 +220,7 @@ function renderDevices(status: HomeStatus) {
     choose.className = "secondary";
     choose.addEventListener("click", () => void run(choose, async () => {
       if (!device.selected) await invoke("select_device", { id: device.id });
+      currentSpace = null;
       await refresh();
       selectView("files");
       await loadFiles(false);
@@ -426,19 +421,66 @@ el("share-button").addEventListener(
   () =>
     void run(el<HTMLButtonElement>("share-button"), async () => {
       if (await invoke<boolean>("share_folder"))
+        message("Folder shared with your other devices. They can browse it now.");
+    }),
+);
+function renderSpaces(status: HomeStatus) {
+  const list = el("space-list");
+  visible("space-list", !currentSpace);
+  // Polling must not replace a focused button every two seconds.
+  const stamp = JSON.stringify(status.spaces);
+  if (list.dataset.state === stamp) return;
+  list.dataset.state = stamp;
+  list.replaceChildren();
+  for (const space of status.spaces) {
+    const row = document.createElement("section");
+    row.className = "home-card space-row";
+    row.setAttribute("role", "listitem");
+    const details = document.createElement("div");
+    const name = document.createElement("h2");
+    name.textContent = space.name;
+    const where = document.createElement("p");
+    where.textContent = spaceSummary(space);
+    details.append(name, where);
+    const action = document.createElement("button");
+    action.className = "secondary";
+    if (space.own) {
+      action.textContent = "Stop sharing";
+      action.setAttribute("aria-label", `Stop sharing ${space.name}`);
+      action.addEventListener("click", () => void run(action, async () => {
+        if (!window.confirm(`Stop sharing ${space.name}? Your other devices can no longer open it. Files they already saved stay on them.`)) return;
+        const confirmed = await invoke<boolean>("stop_sharing", { id: space.id });
         message(
-          "Folder shared. Your other device can now browse its available files.",
+          confirmed
+            ? `${space.name} is no longer shared.`
+            : `${space.name} is no longer shared from this device. Your network computer will update its list when it can be reached.`,
         );
-    }),
-);
-el("stop-share-button").addEventListener(
-  "click",
-  () =>
-    void run(el<HTMLButtonElement>("stop-share-button"), async () => {
-      await invoke("stop_sharing");
-      message("Folder sharing stopped.");
-    }),
-);
+      }));
+    } else {
+      action.textContent = "Open";
+      action.setAttribute("aria-label", `Open ${space.name} on ${space.host}`);
+      action.addEventListener("click", () => void run(action, () => openSpace(space)));
+    }
+    row.append(details, action);
+    list.append(row);
+  }
+}
+async function openSpace(space: HomeSpace) {
+  currentSpace = space;
+  folderPath = [];
+  page = null;
+  files = [];
+  input("file-search").value = "";
+  await loadFiles(false);
+}
+el("all-spaces").addEventListener("click", () => {
+  currentSpace = null;
+  page = null;
+  files = [];
+  visible("remote-folder", false);
+  visible("file-preview", false);
+  if (current) render(current);
+});
 function renderFiles() {
   const list = el("file-list");
   list.replaceChildren();
@@ -487,6 +529,7 @@ async function loadFiles(more: boolean, directory = folderPath) {
   const result = await invoke<FilePage>("browse_files", {
     after: more ? page?.next : null,
     directory,
+    space: currentSpace?.id ?? null,
   });
   if (JSON.stringify(result.directory) !== JSON.stringify(folderPath)) input("file-search").value = "";
   folderPath = result.directory;
@@ -498,7 +541,12 @@ async function loadFiles(more: boolean, directory = folderPath) {
   visible("files-empty", false);
   visible("more-files", !!page.next);
   visible("file-preview", false);
-  text("remote-folder-title", `From ${current?.peer || "your computer"}`);
+  text(
+    "remote-folder-title",
+    currentSpace ? `${currentSpace.name} · ${spaceSummary(currentSpace)}` : `From ${current?.peer || "your computer"}`,
+  );
+  visible("all-spaces", !!currentSpace);
+  visible("space-list", false);
   message("");
 }
 async function browse(more: boolean) {

@@ -304,6 +304,7 @@ async fn authorized_file_pages_bind_versions_and_release_no_names_after_denial()
         collection_id: "family".into(),
         policy_id: "connect-read".into(),
         attestation_id: policy["attestation_id"].as_str().unwrap().into(),
+        ..Default::default()
     };
     let share = Arc::new(Share::open(
         config,
@@ -340,6 +341,7 @@ async fn authorized_file_pages_bind_versions_and_release_no_names_after_denial()
             collection_id: "family".into(),
             policy_id: "connect-read".into(),
             attestation_id: policy["attestation_id"].as_str().unwrap().into(),
+            ..Default::default()
         },
         authority.clone(),
         pin,
@@ -461,6 +463,7 @@ async fn remote_sharing_host_uses_bridge_for_governed_files_without_local_author
             collection_id: "family".into(),
             policy_id: "connect-read".into(),
             attestation_id: policy["attestation_id"].as_str().unwrap().into(),
+            ..Default::default()
         },
         AuthorityAccess::Remote(remote.clone()),
         pin,
@@ -496,7 +499,13 @@ async fn remote_sharing_host_uses_bridge_for_governed_files_without_local_author
         .await?;
     assert_eq!(report.text.as_deref(), Some("Shared from a remote device"));
     let nested = reader_endpoint
-        .browse_from(&host.public_key(), &ticket, None, vec!["Photos".into()])
+        .browse_from(
+            &host.public_key(),
+            &ticket,
+            None,
+            vec!["Photos".into()],
+            None,
+        )
         .await?;
     assert_eq!(nested.files[0].name, "image.txt");
     let file = &nested.files[0];
@@ -591,6 +600,7 @@ async fn protected_read_binds_snapshot_and_peer_and_refuses_policy_revocation_an
             directory: root.clone(),
             attestation_id: policy["attestation_id"].as_str().unwrap().into(),
             policy_id: "connect-read".into(),
+            ..Default::default()
         },
         authority.clone(),
         pin,
@@ -803,6 +813,7 @@ async fn windows_sharing_host_persists_its_role_but_reopens_with_sharing_disable
         directory: collection,
         attestation_id: policy["attestation_id"].as_str().unwrap().into(),
         policy_id: "connect-read".into(),
+        ..Default::default()
     }))?;
     assert!(host.status()?.sharing_enabled);
     let displayed = host.status()?.sharing_config.unwrap();
@@ -1426,6 +1437,7 @@ async fn large_downloads_keep_full_size_policy_and_verify_windows() -> Result<()
             collection_id: "family".into(),
             policy_id: "connect-read".into(),
             attestation_id: policy["attestation_id"].as_str().unwrap().into(),
+            ..Default::default()
         },
         authority.clone(),
         pin,
@@ -1619,6 +1631,7 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
             collection_id: "family".into(),
             policy_id: "connect-read".into(),
             attestation_id: policy["attestation_id"].as_str().unwrap().into(),
+            ..Default::default()
         },
         authority.clone(),
         pin,
@@ -1648,7 +1661,7 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
         1
     );
     let root = reader
-        .browse_from(&host.public_key(), &ticket, None, Vec::new())
+        .browse_from(&host.public_key(), &ticket, None, Vec::new(), None)
         .await?;
     assert_eq!(root.files.len(), 3);
     assert_eq!(
@@ -1656,13 +1669,19 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
         2
     );
     let page = reader
-        .browse_from(&host.public_key(), &ticket, None, nested.clone())
+        .browse_from(&host.public_key(), &ticket, None, nested.clone(), None)
         .await?;
     assert_eq!(page.directory, nested);
     assert_eq!(page.files.len(), 1);
     let file = &page.files[0];
     let other = reader
-        .browse_from(&host.public_key(), &ticket, None, vec!["Other".into()])
+        .browse_from(
+            &host.public_key(),
+            &ticket,
+            None,
+            vec!["Other".into()],
+            None,
+        )
         .await?;
     let before = share.released_names();
     for bad in [
@@ -1672,7 +1691,7 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
     ] {
         assert!(
             reader
-                .browse_from(&host.public_key(), &ticket, None, bad)
+                .browse_from(&host.public_key(), &ticket, None, bad, None)
                 .await
                 .is_err()
         );
@@ -1721,7 +1740,7 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
     process.command(json!({"op":"deny_list","peer_node":client.public_key()}))?;
     assert!(
         reader
-            .browse_from(&host.public_key(), &ticket, None, nested.clone())
+            .browse_from(&host.public_key(), &ticket, None, nested.clone(), None)
             .await
             .is_err()
     );
@@ -2053,7 +2072,7 @@ async fn members_learn_each_other_from_the_network_computer_and_connect() -> Res
     // A member that shares no folder offers no file protocol at all.
     let nothing = phone
         .session()?
-        .browse_from(&tablet_node, &tablet_ticket, None, Vec::new())
+        .browse_from(&tablet_node, &tablet_ticket, None, Vec::new(), None)
         .await;
     assert!(
         nothing
@@ -2120,6 +2139,105 @@ async fn members_learn_each_other_from_the_network_computer_and_connect() -> Res
     phone.stop().await;
     tablet.stop().await;
     computer.stop().await;
+    process.command(json!({"op":"stop"}))?;
+    process.child.wait()?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "Requires CONNECT_NA_PYTHON; a renewed attestation takes over a running share's decisions"]
+async fn a_running_share_decides_with_its_renewed_attestation() -> Result<()> {
+    use connect_core::session::sharing::{ReadRequest, Share, ShareConfig};
+    use std::sync::Arc;
+    let (mut process, info) = AuthorityProcess::start()?;
+    let authority = LocalAuthority::new(info["url"].as_str().unwrap())?;
+    let pin: TrustPin = serde_json::from_value(info["pin"].clone())?;
+    let dir = tempfile::tempdir()?;
+    let root = dir.path().join("collection");
+    std::fs::create_dir(&root)?;
+    std::fs::write(root.join("sample.txt"), b"Renewed grants keep working.")?;
+    let mut host_store = TrustStore::create(&dir.path().join("host.json"), pin.clone())?;
+    let host_key = key();
+    let invitation =
+        process.command(json!({"op":"edge_invite","node_public_key":public(&host_key)}))?;
+    let (host, _) = authority
+        .enroll_host(
+            host_key,
+            &key(),
+            invitation["invite"].as_str().unwrap(),
+            &mut host_store,
+        )
+        .await?;
+    let mut client_store = TrustStore::create(&dir.path().join("client.json"), pin.clone())?;
+    let client_key = key();
+    let invitation =
+        process.command(json!({"op":"invite","node_public_key":public(&client_key)}))?;
+    let client = authority
+        .enroll(
+            client_key,
+            invitation["invite"].as_str().unwrap(),
+            &mut client_store,
+        )
+        .await?;
+    let grant = |process: &mut AuthorityProcess| -> Result<String> {
+        let policy = process.command(json!({"op":"read_policy","host_node":host.public_key(),"peer_node":client.public_key(),"collection":"allowed"}))?;
+        Ok(policy["attestation_id"].as_str().unwrap().to_owned())
+    };
+    let first = grant(&mut process)?;
+    let share = Arc::new(Share::open(
+        ShareConfig {
+            collection_id: "allowed".into(),
+            directory: root,
+            attestation_id: first.clone(),
+            policy_id: "connect-read".into(),
+            ..Default::default()
+        },
+        authority.clone(),
+        pin,
+        &dir.path().join("sharing"),
+    )?);
+    let host_endpoint = SessionEndpoint::bind_with_share(
+        host.session_identity()?,
+        authority.refresh(&mut host_store).await?,
+        client.public_key(),
+        Some(share.clone()),
+    )
+    .await?;
+    let client_endpoint = SessionEndpoint::bind(
+        client.session_identity()?,
+        authority.refresh(&mut client_store).await?,
+        host.public_key(),
+    )
+    .await?;
+    let ticket = host_endpoint.ticket()?;
+    let read = || {
+        client_endpoint.read_file(
+            &ticket,
+            ReadRequest {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                collection_id: "allowed".into(),
+                file_name: "sample.txt".into(),
+                expected_sha256: None,
+            },
+        )
+    };
+    assert!(
+        read().await.is_ok(),
+        "The first attestation allows the read"
+    );
+    // The network computer renews: a new attestation, and the old one ends.
+    let renewed = grant(&mut process)?;
+    process.command(json!({"op":"revoke_attestation","attestation_id":first}))?;
+    assert!(
+        read().await.is_err(),
+        "A share still on the ended attestation releases nothing"
+    );
+    share.renew(&renewed)?;
+    assert_eq!(share.config().attestation_id, renewed);
+    let report = read().await?;
+    assert_eq!(report.text.as_deref(), Some("Renewed grants keep working."));
+    host_endpoint.close().await;
+    client_endpoint.close().await;
     process.command(json!({"op":"stop"}))?;
     process.child.wait()?;
     Ok(())

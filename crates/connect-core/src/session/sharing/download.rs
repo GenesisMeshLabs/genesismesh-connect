@@ -354,12 +354,13 @@ impl Share {
             "connect-download:{}",
             genesis_mesh_sdk::canonical_digest(&intent)?
         );
+        let attestation_id = self.attestation_id();
         let attestation = self
             .authority
-            .attestation(&credentials.identity, &trust, &self.config.attestation_id)
+            .attestation(&credentials.identity, &trust, &attestation_id)
             .await?["attestation"]
             .clone();
-        let decision = self.authority.evaluate(&credentials.identity,&trust,&self.config.attestation_id,&context,
+        let decision = self.authority.evaluate(&credentials.identity,&trust,&attestation_id,&context,
             json!({"collection_id":request.collection_id,"file_name":relative_name(request),"peer_node":credentials.expected_node,
                 "sha256":intent["sha256"],"size":request.size}),"connect.collection.read").await?["decision"].clone();
         trust.read_decision(
@@ -401,13 +402,8 @@ pub(in crate::session) async fn serve(
     connection: &Connection,
     local: iroh::EndpointId,
     credentials: &Credentials,
-    share: &Share,
+    shares: &Shares,
 ) -> Result<()> {
-    let permit = share
-        .budget
-        .clone()
-        .try_acquire_owned()
-        .context("Another file operation is running")?;
     let (mut send, mut recv) = connection.accept_bi().await?;
     let peer = authenticate_for(
         connection,
@@ -430,9 +426,21 @@ pub(in crate::session) async fn serve(
         connection.alpn() == protocol(&request).alpn(),
         "Wrong download protocol for path"
     );
-    let prepared = share
-        .prepare_window(credentials, &peer, &request, permit)
-        .await;
+    // An unknown Space is refused like any other denial.
+    let share = shares.get(&request.collection_id);
+    let prepared = match share {
+        Some(share) => {
+            let permit = share
+                .budget
+                .clone()
+                .try_acquire_owned()
+                .context("Another file operation is running")?;
+            share
+                .prepare_window(credentials, &peer, &request, permit)
+                .await
+        }
+        None => Err(anyhow::anyhow!("Unknown shared folder")),
+    };
     let (mut prepared, _permit) = match prepared {
         Ok(prepared) => prepared,
         Err(_) => {
@@ -442,6 +450,7 @@ pub(in crate::session) async fn serve(
             return Ok(());
         }
     };
+    let share = share.context("Unknown shared folder")?;
     send_header(
         &mut send,
         &Header::Allowed {

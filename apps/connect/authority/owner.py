@@ -14,6 +14,7 @@ import sqlite3
 import tempfile
 import threading
 import tomllib
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -34,6 +35,22 @@ from protection import discard, protect, unprotect, ready
 
 class Refused(Exception):
     pass
+
+
+SPACE_DAYS = 90
+RENEW_DAYS = 30
+MAX_SPACES = 64
+MAX_HOST_SPACES = 16
+MAX_RECIPIENTS = 31
+
+
+def space_name(value):
+    # The same control characters devices refuse (Unicode category Cc), so a
+    # name stored here never makes a device drop the list.
+    if (not isinstance(value, str) or not value.strip() or len(value.strip()) > 64
+            or any(unicodedata.category(c) == "Cc" for c in value)):
+        raise Refused("Name the shared folder with 1 to 64 characters.")
+    return value.strip()
 
 
 def name(value):
@@ -207,6 +224,23 @@ class Owner:
             raise Refused(f"The network authority refused this operation ({response.status_code}).")
         return response.json()
 
+    def policy_versions(self, policy_id):
+        """Every stored version of one policy, through the signed admin route,
+        so attached networks answer too. Empty when the policy does not exist."""
+        if not self.config:
+            raise Refused("Open the network first.")
+        path = f"/admin/boundary-policies/{policy_id}/history"
+        audience = base64.b64encode(bytes(self.na_key.verify_key)).decode()
+        headers = sign_admin_request(self.operator, self.config["operator"]["key_id"], method="GET", path=path, audience=audience)
+        response = self.session.get(self.origin+path,headers=headers,timeout=5,allow_redirects=False)
+        if response.status_code == 400 and response.json().get("error", {}).get("code") == "boundary_policy_not_found":
+            return []
+        # Every change and renewal adds a version with its full policy, so the
+        # history grows over the years; allow it room.
+        if response.status_code != 200 or len(response.content) > 16*1024*1024:
+            raise Refused(f"The network authority refused this operation ({response.status_code}).")
+        return response.json()["versions"]
+
     def invite(self, public_key, host=False):
         public_key=node(public_key)
         body={"roles":["role:client"],"recipient_public_key":public_key,"max_validity_hours":24,"token_expiry_hours":1}
@@ -216,6 +250,10 @@ class Owner:
             # keeps device subjects distinct within that existing constraint.
             body.update(node_sovereign_id="connect-device-"+identity[:48],executor_resource_prefix="connect:device:"+identity+"/")
         return {"invite":self.admin("/admin/invite",body)["token_id"]}
+
+    def subject(self, host_node):
+        """The sharing subject this network's host invitations give a device."""
+        return "connect-device-"+hashlib.sha256(base64.b64decode(node(host_node),validate=True)).hexdigest()[:48]
 
     def share(self, host_node, peer_node, collection_id, subject="connect-host"):
         host_node,peer_node=node(host_node),node(peer_node)
@@ -235,6 +273,124 @@ class Owner:
         self.admin(f"/admin/boundary-policies/{policy_id}/activate",{"version":result["version"]})
         attestation=self.admin("/admin/attestations",{"subject_id":subject,"subject_public_key":host_node,"roles":["role:client"],"validity_hours":720,"claims":{"capabilities":["connect.collection.read","connect.collection.list"]}})
         return {"collection_id":collection_id,"policy_id":policy_id,"attestation_id":attestation["attestation_id"]}
+
+    # -- Spaces ---------------------------------------------------------------
+    #
+    # A Space is one device's folder shared with chosen devices. The registry
+    # lives in this directory, so recovery files carry it; the authority holds
+    # the policy (one per Space, versioned) and the host's attestation.
+
+    def _spaces(self):
+        path = self.directory / "spaces.json"
+        if not path.exists():
+            return []
+        if path.stat().st_size > 256 * 1024:
+            raise Refused("The list of shared folders needs attention.")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("version") != 1 or not isinstance(data.get("spaces"), list):
+            raise Refused("The list of shared folders needs attention.")
+        return data["spaces"]
+
+    def _save_spaces(self, spaces):
+        atomic(self.directory / "spaces.json", json.dumps({"version": 1, "spaces": spaces}).encode())
+
+    def _grant(self, host_node, subject, collection_id, recipients):
+        """Publish and activate the Space's policy for exactly these devices,
+        and attest the host for it. Returns the registry fields."""
+        policy_id = "connect-" + collection_id
+        now = datetime.now(timezone.utc)
+        valid_until = now + timedelta(days=SPACE_DAYS)
+        result = self.admin("/admin/boundary-policies", {"policy_id": policy_id,
+            "valid_from": now.isoformat(), "valid_until": valid_until.isoformat(),
+            "selector": {"capabilities": ["connect.collection.read", "connect.collection.list"],
+                "parameter_equals": {"request_parameters.collection_id": [collection_id]}},
+            "gates": [{"gate_id": "collection", "gate_type": "allowlist.v1", "order": 0, "config": {"path": "request_parameters.collection_id", "values": [collection_id]}},
+                {"gate_id": "peer", "gate_type": "allowlist.v1", "order": 1, "config": {"path": "request_parameters.peer_node", "values": sorted(recipients)}},
+                {"gate_id": "size", "gate_type": "max_value.v1", "order": 2, "config": {"path": "request_parameters.size", "max": 1073741824}}]})
+        self.admin(f"/admin/boundary-policies/{policy_id}/activate", {"version": result["version"]})
+        attestation = self.admin("/admin/attestations", {"subject_id": subject, "subject_public_key": host_node,
+            "roles": ["role:client"], "validity_hours": SPACE_DAYS * 24,
+            "claims": {"capabilities": ["connect.collection.read", "connect.collection.list"]}})
+        return {"policy_id": policy_id, "policy_version": result["version"],
+            "attestation_id": attestation["attestation_id"], "valid_until": valid_until.isoformat()}
+
+    def space_share(self, host_node, collection_id, space, recipients, subject=None, adopt=False):
+        """Create a Space, or change its name and devices. Only its host may
+        change it; the policy names exactly the chosen devices. A new Space
+        never takes over an existing policy: only this computer, moving a
+        folder it shared before Spaces (`adopt`), may give one a registry entry."""
+        host_node = node(host_node)
+        expected = self.subject(host_node)
+        subject = expected if subject is None else subject
+        if subject not in ("connect-host", expected):
+            raise Refused("The sharing subject does not belong to this device.")
+        uuid.UUID(collection_id)
+        space = space_name(space)
+        if not isinstance(recipients, list) or not 1 <= len(recipients) <= MAX_RECIPIENTS:
+            raise Refused("Choose between 1 and 31 devices to share with.")
+        recipients = sorted({node(r) for r in recipients})
+        if host_node in recipients:
+            raise Refused("A device cannot share with itself.")
+        spaces = self._spaces()
+        existing = next((s for s in spaces if s["collection"] == collection_id), None)
+        if existing is not None and existing["host"] != host_node:
+            raise Refused("This shared folder belongs to another device.")
+        if existing is None:
+            if self.policy_versions("connect-" + collection_id) and not adopt:
+                raise Refused("This folder already has a permission on this network.")
+            if sum(1 for s in spaces if s["host"] == host_node) >= MAX_HOST_SPACES:
+                raise Refused("A device can share up to 16 folders.")
+            if len(spaces) >= MAX_SPACES:
+                raise Refused("This network shares up to 64 folders.")
+        entry = {"collection": collection_id, "name": space, "host": host_node,
+            "subject": subject, "recipients": recipients,
+            "created_at": existing["created_at"] if existing else datetime.now(timezone.utc).isoformat()}
+        entry.update(self._grant(host_node, subject, collection_id, recipients))
+        spaces = [s for s in spaces if s["collection"] != collection_id] + [entry]
+        self._save_spaces(spaces)
+        return entry
+
+    def space_remove(self, host_node, collection_id):
+        """Stop a Space: its policy is deactivated, so no decision allows it."""
+        host_node = node(host_node)
+        uuid.UUID(collection_id)
+        spaces = self._spaces()
+        existing = next((s for s in spaces if s["collection"] == collection_id), None)
+        if existing is None:
+            return False
+        if existing["host"] != host_node:
+            raise Refused("This shared folder belongs to another device.")
+        policy_id = "connect-" + collection_id
+        # The registry entry goes only once no version is active, so a failure
+        # here leaves the Space listed and the removal can be asked again.
+        for version in self.policy_versions(policy_id):
+            if version["active"]:
+                self.admin(f"/admin/boundary-policies/{policy_id}/deactivate", {"version": version["version"]})
+        if any(v["active"] for v in self.policy_versions(policy_id)):
+            raise Refused("The shared folder's permission is still active. Try again.")
+        self._save_spaces([s for s in spaces if s["collection"] != collection_id])
+        return True
+
+    def space_list(self):
+        return self._spaces()
+
+    def space_renew(self, days=RENEW_DAYS):
+        """Renew every Space whose policy ends within `days`. Returns the
+        renewed Spaces; their hosts pick up the new attestation."""
+        spaces = self._spaces()
+        limit = datetime.now(timezone.utc) + timedelta(days=days)
+        renewed = []
+        for entry in spaces:
+            if datetime.fromisoformat(entry["valid_until"]) <= limit:
+                # One failure leaves that Space for the next pass; every
+                # renewal is saved as it is made.
+                try:
+                    entry.update(self._grant(entry["host"], entry["subject"], entry["collection"], entry["recipients"]))
+                except Exception:
+                    continue
+                self._save_spaces(spaces)
+                renewed.append(entry["collection"])
+        return renewed
 
     def backup(self):
         """Stage the network for a recovery file: a consistent database

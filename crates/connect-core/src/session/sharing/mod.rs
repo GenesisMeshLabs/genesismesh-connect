@@ -14,16 +14,32 @@ use storage::{Collection, sha};
 pub use transfer::ReadReport;
 pub(super) use transfer::{receive, serve};
 
-#[derive(Clone, Deserialize, Serialize)]
+/// Each Space keeps at most this many receipts and bytes of them; rotation
+/// keeps it below `ROTATE_*`, oldest first, until Activity keeps the history
+/// on the network computer.
+const MAX_RECEIPTS: usize = 2048;
+const MAX_RECEIPT_BYTES: u64 = 32 * 1024 * 1024;
+const ROTATE_RECEIPTS: usize = 1792;
+const ROTATE_RECEIPT_BYTES: u64 = 24 * 1024 * 1024;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ShareConfig {
     pub collection_id: String,
     pub directory: PathBuf,
     pub attestation_id: String,
     pub policy_id: String,
+    /// The Space's name, as the devices it is shared with see it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// The devices it is shared with; empty for a folder shared before Spaces.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recipients: Vec<String>,
 }
 pub struct Share {
     config: ShareConfig,
+    /// The host's attestation; the network computer renews it in place.
+    attestation: std::sync::RwLock<String>,
     directory: Arc<Collection>,
     authority: AuthorityAccess,
     trust: tokio::sync::Mutex<TrustStore>,
@@ -48,6 +64,16 @@ impl Share {
             !config.policy_id.is_empty() && config.policy_id.len() <= 128,
             "Missing sharing policy"
         );
+        ensure!(
+            config.name.chars().count() <= 64
+                && !config.name.chars().any(char::is_control)
+                && config.recipients.len() <= 31
+                && config.recipients.iter().all(|node| {
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, node)
+                        .is_ok_and(|key| key.len() == 32)
+                }),
+            "Invalid shared folder"
+        );
         let directory = Arc::new(Collection::open(&config.directory)?);
         std::fs::create_dir_all(state)?;
         let checkpoint = state.join("trust.json");
@@ -60,6 +86,7 @@ impl Share {
         std::fs::create_dir_all(&receipts)?;
         let downloads = download::State::open(state)?;
         Ok(Self {
+            attestation: std::sync::RwLock::new(config.attestation_id.clone()),
             config,
             directory,
             authority: authority.into(),
@@ -79,8 +106,31 @@ impl Share {
     pub fn released_names(&self) -> u64 {
         self.released_names.load(Ordering::Relaxed)
     }
-    pub fn config(&self) -> &ShareConfig {
-        &self.config
+    /// The Space as saved, with its current attestation.
+    pub fn config(&self) -> ShareConfig {
+        ShareConfig {
+            attestation_id: self.attestation_id(),
+            ..self.config.clone()
+        }
+    }
+    pub fn collection_id(&self) -> &str {
+        &self.config.collection_id
+    }
+    fn attestation_id(&self) -> String {
+        self.attestation
+            .read()
+            .expect("share attestation lock poisoned")
+            .clone()
+    }
+    /// Use the network computer's renewed attestation for this Space from the
+    /// next operation on; running operations keep the one they started with.
+    pub fn renew(&self, attestation_id: &str) -> Result<()> {
+        uuid::Uuid::parse_str(attestation_id)?;
+        *self
+            .attestation
+            .write()
+            .expect("share attestation lock poisoned") = attestation_id.to_owned();
+        Ok(())
     }
     async fn prepare(
         &self,
@@ -126,9 +176,10 @@ impl Share {
             "connect-read:{}",
             genesis_mesh_sdk::canonical_digest(&intent)?
         );
+        let attestation_id = self.attestation_id();
         let attestation = self
             .authority
-            .attestation(&credentials.identity, &trust, &self.config.attestation_id)
+            .attestation(&credentials.identity, &trust, &attestation_id)
             .await?["attestation"]
             .clone();
         let params = json!({"collection_id":request.collection_id,"file_name":request.file_name,"peer_node":credentials.expected_node,"sha256":digest,"size":bytes.len()});
@@ -137,7 +188,7 @@ impl Share {
             .evaluate(
                 &credentials.identity,
                 &trust,
-                &self.config.attestation_id,
+                &attestation_id,
                 &context_id,
                 params,
                 "connect.collection.read",
@@ -169,10 +220,37 @@ impl Share {
             started: std::time::Instant::now(),
         })
     }
+    /// Keep this device's receipts for 90 days and, within the store's limits,
+    /// drop the oldest first, so sharing never stops for lack of room.
+    fn rotate(&self) -> Result<()> {
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(&self.receipts)? {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            ensure!(metadata.is_file(), "Unexpected evidence entry");
+            entries.push((metadata.modified()?, metadata.len(), entry.path()));
+        }
+        entries.sort();
+        let kept_since = std::time::SystemTime::now() - Duration::from_secs(90 * 24 * 60 * 60);
+        let mut count = entries.len();
+        let mut total: u64 = entries.iter().map(|entry| entry.1).sum();
+        for (modified, size, path) in entries {
+            // Leaves room below the limits `persist` enforces.
+            let full = count >= ROTATE_RECEIPTS || total > ROTATE_RECEIPT_BYTES;
+            if modified >= kept_since && !full {
+                break;
+            }
+            std::fs::remove_file(&path)?;
+            count -= 1;
+            total -= size;
+        }
+        Ok(())
+    }
     fn persist(&self, evidence: &Value) -> Result<()> {
         use std::io::Write;
         let bytes = serde_json::to_vec(evidence)?;
         ensure!(bytes.len() <= 512 * 1024, "Read evidence too large");
+        self.rotate()?;
         // Leave room for the largest permitted acknowledgment envelope before
         // releasing bytes. A known-full store must refuse at preparation.
         let reserve = usize::from(evidence["receipt"]["phase"] == "prepared");
@@ -182,14 +260,14 @@ impl Share {
             let entry = entry?;
             count += 1;
             ensure!(
-                count + reserve < 512,
+                count + reserve < MAX_RECEIPTS,
                 "Archive read receipts before sharing more files"
             );
             let metadata = entry.metadata()?;
             ensure!(metadata.is_file(), "Unexpected evidence entry");
             total += metadata.len();
             ensure!(
-                total <= 16 * 1024 * 1024,
+                total <= MAX_RECEIPT_BYTES,
                 "Read evidence storage limit reached"
             );
         }
@@ -204,6 +282,58 @@ impl Share {
         Ok(())
     }
 }
+/// The Spaces one device shares. Requests name their Space; a request from an
+/// app that predates Spaces names none and gets the first Space shared with
+/// that device.
+pub struct Shares {
+    shares: Vec<Arc<Share>>,
+}
+impl Shares {
+    pub fn new(mut shares: Vec<Arc<Share>>) -> Result<Self> {
+        ensure!(shares.len() <= 16, "A device shares up to 16 folders");
+        shares.sort_by(|a, b| {
+            (&a.config.name, &a.config.collection_id)
+                .cmp(&(&b.config.name, &b.config.collection_id))
+        });
+        ensure!(
+            shares
+                .windows(2)
+                .all(|pair| pair[0].config.collection_id != pair[1].config.collection_id),
+            "The same folder is shared twice"
+        );
+        Ok(Self { shares })
+    }
+    pub fn single(share: Arc<Share>) -> Self {
+        Self {
+            shares: vec![share],
+        }
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &Arc<Share>> {
+        self.shares.iter()
+    }
+    pub(super) fn get(&self, collection: &str) -> Option<&Share> {
+        self.shares
+            .iter()
+            .find(|share| share.config.collection_id == collection)
+            .map(|share| &**share)
+    }
+    /// The Space a request names, or for one that names none, the first Space
+    /// shared with `peer` (a folder shared before Spaces names everyone).
+    pub(super) fn find(&self, collection: Option<&str>, peer: &str) -> Option<&Share> {
+        match collection {
+            Some(collection) => self.get(collection),
+            None => self
+                .shares
+                .iter()
+                .find(|share| {
+                    share.config.recipients.is_empty()
+                        || share.config.recipients.iter().any(|node| node == peer)
+                })
+                .map(|share| &**share),
+        }
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadRequest {
@@ -295,6 +425,113 @@ mod tests {
         let mut changed = value;
         changed["created_at"] = json!("modified");
         assert!(verify_receipt(&changed, &node, &intent, &decision, "prepared").is_err());
+        Ok(())
+    }
+
+    fn share(root: &Path, name: &str, recipients: &[&str]) -> Result<Arc<Share>> {
+        let folder = root.join(format!("{name}-folder"));
+        std::fs::create_dir_all(&folder)?;
+        let pin = TrustPin {
+            network_name: "disposable-share-test".into(),
+            root_public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                [3; 32],
+            ),
+        };
+        Ok(Arc::new(Share::open(
+            ShareConfig {
+                collection_id: uuid::Uuid::new_v4().to_string(),
+                directory: folder,
+                attestation_id: uuid::Uuid::new_v4().to_string(),
+                policy_id: "connect-test".into(),
+                name: name.into(),
+                recipients: recipients.iter().map(|r| (*r).to_owned()).collect(),
+            },
+            crate::authority::LocalAuthority::new("http://127.0.0.1:9")?,
+            pin,
+            &root.join(name),
+        )?))
+    }
+
+    #[test]
+    fn requests_reach_their_space_and_older_apps_the_first_shared_with_them() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let key = |byte: u8| {
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [byte; 32])
+        };
+        let (phone, tablet) = (key(1), key(2));
+        let photos = share(root.path(), "Photos", &[&phone])?;
+        let documents = share(root.path(), "Documents", &[&phone, &tablet])?;
+        let shares = Shares::new(vec![photos.clone(), documents.clone()])?;
+        let id = |share: Option<&Share>| share.map(|s| s.collection_id().to_owned());
+        assert_eq!(
+            id(shares.find(Some(photos.collection_id()), &tablet)),
+            Some(photos.collection_id().to_owned()),
+            "A named Space is found; the authority decides who may read it"
+        );
+        assert_eq!(id(shares.find(Some("unknown"), &phone)), None);
+        assert_eq!(
+            id(shares.find(None, &phone)),
+            Some(documents.collection_id().to_owned()),
+            "Without a name, the first Space by name that names the device"
+        );
+        assert_eq!(
+            id(shares.find(None, &tablet)),
+            Some(documents.collection_id().to_owned())
+        );
+        assert_eq!(id(shares.find(None, &key(3))), None);
+        assert!(Shares::new(vec![photos.clone(), photos.clone()]).is_err());
+        // A renewed attestation is used from then on, and saved with the Space.
+        let renewed = uuid::Uuid::new_v4().to_string();
+        photos.renew(&renewed)?;
+        assert_eq!(photos.config().attestation_id, renewed);
+        assert!(photos.renew("not an attestation").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn receipts_rotate_by_age_and_room_instead_of_stopping_sharing() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let share = share(root.path(), "Rotating", &[])?;
+        let old = std::time::SystemTime::now() - Duration::from_secs(91 * 24 * 60 * 60);
+        let write = |name: String, age: std::time::SystemTime| -> Result<()> {
+            let path = share.receipts.join(name);
+            std::fs::write(&path, b"{}")?;
+            std::fs::File::options()
+                .write(true)
+                .open(&path)?
+                .set_modified(age)?;
+            Ok(())
+        };
+        write("expired.json".into(), old)?;
+        let recent = std::time::SystemTime::now() - Duration::from_secs(60);
+        for index in 0..10 {
+            write(format!("recent-{index}.json"), recent)?;
+        }
+        share.rotate()?;
+        let names = |dir: &Path| -> Result<Vec<String>> {
+            let mut names: Vec<String> = std::fs::read_dir(dir)?
+                .map(|e| Ok(e?.file_name().to_string_lossy().into_owned()))
+                .collect::<Result<_>>()?;
+            names.sort();
+            Ok(names)
+        };
+        assert!(!names(&share.receipts)?.contains(&"expired.json".to_owned()));
+        assert_eq!(names(&share.receipts)?.len(), 10, "Recent receipts stay");
+        // A store at its limit drops the oldest receipts, not the newest.
+        for index in 10..MAX_RECEIPTS as u64 {
+            let age = recent + Duration::from_millis(index);
+            write(format!("recent-{index:04}.json"), age)?;
+        }
+        share.rotate()?;
+        let kept = names(&share.receipts)?;
+        assert_eq!(kept.len(), ROTATE_RECEIPTS - 1);
+        assert!(kept.contains(&format!("recent-{:04}.json", MAX_RECEIPTS - 1)));
+        assert!(!kept.contains(&"recent-0.json".to_owned()));
+        // Recording another receipt now succeeds where it used to stop.
+        share.persist(
+            &json!({"receipt":{"receipt_id":uuid::Uuid::new_v4().to_string(),"phase":"prepared"}}),
+        )?;
         Ok(())
     }
 }

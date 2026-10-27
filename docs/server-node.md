@@ -123,7 +123,9 @@ az vm create -g RG -n connect-node -l swedencentral --zone 1 \
 
 - **Private mode** works for devices on the server's own network. Devices away
   from it need public relays until the server runs its own relay.
-- **Files:** the server shares no folders yet; files stay on your devices.
+- **Files:** the server shares no folders itself; files stay on your
+  devices. It issues and renews the devices' Spaces (once a day, those with
+  less than 30 of their 90 days left), and `status` lists them by device.
 - **Unlocking:** a machine without a TPM gets no boot-passphrase option yet;
   it relies on the host key.
 - **Tested:** the node runs under systemd in WSL Ubuntu 24.04, without a TPM:

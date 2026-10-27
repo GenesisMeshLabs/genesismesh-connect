@@ -1,7 +1,8 @@
 //! Local owner operations. The web UI supplies names, never keys or admin URLs.
 use connect_core::{
     device::DeviceController,
-    owner::{OwnerInfo, OwnerRuntime},
+    owner::{OwnerHandle, OwnerInfo, OwnerRequest, OwnerRuntime},
+    session::bridge::SpaceView,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -18,6 +19,8 @@ pub(crate) struct OwnerSlot {
 pub struct WorkflowState {
     pub(crate) directory: PathBuf,
     pub(crate) slot: Mutex<OwnerSlot>,
+    /// Devices' Space requests reach this computer's owner runtime here.
+    pub(crate) owner: OwnerHandle,
 }
 #[derive(Serialize)]
 pub struct NetworkStatus {
@@ -69,6 +72,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("Missing application directory")?
         .join("network-owner");
     let configured = directory.join("owner.json").is_file();
+    let (owner, requests) = tokio::sync::mpsc::channel(8);
     app.manage(WorkflowState {
         directory,
         slot: Mutex::new(OwnerSlot {
@@ -78,7 +82,10 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             pairing: None,
             joining: None,
         }),
+        owner,
     });
+    tauri::async_runtime::spawn(answer_owner(app.handle().clone(), requests));
+    tauri::async_runtime::spawn(keep_spaces(app.handle().clone()));
     if configured {
         let handle = app.handle().clone();
         tauri::async_runtime::spawn(async move {
@@ -105,6 +112,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     owner.runtime = Some(runtime);
                     owner.info = Some(info);
                     if let Some(controller) = &mut slot.controller {
+                        controller.serve_owner(state.owner.clone());
                         if let Err(error) = controller.restore_managed_share() {
                             owner.problem = Some(error.to_string());
                         }
@@ -203,6 +211,7 @@ async fn install_network(
     device
         .enable_managed_connectivity()
         .map_err(|e| e.to_string())?;
+    device.serve_owner(state.owner.clone());
     let outcome = tokio::task::spawn_blocking(move || {
         let invitation = runtime.invite(&node, true);
         (runtime, invitation)
@@ -329,10 +338,181 @@ pub async fn recovery_restore(
         owner.info = Some(restored.info);
         owner.problem = None;
         let mut device = restored.device;
+        device.serve_owner(state.owner.clone());
         if let Err(error) = device.reconnect_saved().await {
             slot.problem = Some(error.to_string());
         }
         slot.controller = Some(device);
         Ok(true)
+    }
+}
+
+/// Answer devices' Space requests, one at a time, with this computer's owner
+/// runtime while it runs one.
+async fn answer_owner(
+    app: tauri::AppHandle,
+    mut requests: tokio::sync::mpsc::Receiver<OwnerRequest>,
+) {
+    while let Some(request) = requests.recv().await {
+        let state = app.state::<WorkflowState>();
+        let mut owner = state.slot.lock().await;
+        let Some(mut runtime) = owner.runtime.take() else {
+            let _ = request
+                .reply
+                .send(Err(anyhow::anyhow!("Your network is still opening")));
+            continue;
+        };
+        let call = request.call;
+        let outcome = tokio::task::spawn_blocking(move || {
+            let result = runtime.answer(call);
+            (runtime, result)
+        })
+        .await;
+        let result = match outcome {
+            Ok((runtime, result)) => {
+                owner.runtime = Some(runtime);
+                result
+            }
+            Err(_) => Err(anyhow::anyhow!("The network computer is not ready")),
+        };
+        let _ = request.reply.send(result);
+    }
+}
+
+/// On the network computer, every 30 seconds: renew Spaces once a day, show
+/// this computer the Spaces it shares or that name it, and give a folder it
+/// shared before Spaces a place in the registry.
+async fn keep_spaces(app: tauri::AppHandle) {
+    let mut renewed: Option<std::time::Instant> = None;
+    let mut wait = std::time::Duration::from_secs(5);
+    loop {
+        tokio::time::sleep(wait).await;
+        wait = std::time::Duration::from_secs(30);
+        if let Err(error) = spaces_once(&app, &mut renewed).await {
+            app.state::<WorkflowState>().slot.lock().await.problem = Some(error.to_string());
+        }
+    }
+}
+
+async fn spaces_once(
+    app: &tauri::AppHandle,
+    renewed: &mut Option<std::time::Instant>,
+) -> anyhow::Result<()> {
+    let state = app.state::<WorkflowState>();
+    let desktop = app.state::<crate::desktop::DesktopState>();
+    // Sharing and stopping take the owner lock too, so this snapshot of this
+    // computer's own Spaces holds until the registry work below is done.
+    let mut owner = state.slot.lock().await;
+    if owner.runtime.is_none() {
+        return Ok(());
+    }
+    let status = {
+        let slot = desktop.slot.lock().await;
+        match slot.controller.as_ref() {
+            Some(device) => device.status()?,
+            None => return Ok(()),
+        }
+    };
+    let renew = renewed.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(24 * 3600));
+    let mut recipients: Vec<String> = Vec::new();
+    for node in status.devices.iter().map(|d| &d.node) {
+        if node != &status.node_public_key && !recipients.contains(node) {
+            recipients.push(node.clone());
+        }
+    }
+    recipients.truncate(31);
+    let node = status.node_public_key.clone();
+    let subject = status.sharing_subject.clone();
+    let shares = status.shares.clone();
+    let mut runtime = owner.runtime.take().expect("runtime checked above");
+    let outcome = tokio::task::spawn_blocking(move || {
+        let result = (|| {
+            if renew {
+                runtime.space_renew()?;
+            }
+            // A folder shared before Spaces keeps its policy and gets an entry.
+            let mut moved = Vec::new();
+            if let Some(subject) = subject.filter(|_| !recipients.is_empty()) {
+                for share in shares.iter().filter(|share| share.name.is_empty()) {
+                    let name = folder_name(&share.directory);
+                    if let Ok(space) = runtime.space_adopt(
+                        &node,
+                        &share.collection_id,
+                        &name,
+                        &recipients,
+                        &subject,
+                    ) {
+                        moved.push((space, share.directory.clone()));
+                    }
+                }
+            }
+            // This computer's Spaces it no longer saves are removed again,
+            // for example after a stop the runtime could not finish.
+            let mut spaces = runtime.space_list()?;
+            for collection in connect_core::owner::orphaned(&spaces, &node, &shares) {
+                let _ = runtime.space_remove(&node, &collection);
+            }
+            spaces = runtime.space_list()?;
+            Ok::<_, anyhow::Error>((spaces, moved))
+        })();
+        (runtime, result)
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("The network computer is not ready"))?;
+    owner.runtime = Some(outcome.0);
+    let (spaces, moved) = outcome.1?;
+    if renew {
+        *renewed = Some(std::time::Instant::now());
+    }
+    let mut slot = desktop.slot.lock().await;
+    let Some(device) = slot.controller.as_mut() else {
+        return Ok(());
+    };
+    // Published while no change can come between the list and its copy.
+    device.publish_spaces(spaces.clone());
+    drop(owner);
+    let mut problem = None;
+    for (space, directory) in moved {
+        // Only a folder still shared as it was gets its new form; a failure
+        // leaves it as it was, for the next pass.
+        let still = device
+            .status()?
+            .shares
+            .iter()
+            .any(|s| s.collection_id == space.collection && s.name.is_empty());
+        if let Some(view) = SpaceView::of(space, &status.node_public_key).filter(|_| still)
+            && let Err(error) = device
+                .set_space(DeviceController::space_config(view, directory)?)
+                .await
+        {
+            problem = Some(error.to_string());
+        }
+    }
+    let views = spaces
+        .into_iter()
+        .filter_map(|space| SpaceView::of(space, &status.node_public_key))
+        .collect();
+    device.apply_spaces(views)?;
+    if problem.is_some() {
+        slot.problem = problem;
+    }
+    Ok(())
+}
+
+/// A Space's name from its folder: at most 64 characters, none of them
+/// control characters.
+pub(crate) fn folder_name(directory: &std::path::Path) -> String {
+    let name: String = directory
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(64)
+        .collect();
+    if name.trim().is_empty() {
+        "Shared folder".into()
+    } else {
+        name
     }
 }

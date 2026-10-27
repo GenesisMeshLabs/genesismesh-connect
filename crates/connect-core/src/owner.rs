@@ -37,6 +37,64 @@ impl Drop for OwnerBackup {
     }
 }
 
+/// One device's folder shared with chosen devices, as the network computer's
+/// registry keeps it. The authority holds its policy and the host's attestation.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Space {
+    pub collection: String,
+    pub name: String,
+    pub host: String,
+    pub subject: String,
+    pub recipients: Vec<String>,
+    pub created_at: String,
+    pub policy_id: String,
+    pub policy_version: u64,
+    pub attestation_id: String,
+    pub valid_until: String,
+}
+
+/// The Spaces `host` still has in the registry but no longer shares: saved
+/// shares count, running or not, so a folder that could not be opened is
+/// never mistaken for a stopped one.
+pub fn orphaned(
+    spaces: &[Space],
+    host: &str,
+    saved: &[crate::session::sharing::ShareConfig],
+) -> Vec<String> {
+    spaces
+        .iter()
+        .filter(|space| {
+            space.host == host && !saved.iter().any(|s| s.collection_id == space.collection)
+        })
+        .map(|space| space.collection.clone())
+        .collect()
+}
+
+/// What the network computer's authority bridge asks of the owner runtime on
+/// a device's behalf. The host is always the authenticated device.
+#[derive(Debug)]
+pub enum OwnerCall {
+    /// Create or change a Space for `host`; never adopts an existing policy.
+    Share {
+        host: String,
+        collection: String,
+        name: String,
+        recipients: Vec<String>,
+    },
+    Remove {
+        host: String,
+        collection: String,
+    },
+}
+pub struct OwnerRequest {
+    pub call: OwnerCall,
+    pub reply: tokio::sync::oneshot::Sender<Result<Value>>,
+}
+/// The bridge's way to the owner runtime: whoever holds the runtime (the app
+/// or the node) answers each request in turn.
+pub type OwnerHandle = tokio::sync::mpsc::Sender<OwnerRequest>;
+
 /// Copying a large authority database takes longer than ordinary operations.
 const RECOVERY_LIMIT: Duration = Duration::from_secs(600);
 
@@ -262,6 +320,74 @@ impl OwnerRuntime {
             .map(str::to_owned)
             .context("The network did not provide an invitation")
     }
+    /// Create a Space, or change its name and devices; only its host may.
+    /// `subject` is for a desktop enrolled before devices had their own.
+    pub fn space_share(
+        &mut self,
+        host: &str,
+        collection: &str,
+        name: &str,
+        recipients: &[String],
+        subject: Option<&str>,
+    ) -> Result<Space> {
+        let mut request = json!({"op":"space_share","host":host,"collection":collection,"name":name,"recipients":recipients});
+        if let Some(subject) = subject {
+            request["subject"] = json!(subject);
+        }
+        Ok(serde_json::from_value(self.request(request)?)?)
+    }
+    /// Give a folder this computer shared before Spaces its registry entry,
+    /// keeping its existing policy. Never offered to other devices.
+    pub fn space_adopt(
+        &mut self,
+        host: &str,
+        collection: &str,
+        name: &str,
+        recipients: &[String],
+        subject: &str,
+    ) -> Result<Space> {
+        Ok(serde_json::from_value(self.request(json!({
+            "op":"space_adopt","host":host,"collection":collection,"name":name,
+            "recipients":recipients,"subject":subject,
+        }))?)?)
+    }
+    /// Stop a Space: its policy is deactivated. False if it did not exist.
+    pub fn space_remove(&mut self, host: &str, collection: &str) -> Result<bool> {
+        Ok(serde_json::from_value(self.request(
+            json!({"op":"space_remove","host":host,"collection":collection}),
+        )?)?)
+    }
+    pub fn space_list(&mut self) -> Result<Vec<Space>> {
+        Ok(serde_json::from_value(
+            self.request(json!({"op":"space_list"}))?,
+        )?)
+    }
+    /// Renew the Spaces whose policy ends within 30 days; returns them.
+    pub fn space_renew(&mut self) -> Result<Vec<String>> {
+        Ok(serde_json::from_value(
+            self.request(json!({"op":"space_renew"}))?,
+        )?)
+    }
+    /// Answer one bridge request.
+    pub fn answer(&mut self, call: OwnerCall) -> Result<Value> {
+        Ok(match call {
+            OwnerCall::Share {
+                host,
+                collection,
+                name,
+                recipients,
+            } => serde_json::to_value(self.space_share(
+                &host,
+                &collection,
+                &name,
+                &recipients,
+                None,
+            )?)?,
+            OwnerCall::Remove { host, collection } => {
+                json!(self.space_remove(&host, &collection)?)
+            }
+        })
+    }
     pub fn share(&mut self, host: &str, peer: &str, collection: &str) -> Result<Value> {
         self.request(json!({"op":"share","host":host,"peer":peer,"collection":collection}))
     }
@@ -290,5 +416,42 @@ impl Drop for OwnerRuntime {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_spaces_the_host_no_longer_saves_are_orphaned() {
+        let space = |collection: &str, host: &str| Space {
+            collection: collection.into(),
+            name: "Photos".into(),
+            host: host.into(),
+            subject: "connect-device-test".into(),
+            recipients: vec!["phone".into()],
+            created_at: "2026-10-27T00:00:00+00:00".into(),
+            policy_id: format!("connect-{collection}"),
+            policy_version: 1,
+            attestation_id: "a".into(),
+            valid_until: "2027-01-25T00:00:00+00:00".into(),
+        };
+        let saved = |collection: &str| crate::session::sharing::ShareConfig {
+            collection_id: collection.into(),
+            ..Default::default()
+        };
+        let spaces = [
+            space("kept", "computer"),
+            space("stopped", "computer"),
+            space("theirs", "laptop"),
+        ];
+        assert_eq!(
+            orphaned(&spaces, "computer", &[saved("kept")]),
+            ["stopped"],
+            "A saved share stays even when it could not be opened"
+        );
+        assert!(orphaned(&spaces, "computer", &[saved("kept"), saved("stopped")]).is_empty());
+        assert_eq!(orphaned(&spaces, "laptop", &[]), ["theirs"]);
     }
 }

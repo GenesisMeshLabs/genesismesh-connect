@@ -65,6 +65,7 @@ mod desktop {
                 .as_str()
                 .context("Missing attestation")?
                 .into(),
+            ..Default::default()
         }))?;
         device.start(&other_node).await?;
         other.start(&node).await?;
