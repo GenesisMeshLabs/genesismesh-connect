@@ -1,0 +1,5 @@
+{
+  "plugins": {
+    "deep-link": {"mobile":[{"scheme":["genesismesh"],"appLink":false}]}
+  }
+}

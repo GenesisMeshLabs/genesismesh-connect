@@ -1,44 +1,1096 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Genesis Mesh Connect</title>
-  <link rel="icon" type="image/png" href="/brand/favicon.png" />
-  <script type="module" src="/src/main.ts" defer></script>
-</head>
-<body>
-<main>
-  <header><div class="brand"><img class="brand-logo" src="/brand/logo.svg" alt="" width="88" height="56" /><span>GENESIS MESH LABS</span></div><span class="tag">SPIKE A</span></header>
-  <h1>Connect</h1>
-  <p class="intro">A first connection between your devices.</p>
-  <p class="notice">Transport diagnostic only. Genesis Mesh identity checks and file access come next.</p>
-  <section aria-labelledby="device-heading">
-    <h2 id="device-heading">1. Start this device</h2>
-    <label for="mode">Connection mode</label>
-    <select id="mode">
-      <option value="local">Local network · no public relays</option>
-      <option value="public_relay">Public relay · remote connectivity test</option>
-    </select>
-    <p class="hint">Public relay mode uses Iroh's public infrastructure. Endpoint details are exchanged manually.</p>
-    <div class="actions"><button id="start">Start endpoint</button><button id="stop" class="secondary" disabled>Stop</button></div>
-    <p id="status" role="status">Stopped</p>
-    <label for="own-ticket">This device's ticket</label>
-    <textarea id="own-ticket" readonly spellcheck="false" rows="3" placeholder="Start to generate a ticket"></textarea>
-    <button id="select-ticket" class="secondary" disabled>Select ticket</button>
-    <p class="hint">Copy this ticket to the other device. Restarting creates a new endpoint identity and ticket.</p>
-  </section>
-  <section aria-labelledby="probe-heading">
-    <h2 id="probe-heading">2. Try the other device</h2>
-    <form id="probe-form">
-      <label for="peer-ticket">Other device's ticket</label>
-      <textarea id="peer-ticket" required spellcheck="false" rows="3" maxlength="16384" placeholder="Paste the ticket from your other device"></textarea>
-      <label for="message">Diagnostic message</label>
-      <input id="message" value="Connect hello" required maxlength="1024" />
-      <button id="send" disabled>Send probe</button>
-    </form>
-    <pre id="result" aria-live="polite">No probe sent.</pre>
-  </section>
-</main>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#101613" />
+    <title>Genesis Mesh Connect</title>
+    <link rel="icon" type="image/png" href="/brand/favicon.png" />
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <div id="everyday" class="everyday">
+      <header class="home-header">
+        <a href="#" id="home-brand" class="home-brand"
+          ><img
+            src="/brand/logo.svg"
+            alt="Genesis Mesh"
+            width="64"
+            height="44"
+          /><span>Genesis Mesh <strong>Connect</strong></span></a
+        ><span id="home-network" class="network-chip"
+          >Your private network</span
+        >
+      </header>
+      <main class="home-main">
+        <div id="home-message" class="home-message" role="status" hidden></div>
+        <div
+          id="home-error"
+          class="home-message home-error"
+          role="alert"
+          hidden
+        ></div>
+        <div id="welcome" hidden>
+          <p class="home-eyebrow">AT HOME. WHEREVER YOU ARE.</p>
+          <h1>Your devices,<br />together.</h1>
+          <p class="home-lead">
+            Connect your devices and open shared files. You choose who can
+            connect and what they can open.
+          </p>
+          <div class="welcome-choices">
+            <button id="choose-create" class="choice-card">
+              <span class="choice-symbol" aria-hidden="true">⌂</span
+              ><strong>Start on this computer</strong
+              ><span
+                >Set up your network and share a folder.</span
+              ><b>Set up my network →</b></button
+            ><button id="choose-join" class="choice-card">
+              <span class="choice-symbol" aria-hidden="true">↗</span
+              ><strong>Join from another device</strong
+              ><span
+                >Connect with an invitation from your computer.</span
+              ><b>Join a network →</b>
+            </button>
+          </div>
+          <p id="create-unavailable" class="home-muted" hidden>
+            Create your network on a desktop computer, then join here.
+          </p>
+          <button id="choose-existing" class="text-button" hidden>
+            Use an existing network on this computer
+          </button>
+        </div>
+        <section id="create-screen" class="home-card setup-card" hidden>
+          <button class="text-button" data-back>← Back</button>
+          <h1>Create your network</h1>
+          <p>
+            Keep this computer on when you want to access your files.
+          </p>
+          <form id="create-form">
+            <label for="create-name">Network name</label
+            ><input
+              id="create-name"
+              value="Home network"
+              maxlength="80"
+              required
+              autocomplete="off"
+            /><label for="computer-name">This computer’s name</label
+            ><input
+              id="computer-name"
+              value="My computer"
+              maxlength="64"
+              required
+              autocomplete="off"
+            />
+            <button type="submit">Create my network</button>
+          </form>
+        </section>
+        <section id="join-screen" class="home-card setup-card" hidden>
+          <button class="text-button" data-back>← Back</button>
+          <h1>Connect this device</h1>
+          <p>
+            On your computer, choose <strong>Add device</strong>. Scan its QR
+            code with a camera, or paste the invitation below.
+          </p>
+          <form id="join-form">
+            <label for="join-name">This device’s name</label
+            ><input
+              id="join-name"
+              value="My phone"
+              maxlength="64"
+              required
+              autocomplete="off"
+            /><label for="join-link">Invitation</label
+            ><textarea
+              id="join-link"
+              rows="3"
+              required
+              spellcheck="false"
+              autocapitalize="off"
+              autocomplete="off"
+              placeholder="Paste your join link"
+            ></textarea
+            ><button type="submit">Ask to join</button>
+          </form>
+        </section>
+        <section id="joining-screen" class="home-card setup-card" hidden>
+          <p class="home-eyebrow">ONE MORE STEP</p>
+          <h1>Meet on your computer.</h1>
+          <p id="joining-progress" role="status">Waiting for approval…</p>
+          <p class="home-muted">
+            Keep Connect open on both devices. Compare the six-digit code before
+            choosing Allow.
+          </p>
+        </section>
+        <div id="workspace" hidden>
+          <nav class="home-navigation" aria-label="Main navigation">
+            <button data-view="files" aria-pressed="true">Files</button
+            ><button data-view="devices" aria-pressed="false">Devices</button
+            ><button data-view="settings" aria-pressed="false">Settings</button>
+          </nav>
+          <div id="view-files">
+            <div class="home-page-heading">
+              <div>
+                <h1>Files</h1>
+                <p id="files-description">
+                  Choose a folder on your computer to make it available to your
+                  phone.
+                </p>
+              </div>
+              <button id="share-button" hidden>Share a folder</button
+              ><button id="browse-button" class="secondary" hidden>
+                Refresh files
+              </button>
+            </div>
+            <div id="files-empty" class="home-empty">
+              <span aria-hidden="true">▤</span>
+              <h2>A place for your files.</h2>
+              <p id="files-empty-description">
+                Add your phone, then choose a folder to share.
+              </p>
+              <button id="files-add-device" class="secondary">
+                Add a device
+              </button>
+            </div>
+            <section id="shared-folder" class="home-card" hidden>
+              <div class="folder-heading">
+                <span class="folder-symbol" aria-hidden="true">▤</span>
+                <div>
+                  <h2 id="shared-name"></h2>
+                  <p>Read-only access for <span id="shared-peer"></span></p>
+                </div>
+              </div>
+              <p class="home-muted">
+                Includes subfolders. Files up to 1 GB.
+              </p>
+              <button id="stop-share-button" class="text-button">
+                Stop sharing this folder
+              </button>
+            </section>
+            <section id="remote-folder" class="home-card" hidden>
+              <div class="folder-heading">
+                <span class="folder-symbol" aria-hidden="true">▤</span>
+                <div>
+                  <h2 id="remote-folder-title">Shared files</h2>
+                </div>
+              </div>
+              <nav id="folder-breadcrumbs" class="folder-breadcrumbs" aria-label="Folder path"></nav>
+              <label for="file-search" class="sr-only">Search this folder</label
+              ><input
+                id="file-search"
+                type="search"
+                placeholder="Search this folder…"
+              />
+              <div id="file-list" class="file-list" role="list"></div>
+              <button id="more-files" class="secondary" hidden>
+                Show more files
+              </button>
+            </section>
+            <section id="file-preview" class="home-card" hidden>
+              <button id="close-preview" class="text-button">
+                ← Back to files
+              </button>
+              <h2 id="preview-name"></h2>
+              <p id="preview-detail" class="home-muted"></p>
+              <progress id="download-progress" max="100" value="0" aria-label="Download progress"></progress>
+              <div class="button-row">
+                <button id="cancel-download" class="secondary">Cancel</button>
+                <button id="open-download" hidden>Open file</button>
+                <button id="save-download" class="secondary" hidden>Save a copy</button>
+              </div>
+              <pre id="preview-content" tabindex="0"></pre>
+            </section>
+          </div>
+          <div id="view-devices" hidden>
+            <div class="home-page-heading">
+              <div>
+                <h1>Devices</h1>
+              </div>
+              <button id="add-device-button" hidden>Add device</button>
+            </div>
+            <section class="home-card device-row">
+              <span class="device-symbol" aria-hidden="true">⌂</span>
+              <div>
+                <h2 id="this-device-name">This device</h2>
+                <p id="this-device-detail">Part of your private network</p>
+              </div>
+              <span class="home-badge">This device</span>
+            </section>
+            <div id="saved-devices" aria-label="Saved devices"></div>
+          </div>
+          <div id="view-settings" hidden>
+            <div class="home-page-heading">
+              <div>
+                <h1>Settings</h1>
+              </div>
+            </div>
+            <section class="home-card">
+              <h2>Your network</h2>
+              <p id="settings-network"></p>
+              <p id="settings-owner" class="home-muted"></p>
+              <label for="friendly-name">This device’s name</label
+              ><input id="friendly-name" maxlength="64" /><button
+                id="save-name"
+                class="secondary"
+              >
+                Save name
+              </button>
+            </section>
+            <section class="home-card">
+              <h2>Sharing</h2>
+              <p>
+                You choose which folders to share. Other files stay private.
+              </p>
+              <p>
+                Keep Connect open on the computer sharing your files.
+              </p>
+            </section>
+            <details class="home-card">
+              <summary>Advanced</summary>
+              <p>
+                Technical setup, trust details, activity and connection tests.
+              </p>
+              <pre id="last-error-detail"></pre>
+              <button id="open-advanced" class="secondary">
+                Open advanced tools
+              </button>
+              <section id="paired-device" hidden>
+                <h3 id="peer-name"></h3>
+                <p id="peer-state"></p>
+                <button id="check-connection-button" class="secondary">Check connection</button>
+              </section>
+              <p class="home-muted">Connections may use public relays and publish addresses for reconnecting. Your network computer handles permissions. Recovery and backup tools are still being developed.</p>
+            </details>
+          </div>
+        </div>
+        <section id="pair-card" class="home-card pairing-card" hidden>
+          <button id="hide-pair-card" class="text-button">
+            Close invitation
+          </button>
+          <h2>Add a device</h2>
+          <p>
+            Open your phone’s camera and scan this code. Or copy the invitation
+            to your other device.
+          </p>
+          <img
+            id="pair-qr"
+            alt="QR code containing this computer’s expiring invitation"
+            width="300"
+            height="300"
+          />
+          <p id="pair-expiry" class="home-muted"></p>
+          <button id="copy-invitation" class="secondary">
+            Copy invitation
+          </button>
+        </section>
+        <section
+          id="approval-card"
+          class="home-card approval-card"
+          hidden
+          role="region"
+          aria-label="Device approval"
+        >
+          <p class="home-eyebrow">A DEVICE WANTS TO JOIN</p>
+          <h2 id="approval-name"></h2>
+          <p>Compare this code with the one on the other device.</p>
+          <strong id="approval-code" class="approval-code"></strong>
+          <p class="home-muted">
+            Allow only a device you recognize. This adds it to your network;
+            files stay private until you share a folder.
+          </p>
+          <div class="button-row">
+            <button id="approve-device">Allow device</button
+            ><button id="reject-device" class="secondary">Don’t allow</button>
+          </div>
+        </section>
+        <p class="home-footer">Genesis Mesh Connect · Preview</p>
+      </main>
+    </div>
+    <div id="advanced-shell" hidden>
+      <button id="close-advanced" class="advanced-return">
+        ← Back to Connect
+      </button>
+      <div class="app-shell">
+        <aside class="sidebar">
+          <a
+            class="brand"
+            href="#devices"
+            aria-label="Genesis Mesh Connect home"
+            ><img
+              src="/brand/logo.svg"
+              alt="Genesis Mesh"
+              width="68"
+              height="42"
+            /><span>Genesis Mesh<strong>Connect</strong></span></a
+          >
+          <p class="sidebar-caption">YOUR PRIVATE NETWORK</p>
+          <nav class="navigation" aria-label="Connect pages">
+            <button
+              id="device-tab"
+              data-page="device"
+              aria-pressed="true"
+              aria-controls="device-panel"
+            >
+              <span aria-hidden="true">▦</span> Devices
+            </button>
+            <button
+              id="files-tab"
+              data-page="files"
+              aria-pressed="false"
+              aria-controls="files-panel"
+            >
+              <span aria-hidden="true">▤</span> Files
+            </button>
+            <button
+              id="trust-tab"
+              data-page="trust"
+              aria-pressed="false"
+              aria-controls="trust-panel"
+            >
+              <span aria-hidden="true">◇</span> Trust &amp; policies
+            </button>
+            <button
+              id="activity-tab"
+              data-page="activity"
+              aria-pressed="false"
+              aria-controls="activity-panel"
+            >
+              <span aria-hidden="true">≋</span> Activity
+            </button>
+            <button
+              id="transport-tab"
+              data-page="transport"
+              aria-pressed="false"
+              aria-controls="transport-panel"
+            >
+              <span aria-hidden="true">⇄</span> Connection check
+            </button>
+          </nav>
+          <div class="sidebar-bottom">
+            <span class="status-dot" id="sidebar-dot"></span
+            ><span id="sidebar-state">Checking this device</span
+            ><small>Genesis Mesh Connect · Preview</small>
+          </div>
+        </aside>
+        <main>
+          <header class="topbar">
+            <span id="network-label">Your devices. Your network.</span
+            ><span class="pill" id="connection-badge">Getting ready</span>
+          </header>
+          <p id="app-toast" class="toast" role="status" hidden></p>
+          <p id="device-error" class="error" role="alert" hidden></p>
+          <div id="device-panel" class="page">
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">YOUR NETWORK, WITH YOU</p>
+                <h1>Your devices</h1>
+                <p class="intro">
+                  A familiar place for your devices, identity and connections.
+                </p>
+              </div>
+              <span class="version-tag">PREVIEW</span>
+            </div>
+            <div class="summary-grid">
+              <article class="metric">
+                <span>This device</span
+                ><strong id="overview-identity">Checking…</strong
+                ><small id="overview-identity-detail"
+                  >Your private key stays on this device</small
+                >
+              </article>
+              <article class="metric">
+                <span>Connection</span
+                ><strong id="overview-session">Not connected</strong
+                ><small id="overview-session-detail"
+                  >Start a session with an enrolled device</small
+                >
+              </article>
+              <article class="metric">
+                <span>File access</span
+                ><strong id="overview-sharing">Authority governed</strong
+                ><small>Every read needs a fresh policy decision</small>
+              </article>
+            </div>
+            <p id="device-state" class="state-line" role="status">
+              Loading your device…
+            </p>
+            <section id="unsupported-section" class="empty-state" hidden>
+              <div class="empty-symbol" aria-hidden="true">◇</div>
+              <h2>Your connection is the first step</h2>
+              <p>
+                Connection checks work on this device. Enrolled identities and
+                protected files need a supported native credential store.
+                See the platform guide for build and device validation status.
+              </p>
+              <button type="button" data-go="transport">
+                Check a connection
+              </button>
+            </section>
+            <ol
+              class="setup-steps"
+              id="setup-steps"
+              aria-label="Device setup progress"
+            >
+              <li id="step-prepare"><b>1</b> Create identity</li>
+              <li id="step-enroll"><b>2</b> Join your network</li>
+              <li id="step-connect"><b>3</b> Connect a device</li>
+            </ol>
+            <section id="prepare-section" hidden>
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">STEP 1</p>
+                  <h2>Make this device yours</h2>
+                </div>
+                <span class="pill muted">One-time setup</span>
+              </div>
+              <p class="hint">
+                Your operator supplies the network name and root public key.
+                Connect protects your private key with your system credential store.
+              </p>
+              <form id="prepare-form">
+                <div class="form-grid">
+                  <div>
+                    <label for="network-name">Network name</label
+                    ><input
+                      id="network-name"
+                      required
+                      maxlength="128"
+                      autocomplete="off"
+                      placeholder="Your Genesis Mesh network"
+                    />
+                  </div>
+                  <div>
+                    <label for="authority-mode">Where is your authority?</label
+                    ><select id="authority-mode">
+                      <option value="local">On this desktop</option>
+                      <option value="remote">On another desktop</option>
+                    </select>
+                  </div>
+                  <div class="span-two">
+                    <label for="root-key">Network root public key</label
+                    ><input
+                      id="root-key"
+                      required
+                      maxlength="44"
+                      spellcheck="false"
+                      autocomplete="off"
+                      placeholder="Confirm this key directly with your operator"
+                    />
+                  </div>
+                </div>
+                <div id="local-authority-fields">
+                  <label for="authority-url">Local authority address</label
+                  ><input
+                    id="authority-url"
+                    type="url"
+                    required
+                    value="http://127.0.0.1:9443"
+                    maxlength="256"
+                  />
+                  <p class="hint">
+                    Start your Genesis Mesh authority on this desktop first.
+                  </p>
+                </div>
+                <p id="remote-prepare-hint" class="hint" hidden>
+                  Create your identity, then ask your operator for a desktop
+                  authority ticket and an invite bound to your public key.
+                </p>
+                <button id="prepare-device">Create device identity →</button>
+              </form>
+            </section>
+            <section id="identity-section" hidden>
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">THIS DEVICE</p>
+                  <h2 id="identity-heading">Your Genesis Mesh identity</h2>
+                </div>
+                <span id="identity-badge" class="pill muted">Prepared</span>
+              </div>
+              <p id="device-details" class="hint"></p>
+              <details>
+                <summary>Public identity details</summary>
+                <label for="node-key">Node public key</label
+                ><textarea
+                  id="node-key"
+                  readonly
+                  rows="2"
+                  spellcheck="false"
+                ></textarea
+                ><button id="select-node-key" class="secondary" type="button">
+                  Copy public key
+                </button>
+                <p class="hint">
+                  Share this public key with your operator. Your private key is
+                  never shown here.
+                </p>
+              </details>
+              <form id="enroll-form" hidden>
+                <h3>Join your network</h3>
+                <p class="hint">
+                  Ask your operator for a single-use invite bound to the public
+                  key above.
+                </p>
+                <p id="enrollment-pending" class="notice" hidden>
+                  A previous enrollment may have reached the authority. Check
+                  with your operator before requesting another invite; Connect
+                  keeps the same device key.
+                </p>
+                <label for="device-invite">Enrollment invite</label
+                ><input
+                  id="device-invite"
+                  type="password"
+                  required
+                  maxlength="512"
+                  autocomplete="off"
+                  spellcheck="false"
+                /><label for="enrollment-kind"
+                  >How will you use this device?</label
+                ><select id="enrollment-kind">
+                  <option value="device">Access another device</option>
+                  <option value="host">
+                    Share files · requires a local edge invite
+                  </option></select
+                ><button id="enroll-device">Join network</button>
+              </form>
+            </section>
+            <section id="session-section" hidden>
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">YOUR OTHER DEVICES</p>
+                  <h2>Choose who to connect to</h2>
+                </div>
+                <span class="pill muted">Local network</span>
+              </div>
+              <p class="hint">
+                Save names for devices you recognize. Genesis Mesh still checks
+                their certificate and identity on every connection.
+              </p>
+              <p id="peer-storage-note" class="hint" hidden></p>
+              <div id="saved-peers" class="peer-list"></div>
+              <form id="session-form">
+                <label for="peer-node-key">Other device's node public key</label
+                ><input
+                  id="peer-node-key"
+                  required
+                  maxlength="44"
+                  spellcheck="false"
+                  autocomplete="off"
+                  placeholder="Confirm this key with the device's owner"
+                />
+                <div class="peer-save-row">
+                  <div>
+                    <label for="peer-name">Name you'll recognize</label
+                    ><input
+                      id="peer-name"
+                      maxlength="64"
+                      placeholder="Home desktop, NAS, work laptop…"
+                    />
+                  </div>
+                  <button id="save-peer" type="button" class="secondary">
+                    Save device
+                  </button>
+                </div>
+                <div class="actions">
+                  <button id="start-session">Start secure session</button
+                  ><button id="stop-session" class="secondary" type="button">
+                    Stop session</button
+                  ><button id="refresh-trust" class="secondary" type="button">
+                    Refresh trust
+                  </button>
+                </div>
+              </form>
+              <details id="session-tickets">
+                <summary>Exchange connection tickets</summary>
+                <p class="hint">
+                  Start a session on both devices, then exchange their current
+                  tickets. Restarting creates a new ticket.
+                </p>
+                <label for="session-ticket">This device's session ticket</label
+                ><textarea
+                  id="session-ticket"
+                  readonly
+                  rows="3"
+                  spellcheck="false"
+                  placeholder="Start a session to get your ticket"
+                ></textarea
+                ><button
+                  id="select-session-ticket"
+                  class="secondary"
+                  type="button"
+                >
+                  Copy session ticket</button
+                ><label for="session-peer-ticket"
+                  >Other device's session ticket</label
+                ><textarea
+                  id="session-peer-ticket"
+                  rows="3"
+                  maxlength="16384"
+                  spellcheck="false"
+                  placeholder="Paste the other device's current session ticket"
+                ></textarea>
+              </details>
+              <form id="session-send-form">
+                <label for="session-message">Say hello</label>
+                <div class="message-row">
+                  <input
+                    id="session-message"
+                    required
+                    value="Hello from Connect"
+                    maxlength="1024"
+                  /><button id="send-session">Send securely</button>
+                </div>
+              </form>
+              <pre id="session-result" aria-live="polite">
+Your authenticated reply will appear here.</pre>
+              <div class="next-action">
+                <p>Ready to use your connection?</p>
+                <button type="button" class="secondary" data-go="files">
+                  Open shared files →
+                </button>
+              </div>
+            </section>
+          </div>
+          <div id="files-panel" class="page" hidden>
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">ACCESS, WITH PERMISSION</p>
+                <h1>Shared files</h1>
+                <p class="intro">
+                  Read from an authorized collection on your other device.
+                </p>
+              </div>
+              <span class="pill muted">Up to 64 KiB</span>
+            </div>
+            <p id="files-prerequisite" class="notice">
+              Join your network and start a secure session in Devices first.
+            </p>
+            <section>
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">REQUEST A FILE</p>
+                  <h2>Open something you know</h2>
+                </div>
+                <span class="pill muted">Live authorization</span>
+              </div>
+              <p class="hint">
+                Ask the sharing device's owner for the collection and file name.
+                Add their session ticket under Devices → Exchange connection
+                tickets. Folder browsing and large transfers come later.
+              </p>
+              <form id="read-form">
+                <div class="form-grid">
+                  <div>
+                    <label for="read-collection">Collection</label
+                    ><input
+                      id="read-collection"
+                      required
+                      maxlength="128"
+                      placeholder="e.g. project-notes"
+                    />
+                  </div>
+                  <div>
+                    <label for="read-file">File name</label
+                    ><input
+                      id="read-file"
+                      required
+                      maxlength="128"
+                      placeholder="e.g. readme.txt"
+                    />
+                  </div>
+                </div>
+                <details>
+                  <summary>Verify a specific version</summary>
+                  <label for="read-version">Expected SHA-256</label
+                  ><input
+                    id="read-version"
+                    maxlength="64"
+                    pattern="[0-9a-fA-F]{64}"
+                    placeholder="Optional · refuses a changed file"
+                  />
+                </details>
+                <button id="read-file-button">Request and open file</button>
+              </form>
+              <div id="file-proof" class="proof-card" hidden>
+                <span class="pill good">Verified read</span>
+                <h3 id="file-proof-name"></h3>
+                <dl>
+                  <dt>Size</dt>
+                  <dd id="file-proof-size"></dd>
+                  <dt>SHA-256</dt>
+                  <dd id="file-proof-digest" class="mono"></dd>
+                  <dt>Receipt</dt>
+                  <dd id="file-proof-receipt" class="mono"></dd>
+                </dl>
+              </div>
+              <pre id="read-result" class="file-preview" aria-live="polite">
+Your verified text preview will appear here.</pre>
+            </section>
+            <section id="sharing-settings" hidden>
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">FROM THIS DESKTOP</p>
+                  <h2>Share a collection</h2>
+                </div>
+                <span id="sharing-badge" class="pill muted">Disabled</span>
+              </div>
+              <p id="sharing-state" class="hint"></p>
+              <p class="hint">
+                Use a dedicated folder of flat files up to 64 KiB. Your
+                authority supplies a host attestation and a policy allowing the
+                selected peer and collection. Stop your session before changing
+                sharing. Reconfigure after restarting the app.
+              </p>
+              <form id="sharing-form">
+                <div class="form-grid">
+                  <div>
+                    <label for="share-id">Collection ID</label
+                    ><input id="share-id" required maxlength="128" />
+                  </div>
+                  <div>
+                    <label for="share-policy">Required policy ID</label
+                    ><input id="share-policy" required maxlength="128" />
+                  </div>
+                  <div class="span-two">
+                    <label for="share-directory">Folder on this desktop</label
+                    ><input id="share-directory" required />
+                  </div>
+                  <div class="span-two">
+                    <label for="share-attestation">Host attestation ID</label
+                    ><input id="share-attestation" required />
+                  </div>
+                </div>
+                <div class="actions">
+                  <button id="enable-sharing">Configure sharing</button
+                  ><button id="disable-sharing" type="button" class="secondary">
+                    Disable sharing
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+          <div id="trust-panel" class="page" hidden>
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">GENESIS MESH GOVERNS ACCESS</p>
+                <h1>Trust &amp; policies</h1>
+                <p class="intro">
+                  See which identity, authority and access rules this device
+                  uses.
+                </p>
+              </div>
+            </div>
+            <div class="two-columns">
+              <section>
+                <h2>Device credential</h2>
+                <dl>
+                  <dt>Network</dt>
+                  <dd id="trust-network">Not joined</dd>
+                  <dt>Certificate</dt>
+                  <dd id="trust-certificate" class="mono">Not enrolled</dd>
+                  <dt>Expires</dt>
+                  <dd id="trust-expires">—</dd>
+                  <dt>Session state</dt>
+                  <dd id="trust-state">Not started</dd>
+                </dl>
+                <details>
+                  <summary>Pinned network root</summary>
+                  <p id="trust-root" class="mono hint">
+                    Your operator supplies this key during setup.
+                  </p>
+                </details>
+              </section>
+              <section>
+                <h2>Verified trust checkpoint</h2>
+                <dl>
+                  <dt>Last accepted update</dt>
+                  <dd id="trust-observed">No update yet</dd>
+                  <dt>Revocation list sequence</dt>
+                  <dd id="trust-crl">—</dd>
+                  <dt>Authority key sequence</dt>
+                  <dd id="trust-key-sequence">—</dd>
+                </dl>
+                <p class="hint">
+                  These are the last verified checkpoint values. Starting or
+                  refreshing a session checks current trust; an old checkpoint
+                  does not imply current access.
+                </p>
+                <button type="button" class="secondary" id="trust-refresh">
+                  Refresh trust
+                </button>
+              </section>
+            </div>
+            <section>
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">COLLECTION ACCESS</p>
+                  <h2>Applied sharing requirements</h2>
+                </div>
+                <span class="pill muted">Authority controlled</span>
+              </div>
+              <p id="policy-empty" class="hint">
+                No local sharing collection is configured. A remote host applies
+                its own authority's policy to each file request.
+              </p>
+              <dl id="policy-details" hidden>
+                <dt>Collection</dt>
+                <dd id="policy-collection"></dd>
+                <dt>Required policy</dt>
+                <dd id="policy-id" class="mono"></dd>
+                <dt>Host attestation</dt>
+                <dd id="policy-attestation" class="mono"></dd>
+              </dl>
+              <div class="rule-list">
+                <div>
+                  <b>01</b>
+                  <p>
+                    <strong>Recognized identity</strong
+                    ><span
+                      >Certificates, revocation and the pinned network root are
+                      checked.</span
+                    >
+                  </p>
+                </div>
+                <div>
+                  <b>02</b>
+                  <p>
+                    <strong>A fresh decision for every read</strong
+                    ><span
+                      >The host asks its authority before releasing file
+                      bytes.</span
+                    >
+                  </p>
+                </div>
+                <div>
+                  <b>03</b>
+                  <p>
+                    <strong>Access stays within the collection</strong
+                    ><span
+                      >One configured collection, flat file names and a 64 KiB
+                      file limit.</span
+                    >
+                  </p>
+                </div>
+              </div>
+              <p class="hint">
+                Policy authoring, device revocation and network-wide policy
+                lists are managed by your Genesis Mesh authority. This app shows
+                its configured requirements and completed read receipts.
+              </p>
+            </section>
+            <section id="authority-settings" hidden>
+              <h2>Authority connection</h2>
+              <p id="authority-route-status" class="hint"></p>
+              <p class="hint">
+                Use a desktop bridge for enrollment, refresh and renewal.
+                Confirm its node public key directly with its owner. Stop your
+                session before changing this route.
+              </p>
+              <form id="authority-route-form">
+                <label for="bridge-host-key">Desktop's node public key</label
+                ><input
+                  id="bridge-host-key"
+                  required
+                  maxlength="44"
+                  autocomplete="off"
+                  spellcheck="false"
+                /><label for="bridge-host-ticket"
+                  >Desktop authority ticket</label
+                ><textarea
+                  id="bridge-host-ticket"
+                  required
+                  rows="3"
+                  maxlength="16384"
+                  spellcheck="false"
+                ></textarea>
+                <div class="actions">
+                  <button id="use-bridge">Use desktop bridge</button
+                  ><button
+                    id="use-local-authority"
+                    type="button"
+                    class="secondary"
+                  >
+                    Use local authority
+                  </button>
+                </div>
+              </form>
+              <div id="bridge-host-section" hidden>
+                <label for="authority-ticket"
+                  >This desktop's authority ticket</label
+                ><textarea
+                  id="authority-ticket"
+                  readonly
+                  rows="3"
+                  spellcheck="false"
+                ></textarea
+                ><button
+                  id="select-authority-ticket"
+                  class="secondary"
+                  type="button"
+                >
+                  Copy authority ticket
+                </button>
+                <p class="hint">
+                  Give this ticket and your public node key to the selected peer
+                  for fixed enrollment and trust operations. Stopping your
+                  session stops this listener too.
+                </p>
+              </div>
+            </section>
+          </div>
+          <div id="activity-panel" class="page" hidden>
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">WHAT HAPPENED HERE</p>
+                <h1>Activity</h1>
+                <p class="intro">
+                  Connection, trust and file actions from this app session.
+                </p>
+              </div>
+              <span class="pill muted" id="activity-count">0 events</span>
+            </div>
+            <div class="activity-toolbar">
+              <label for="activity-filter">Show</label
+              ><select id="activity-filter">
+                <option value="all">All activity</option>
+                <option value="success">Completed</option>
+                <option value="error">Needs attention</option>
+              </select>
+            </div>
+            <section>
+              <div id="activity-empty" class="empty-state">
+                <div class="empty-symbol" aria-hidden="true">≋</div>
+                <h2>A clear view of your actions</h2>
+                <p>
+                  Completed operations and failures will appear here. Invites,
+                  tickets, message text and file contents are excluded.
+                </p>
+              </div>
+              <ol id="activity-list" class="activity-list"></ol>
+            </section>
+            <p class="hint">
+              This session view keeps up to 50 events and resets when the app
+              closes. Signed read receipts are persisted by the sharing host;
+              this view is not an authority audit log.
+            </p>
+          </div>
+          <div id="transport-panel" class="page" hidden>
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">CHECK THE CONNECTION</p>
+                <h1>Can your devices talk?</h1>
+                <p class="intro">
+                  A simple connection check before setting up your network
+                  identity.
+                </p>
+              </div>
+            </div>
+            <p class="notice">
+              This check verifies connectivity. Enrolled sessions and file
+              access use Genesis Mesh identity and policy checks in Devices.
+            </p>
+            <div class="two-columns">
+              <section>
+                <p class="eyebrow">STEP 1</p>
+                <h2>Make this device reachable</h2>
+                <label for="mode">Connection mode</label
+                ><select id="mode">
+                  <option value="local">
+                    Local network · no public relays
+                  </option>
+                  <option value="public_relay">
+                    Public relay · connect from elsewhere
+                  </option>
+                </select>
+                <p class="hint">
+                  Public mode uses Iroh's public infrastructure and may switch
+                  to a faster direct path.
+                </p>
+                <div class="actions">
+                  <button id="start">Start connection check</button
+                  ><button id="stop" class="secondary" disabled>Stop</button>
+                </div>
+                <p id="status" role="status">Stopped</p>
+                <details>
+                  <summary>Share this device's ticket</summary>
+                  <textarea
+                    id="own-ticket"
+                    aria-label="This device's ticket"
+                    readonly
+                    spellcheck="false"
+                    rows="4"
+                    placeholder="Start to generate a ticket"
+                  ></textarea
+                  ><button id="select-ticket" class="secondary" disabled>
+                    Copy ticket
+                  </button>
+                  <p class="hint">
+                    Keep this app open. Restarting changes the endpoint identity
+                    and ticket.
+                  </p>
+                </details>
+              </section>
+              <section>
+                <p class="eyebrow">STEP 2</p>
+                <h2>Reach your other device</h2>
+                <form id="probe-form">
+                  <label for="peer-ticket">Other device's ticket</label
+                  ><textarea
+                    id="peer-ticket"
+                    required
+                    spellcheck="false"
+                    rows="4"
+                    maxlength="16384"
+                    placeholder="Paste the current ticket from your other device"
+                  ></textarea
+                  ><label for="message">Test message</label
+                  ><input
+                    id="message"
+                    value="Connect hello"
+                    required
+                    maxlength="1024"
+                  /><button id="send" disabled>Check connection</button>
+                </form>
+              </section>
+            </div>
+            <section>
+              <div class="section-heading">
+                <h2 id="transport-outcome">Waiting for your first check</h2>
+                <span id="transport-result-badge" class="pill muted"
+                  >Not tested</span
+                >
+              </div>
+              <div class="result-metrics">
+                <div>
+                  <span>Observed path</span
+                  ><strong id="transport-path">—</strong>
+                </div>
+                <div>
+                  <span>Round trip</span
+                  ><strong id="transport-latency">—</strong>
+                </div>
+                <div>
+                  <span>Verified echo</span
+                  ><strong id="transport-bytes">—</strong>
+                </div>
+              </div>
+              <p id="transport-result-hint" class="hint">
+                The result will show whether the selected path is direct or
+                relayed.
+              </p>
+              <details>
+                <summary>Technical details</summary>
+                <pre id="result" aria-live="polite">
+No connection check yet.</pre>
+              </details>
+            </section>
+          </div>
+          <footer>
+            Genesis Mesh Connect <span>Identity. Permission. Connection.</span>
+          </footer>
+        </main>
+      </div>
+    </div>
+  </body>
 </html>

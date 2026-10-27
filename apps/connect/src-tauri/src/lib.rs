@@ -1,6 +1,10 @@
 use connect_core::{EndpointStatus, NetworkMode, ProbeEndpoint, RoundTripReport};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+mod consumer;
+mod desktop;
+mod downloads;
+mod workflow;
 
 #[derive(Default)]
 struct AppState(Mutex<Option<Arc<ProbeEndpoint>>>);
@@ -66,13 +70,65 @@ async fn send_probe(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_opener::init());
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_view::init());
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        use tauri::Manager;
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
+    builder
+        .plugin(tauri_plugin_deep_link::init())
         .manage(AppState::default())
+        .setup(|app| {
+            desktop::setup(app)?;
+            workflow::setup(app)?;
+            downloads::setup(app)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             start_endpoint,
             endpoint_status,
             stop_endpoint,
-            send_probe
+            send_probe,
+            workflow::network_status,
+            workflow::network_create,
+            workflow::network_attach,
+            consumer::pair_cancel,
+            consumer::home_status,
+            consumer::pair_begin,
+            consumer::pair_approve,
+            consumer::pair_reject,
+            consumer::pair_join,
+            consumer::share_folder,
+            consumer::stop_sharing,
+            consumer::browse_files,
+            consumer::open_file,
+            downloads::download_file,
+            downloads::download_status,
+            downloads::cancel_download,
+            downloads::open_download,
+            downloads::save_download,
+            consumer::check_connection,
+            consumer::select_device,
+            consumer::forget_device,
+            desktop::device_status,
+            desktop::device_prepare,
+            desktop::device_enroll,
+            desktop::device_configure_sharing,
+            desktop::device_read,
+            desktop::device_start,
+            desktop::device_use_bridge,
+            desktop::device_use_local_authority,
+            desktop::device_stop,
+            desktop::device_refresh,
+            desktop::device_send
         ])
         .run(tauri::generate_context!())
         .expect("Connect could not start");

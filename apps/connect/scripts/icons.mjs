@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -22,3 +22,6 @@ const result = spawnSync(process.execPath, [
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
 copyFileSync(resolve(app, "src-tauri/icons/32x32.png"), resolve(app, "public/brand/favicon.png"));
+const androidResources = resolve(app, "src-tauri/gen/android/app/src/main/res");
+if (existsSync(androidResources))
+  cpSync(resolve(app, "src-tauri/icons/android"), androidResources, { recursive: true });

@@ -3,7 +3,7 @@ name = "connect-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Genesis Mesh Connect portable application core; transport feasibility spike"
+description = "Genesis Mesh Connect portable transport and session authentication diagnostics"
 publish = false
 
 [dependencies]
@@ -12,3 +12,38 @@ iroh.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+base64 = "0.23"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+ed25519-dalek = "3"
+getrandom = "0.4"
+reqwest = { version = "=0.13.5", default-features = false, features = ["json", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tempfile = "=3.27.0"
+uuid = { version = "1", features = ["v4"] }
+zeroize = { version = "1", features = ["derive"] }
+cap-std = "=4.0.3"
+cap-fs-ext = "=4.0.3"
+sha2 = "0.11"
+genesis-mesh-sdk = { git = "https://github.com/GenesisMeshLabs/sdk-rust", tag = "v1.8.1", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "io-util"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+security-framework = "=3.7.0"
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+keyring-core = "=1.0.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus-secret-service-keyring-store = {version="=1.0.1",default-features=false,features=["rt-async-io-crypto-rust"]}
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-native-keyring-store = {version="=1.0.0",default-features=false}
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# netwatch 0.19.3 still uses iOS routing constants removed in libc 0.2.190.
+libc = "=0.2.189"
