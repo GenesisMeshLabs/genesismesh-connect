@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail, ensure};
 use connect_core::{
     Connectivity,
     device::{DeviceController, PairedDevice},
-    owner::{OwnerInfo, OwnerRuntime},
+    owner::{OwnerInfo, OwnerRequest, OwnerRuntime},
     recovery,
     session::{
         bridge::BridgeRoute,
@@ -317,6 +317,9 @@ async fn run(paths: &Paths) -> Result<()> {
     let info = owner.open()?;
     let mut device = DeviceController::open(&paths.profile)?;
     device.rebind_owned_authority(info.url.clone(), &info.pin)?;
+    // Devices' Space requests reach the owner runtime through this channel.
+    let (owner_handle, owner_requests) = tokio::sync::mpsc::channel(8);
+    device.serve_owner(owner_handle);
     if let Err(error) = device.reconnect_saved().await {
         eprintln!("Saved devices are not reachable yet: {error:#}");
     }
@@ -339,6 +342,8 @@ async fn run(paths: &Paths) -> Result<()> {
     let listener = UnixListener::bind(&paths.socket)?;
     std::fs::set_permissions(&paths.socket, std::fs::Permissions::from_mode(0o600))?;
     let control = tokio::spawn(serve(listener, node.clone()));
+    let spaces = tokio::spawn(answer_owner(node.clone(), owner_requests));
+    let mut renewed: Option<Instant> = None;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     loop {
         tokio::select! {
@@ -356,18 +361,51 @@ async fn run(paths: &Paths) -> Result<()> {
                 {
                     eprintln!("Trust refresh failed; connections are paused: {error:#}");
                 }
+                if let Err(error) = keep_spaces(&mut node, &mut renewed) {
+                    eprintln!("Shared folders could not be checked: {error:#}");
+                }
             }
             _ = terminate.recv() => break,
             _ = tokio::signal::ctrl_c() => break,
         }
     }
     control.abort();
+    spaces.abort();
     let mut node = node.lock().await;
     if let Some(pairing) = node.pairing.take() {
         pairing.close().await;
     }
     node.device.stop().await;
     let _ = std::fs::remove_file(&paths.socket);
+    Ok(())
+}
+
+/// Answer devices' Space requests, one at a time.
+async fn answer_owner(node: Shared, mut requests: tokio::sync::mpsc::Receiver<OwnerRequest>) {
+    while let Some(request) = requests.recv().await {
+        let mut node = node.lock().await;
+        let result = tokio::task::block_in_place(|| node.owner.answer(request.call));
+        let _ = request.reply.send(result);
+    }
+}
+
+/// Renew Spaces once a day, and keep this server's view of them current.
+fn keep_spaces(node: &mut Node, renewed: &mut Option<Instant>) -> Result<()> {
+    if renewed.is_none_or(|at| at.elapsed() >= Duration::from_secs(24 * 3600)) {
+        let renewal = tokio::task::block_in_place(|| node.owner.space_renew())?;
+        if !renewal.is_empty() {
+            println!("Renewed {} shared folder(s).", renewal.len());
+        }
+        *renewed = Some(Instant::now());
+    }
+    let own = node.device.status()?.node_public_key;
+    let spaces = tokio::task::block_in_place(|| node.owner.space_list())?;
+    node.device.apply_spaces(
+        spaces
+            .into_iter()
+            .filter_map(|space| connect_core::session::bridge::SpaceView::of(space, &own))
+            .collect(),
+    )?;
     Ok(())
 }
 
@@ -405,13 +443,27 @@ async fn answer(stream: UnixStream, node: Shared) -> Result<()> {
 async fn handle(node: &Shared, request: Value) -> Result<Value> {
     match request["op"].as_str().context("Missing operation")? {
         "status" => {
-            let node = node.lock().await;
+            let mut node = node.lock().await;
+            let names: std::collections::BTreeMap<String, String> = node
+                .device
+                .status()?
+                .devices
+                .into_iter()
+                .map(|d| (d.node, d.name))
+                .collect();
+            let spaces: Vec<Value> = tokio::task::block_in_place(|| node.owner.space_list())?
+                .into_iter()
+                .map(|space| {
+                    json!({"name":space.name,"host":names.get(&space.host).cloned().unwrap_or_else(|| "a removed device".into())})
+                })
+                .collect();
             let status = node.device.status()?;
             Ok(json!({
                 "network": status.network,
                 "connection": status.connectivity,
                 "devices": status.devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>(),
                 "ready": status.ready,
+                "spaces": spaces,
                 "certificate_expires_at": status.certificate_expires_at,
                 "problem": status.problem,
             }))
@@ -588,6 +640,22 @@ async fn status(paths: &Paths) -> Result<()> {
         println!("Devices: none yet. Add one with the pair command.");
     } else {
         println!("Devices: {}", devices.join(", "));
+    }
+    let spaces = status["spaces"].as_array().cloned().unwrap_or_default();
+    if spaces.is_empty() {
+        println!("Shared folders: none yet. Devices share them from Connect.");
+    } else {
+        let spaces: Vec<String> = spaces
+            .iter()
+            .map(|s| {
+                format!(
+                    "{} (on {})",
+                    s["name"].as_str().unwrap_or("?"),
+                    s["host"].as_str().unwrap_or("?")
+                )
+            })
+            .collect();
+        println!("Shared folders: {}", spaces.join(", "));
     }
     if let Some(problem) = status["problem"].as_str() {
         println!("Problem: {problem}");

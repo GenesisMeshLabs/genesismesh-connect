@@ -10,6 +10,9 @@ pub struct ListRequest {
     pub after: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub directory: Vec<String>,
+    /// The Space to list; apps from before Spaces name none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_id: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -148,9 +151,10 @@ impl Share {
             page_context(protocol),
             genesis_mesh_sdk::canonical_digest(&intent)?
         );
+        let attestation_id = self.attestation_id();
         let attestation = self
             .authority
-            .attestation(&credentials.identity, &trust, &self.config.attestation_id)
+            .attestation(&credentials.identity, &trust, &attestation_id)
             .await?["attestation"]
             .clone();
         let mut parameters = json!({"collection_id":self.config.collection_id,"peer_node":credentials.expected_node,"size":0,"page_digest":intent["page_digest"]});
@@ -162,7 +166,7 @@ impl Share {
             .evaluate(
                 &credentials.identity,
                 &trust,
-                &self.config.attestation_id,
+                &attestation_id,
                 &context,
                 parameters,
                 "connect.collection.list",
@@ -202,21 +206,17 @@ pub(in crate::session) async fn serve(
     connection: &Connection,
     local: iroh::EndpointId,
     credentials: &Credentials,
-    share: &Share,
+    shares: &Shares,
 ) -> Result<()> {
-    serve_for(connection, local, credentials, share, Protocol::List).await
+    serve_for(connection, local, credentials, shares, Protocol::List).await
 }
 pub(in crate::session) async fn serve_for(
     connection: &Connection,
     local: iroh::EndpointId,
     credentials: &Credentials,
-    share: &Share,
+    shares: &Shares,
     protocol: Protocol,
 ) -> Result<()> {
-    let _permit = share
-        .budget
-        .try_acquire()
-        .context("Another file operation is running")?;
     let (mut send, mut recv) = connection.accept_bi().await?;
     let peer = authenticate_for(
         connection,
@@ -235,16 +235,31 @@ pub(in crate::session) async fn serve_for(
         recv.read_to_end(0).await?.is_empty(),
         "Unexpected list request data"
     );
-    let result = share
-        .list(credentials, &peer, &request, protocol)
-        .await
-        .unwrap_or(Response::Denied);
-    if let Response::Allowed { page, .. } = &result {
-        share.released_names.fetch_add(
-            page["files"].as_array().map_or(0, Vec::len) as u64,
-            Ordering::Relaxed,
-        );
-    }
+    ensure!(
+        matches!(protocol, Protocol::Browse) || request.collection_id.is_none(),
+        "Only folder browsing names a shared folder"
+    );
+    // An unknown Space is refused like any other denial.
+    let result = match shares.find(request.collection_id.as_deref(), &credentials.expected_node) {
+        Some(share) => {
+            let _permit = share
+                .budget
+                .try_acquire()
+                .context("Another file operation is running")?;
+            let result = share
+                .list(credentials, &peer, &request, protocol)
+                .await
+                .unwrap_or(Response::Denied);
+            if let Response::Allowed { page, .. } = &result {
+                share.released_names.fetch_add(
+                    page["files"].as_array().map_or(0, Vec::len) as u64,
+                    Ordering::Relaxed,
+                );
+            }
+            result
+        }
+        None => Response::Denied,
+    };
     send_response(&mut send, &result).await?;
     connection.closed().await;
     Ok(())

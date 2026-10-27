@@ -78,9 +78,20 @@ struct Record {
     auto_connect: bool,
     #[serde(default)]
     consumer_mode: bool,
+    /// The single shared folder of profiles from before Spaces; moved into
+    /// `shares` when opened.
     #[serde(default)]
     #[zeroize(skip)]
     saved_share: Option<crate::session::sharing::ShareConfig>,
+    /// The Spaces this device shares, with the grants they share under.
+    #[serde(default)]
+    #[zeroize(skip)]
+    shares: Vec<crate::session::sharing::ShareConfig>,
+    /// The Spaces this device hosts or that name it, as the network computer
+    /// last listed them, without grants.
+    #[serde(default)]
+    #[zeroize(skip)]
+    spaces: Vec<crate::session::bridge::SpaceView>,
     /// The network computer's choice; on that computer, the owner's own.
     #[serde(default)]
     #[zeroize(skip)]
@@ -128,6 +139,8 @@ impl Vault {
             auto_connect: false,
             consumer_mode: false,
             saved_share: None,
+            shares: Vec::new(),
+            spaces: Vec::new(),
             network_connectivity: crate::Connectivity::default(),
             own_connectivity: None,
             session_port: None,
@@ -181,7 +194,10 @@ impl Vault {
         migrate_peers(&mut record)?;
         record.storage_id = uuid::Uuid::new_v4().to_string();
         record.authority = Some(authority);
+        // Folders are chosen again on the restored computer.
         record.saved_share = None;
+        record.shares.clear();
+        record.spaces.clear();
         persist(path, &record, true)?;
         Ok(Self {
             path: path.to_owned(),
@@ -427,14 +443,35 @@ impl Vault {
         })?;
         Ok(true)
     }
-    pub fn saved_share(&self) -> Option<&crate::session::sharing::ShareConfig> {
-        self.record.saved_share.as_ref()
+    pub fn saved_shares(&self) -> &[crate::session::sharing::ShareConfig] {
+        &self.record.shares
     }
-    pub fn save_share(
-        &mut self,
-        config: Option<crate::session::sharing::ShareConfig>,
-    ) -> Result<()> {
-        self.update(|record| record.saved_share = config)
+    pub fn save_shares(&mut self, shares: Vec<crate::session::sharing::ShareConfig>) -> Result<()> {
+        check_shares(&shares)?;
+        self.update(|record| {
+            record.shares = shares;
+            record.saved_share = None;
+        })
+    }
+    pub fn spaces(&self) -> &[crate::session::bridge::SpaceView] {
+        &self.record.spaces
+    }
+    /// Keep the network computer's latest list of Spaces for this device,
+    /// without grants. Returns whether anything changed.
+    pub fn save_spaces(&mut self, spaces: Vec<crate::session::bridge::SpaceView>) -> Result<bool> {
+        ensure!(spaces.len() <= 64, "Too many shared folders");
+        let spaces: Vec<_> = spaces
+            .into_iter()
+            .map(|space| crate::session::bridge::SpaceView {
+                grant: None,
+                ..space
+            })
+            .collect();
+        if spaces == self.record.spaces {
+            return Ok(false);
+        }
+        self.update(|record| record.spaces = spaces)?;
+        Ok(true)
     }
     pub fn auto_connect(&self) -> bool {
         self.record.auto_connect
@@ -560,7 +597,27 @@ pub(crate) fn validate_peer(peer: &super::PairedDevice) -> Result<()> {
     super::super::session::validate_ticket(&peer.ticket)
 }
 
+fn check_shares(shares: &[crate::session::sharing::ShareConfig]) -> Result<()> {
+    ensure!(shares.len() <= 16, "A device shares up to 16 folders");
+    let mut ids = std::collections::BTreeSet::new();
+    for share in shares {
+        ensure!(
+            ids.insert(&share.collection_id),
+            "The same folder is shared twice"
+        );
+    }
+    Ok(())
+}
+
 fn migrate_peers(record: &mut Record) -> Result<()> {
+    // A profile from before Spaces shared one folder.
+    if record.shares.is_empty()
+        && let Some(share) = record.saved_share.take()
+    {
+        record.shares.push(share);
+    }
+    check_shares(&record.shares)?;
+    ensure!(record.spaces.len() <= 64, "Too many shared folders");
     if record.peers.is_empty()
         && let Some(peer) = &record.paired
     {

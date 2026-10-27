@@ -60,6 +60,63 @@ class OwnerTests(unittest.TestCase):
                 with self.assertRaises(ValueError): owner.share(host,peer,"../../escape")
             finally: owner.close()
 
+    def test_spaces_name_exact_devices_change_only_by_their_host_and_stop_cleanly(self):
+        import uuid
+        from datetime import datetime, timedelta, timezone
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)/"owner"
+            owner=Owner(root)
+            try:
+                owner.create("Spaces")
+                host,phone,tablet,other=(generate_keypair().public_key_b64 for _ in range(4))
+                collection=str(uuid.uuid4())
+                entry=owner.space_share(host,collection,"  Photos ",[phone])
+                self.assertEqual((entry["name"],entry["host"],entry["recipients"]),("Photos",host,[phone]))
+                self.assertEqual(entry["subject"],owner.subject(host))
+                self.assertEqual((entry["policy_id"],entry["policy_version"]),("connect-"+collection,1))
+                def active(policy_id):
+                    return [p for p in owner.service.db.load_active_boundary_policies().policies if p.policy_id==policy_id]
+                def peers(policy):
+                    return next(g.config["values"] for g in policy.gates if g.gate_id=="peer")
+                self.assertEqual([peers(p) for p in active(entry["policy_id"])],[[phone]])
+                # Its host changes the devices: a new version replaces the old.
+                changed=owner.space_share(host,collection,"Photos",[tablet,phone,phone])
+                self.assertEqual(changed["policy_version"],2)
+                self.assertEqual(changed["created_at"],entry["created_at"])
+                self.assertEqual([(p.version,peers(p)) for p in active(entry["policy_id"])],[(2,sorted([phone,tablet]))])
+                self.assertEqual(len(owner.space_list()),1)
+                # Nobody else changes or removes it, and nobody shares with itself.
+                with self.assertRaises(Refused): owner.space_share(other,collection,"Mine now",[phone])
+                with self.assertRaises(Refused): owner.space_remove(other,collection)
+                with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"Self",[host])
+                with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"Nobody",[])
+                with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"x"*65,[phone])
+                with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"Bad",["not a key"])
+                with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"Wrong subject",[phone],"someone-else")
+                with self.assertRaises(ValueError): owner.space_share(host,"../escape","Escape",[phone])
+                # Renewal re-grants Spaces close to their end, with a new attestation.
+                spaces=owner.space_list()
+                spaces[0]["valid_until"]=(datetime.now(timezone.utc)+timedelta(days=2)).isoformat()
+                owner._save_spaces(spaces)
+                self.assertEqual(owner.space_renew(),[collection])
+                renewed=owner.space_list()[0]
+                self.assertEqual(renewed["policy_version"],3)
+                self.assertNotEqual(renewed["attestation_id"],changed["attestation_id"])
+                self.assertEqual(owner.space_renew(),[])
+                # The registry is in the recovery file.
+                staged=owner.backup()
+                self.assertTrue((Path(staged["staging"])/"spaces.json").is_file())
+                shutil.rmtree(staged["staging"])
+                # Stopping deactivates the policy: no decision can allow it.
+                self.assertTrue(owner.space_remove(host,collection))
+                self.assertEqual(active(entry["policy_id"]),[])
+                self.assertEqual(owner.space_list(),[])
+                self.assertFalse(owner.space_remove(host,collection))
+                # A device shares up to 16 folders.
+                for index in range(16): owner.space_share(host,str(uuid.uuid4()),f"Folder {index}",[phone])
+                with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"One more",[phone])
+            finally: owner.close()
+
     def test_nonempty_or_incomplete_network_is_never_reinitialized(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)/"owner"; root.mkdir()

@@ -163,8 +163,11 @@ pub async fn download_file(
         .clone()
         .try_acquire_owned()
         .map_err(|_| "Finish or cancel the current download first.")?;
-    let (session, peer) =
-        crate::consumer::session(&app.state::<crate::desktop::DesktopState>()).await?;
+    let (session, peer) = crate::consumer::session(
+        &app.state::<crate::desktop::DesktopState>(),
+        Some(&collection_id),
+    )
+    .await?;
     let id = uuid::Uuid::new_v4().to_string();
     let (cancel, mut canceled) = watch::channel(false);
     *state.job.lock().expect("download state") = Some(Job {

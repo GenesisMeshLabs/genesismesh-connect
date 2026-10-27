@@ -161,10 +161,14 @@ refused before evaluation, such as unknown collections, are not a complete
 central denial audit.
 
 Receipts contain filenames, identities and hashes, but no file contents. Treat
-that metadata as private. The store refuses additional writes at its limits:
-512 entries, 16 MiB total and 512 KiB per envelope. Preparation reserves space
-for one maximum-size confirmation envelope. Archive receipts separately
-when necessary; the app does not silently delete evidence. A failure after data
+that metadata as private. Each shared folder keeps its receipts for 90 days,
+the period devices keep their own history. Before each write it drops receipts
+older than that and, if the store is still near its limits (2,048 entries,
+32 MiB, 512 KiB per envelope), the oldest ones until 1,792 entries and 24 MiB
+remain, so sharing never stops for lack of room. Preparation reserves space
+for one maximum-size confirmation envelope. Copy receipts elsewhere if you
+need them longer; keeping the full history on the network computer is part of
+Activity. A failure after data
 release can leave only a prepared receipt and return an unconfirmed read. It
 does not mean that no bytes reached the client.
 

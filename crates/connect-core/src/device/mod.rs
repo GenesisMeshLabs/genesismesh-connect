@@ -20,13 +20,13 @@ pub const fn secure_storage_supported() -> bool {
     ))
 }
 
-use crate::session::sharing::{Share, ShareConfig};
+use crate::session::sharing::{Share, ShareConfig, Shares};
 use crate::{
     Connectivity,
     authority::{EnrolledDevice, LocalAuthority, TrustPin, TrustStore},
     session::{
         SessionEndpoint, SessionReport,
-        bridge::{AuthorityBridge, BridgeAuthority, BridgeRoute, NetworkSettings},
+        bridge::{AuthorityBridge, BridgeAuthority, BridgeRoute, NetworkSettings, SpaceView},
     },
 };
 use anyhow::{Context, Result, ensure};
@@ -66,7 +66,12 @@ pub struct DeviceStatus {
     pub sharing_host: bool,
     pub sharing_subject: Option<String>,
     pub sharing_enabled: bool,
+    /// The first shared folder, for profiles from before Spaces.
     pub sharing_config: Option<ShareConfig>,
+    /// The Spaces this device shares.
+    pub shares: Vec<ShareConfig>,
+    /// The Spaces this device hosts or that name it, as last listed.
+    pub spaces: Vec<SpaceView>,
     pub paired_device: Option<PairedDevice>,
     pub devices: Vec<PairedDevice>,
     /// The network's other devices, from the network computer.
@@ -118,8 +123,10 @@ pub struct DeviceController {
     bridge_host: Option<AuthorityBridge>,
     problem: Option<String>,
     state_directory: std::path::PathBuf,
-    sharing: Option<Arc<Share>>,
+    sharing: Option<Arc<Shares>>,
     pairing: Option<Arc<crate::session::pairing::PairHost>>,
+    /// On the network computer: its owner runtime, for devices' Spaces.
+    owner: Option<crate::owner::OwnerHandle>,
     /// When this device last asked its network computer for its settings.
     settings_checked: Option<std::time::Instant>,
 }
@@ -245,6 +252,7 @@ impl DeviceController {
             state_directory: path.to_owned(),
             sharing: None,
             pairing: None,
+            owner: None,
             settings_checked: None,
         })
     }
@@ -291,7 +299,9 @@ impl DeviceController {
                 .and_then(|e| e["node_sovereign_id"].as_str())
                 .map(str::to_owned),
             sharing_enabled: self.sharing.is_some(),
-            sharing_config: self.sharing.as_ref().map(|share| share.config().clone()),
+            sharing_config: self.shares().into_iter().next(),
+            shares: self.shares(),
+            spaces: self.vault.spaces().to_vec(),
             paired_device: self.vault.paired().cloned(),
             devices: self.vault.peers().to_vec(),
             members: self.vault.members().to_vec(),
@@ -368,11 +378,17 @@ impl DeviceController {
     /// A sharing host asks for decisions through the authority client, so it
     /// reopens with the current one. Sessions must be stopped.
     fn reopen_sharing(&mut self) -> Result<()> {
-        let config = self.sharing.as_ref().map(|share| share.config().clone());
-        if config.is_some() {
-            self.configure_sharing(config)?;
+        if self.sharing.is_some() {
+            self.configure_shares(self.shares())?;
         }
         Ok(())
+    }
+    /// The Spaces this device is sharing now, with their current grants.
+    fn shares(&self) -> Vec<ShareConfig> {
+        self.sharing
+            .as_ref()
+            .map(|shares| shares.iter().map(|share| share.config()).collect())
+            .unwrap_or_default()
     }
 
     /// Accept the network computer's authenticated answer: fresh addresses for
@@ -448,49 +464,209 @@ impl DeviceController {
         self.problem = None;
         Ok(())
     }
+    /// Share exactly one folder, or none.
     pub fn configure_sharing(&mut self, config: Option<ShareConfig>) -> Result<()> {
+        self.configure_shares(config.into_iter().collect())
+    }
+    /// Share exactly these Spaces. Each keeps its own evidence and download
+    /// snapshots under its collection.
+    pub fn configure_shares(&mut self, configs: Vec<ShareConfig>) -> Result<()> {
         ensure!(
             self.endpoint.is_none(),
             "Stop the session before changing sharing"
         );
-        if let Some(config) = config {
-            ensure!(
-                self.vault.edge().is_some(),
-                "Enroll this profile with a sharing invitation before sharing"
-            );
-            self.sharing = None;
-            self.sharing = Some(Arc::new(Share::open(
-                config,
-                match &self.bridge_client {
-                    Some(client) => crate::authority::AuthorityAccess::Remote(client.clone()),
-                    None => self
-                        .authority
-                        .as_ref()
-                        .context("Missing local authority")?
-                        .clone()
-                        .into(),
-                },
-                self.vault.pin().clone(),
-                &self.state_directory.join("sharing"),
-            )?));
-        } else {
-            self.sharing = None;
+        self.sharing = None;
+        if configs.is_empty() {
+            return Ok(());
         }
+        ensure!(
+            self.vault.edge().is_some(),
+            "Enroll this profile with a sharing invitation before sharing"
+        );
+        let authority = match &self.bridge_client {
+            Some(client) => crate::authority::AuthorityAccess::Remote(client.clone()),
+            None => self
+                .authority
+                .as_ref()
+                .context("Missing local authority")?
+                .clone()
+                .into(),
+        };
+        let mut shares = Vec::new();
+        for config in configs {
+            let state = self
+                .state_directory
+                .join("sharing")
+                .join(&config.collection_id);
+            shares.push(Arc::new(Share::open(
+                config,
+                authority.clone(),
+                self.vault.pin().clone(),
+                &state,
+            )?));
+        }
+        self.sharing = Some(Arc::new(Shares::new(shares)?));
         Ok(())
     }
     pub fn save_managed_share(&mut self, config: Option<ShareConfig>) -> Result<()> {
+        self.save_managed_shares(config.into_iter().collect())
+    }
+    pub fn save_managed_shares(&mut self, configs: Vec<ShareConfig>) -> Result<()> {
         ensure!(self.vault.consumer_mode(), "Use guided setup first");
-        self.configure_sharing(config.clone())?;
-        self.vault.save_share(config)
+        self.configure_shares(configs.clone())?;
+        self.vault.save_shares(configs)
     }
     pub fn restore_managed_share(&mut self) -> Result<()> {
         if self.vault.consumer_mode()
             && self.sharing.is_none()
-            && let Some(config) = self.vault.saved_share().cloned()
+            && !self.vault.saved_shares().is_empty()
         {
-            self.configure_sharing(Some(config))?;
+            self.configure_shares(self.vault.saved_shares().to_vec())?;
         }
         Ok(())
+    }
+    /// Share this Space, or replace the one with its collection, saving it.
+    /// Running connections reopen with the new set.
+    pub async fn set_space(&mut self, config: ShareConfig) -> Result<()> {
+        let mut configs: Vec<_> = self
+            .vault
+            .saved_shares()
+            .iter()
+            .filter(|share| share.collection_id != config.collection_id)
+            .cloned()
+            .collect();
+        configs.push(config);
+        self.replace_shares(configs).await
+    }
+    /// Stop sharing one Space on this device.
+    pub async fn drop_space(&mut self, collection: &str) -> Result<()> {
+        let configs: Vec<_> = self
+            .vault
+            .saved_shares()
+            .iter()
+            .filter(|share| share.collection_id != collection)
+            .cloned()
+            .collect();
+        self.replace_shares(configs).await
+    }
+    /// Save and serve exactly these Spaces. Reopening connections needs the
+    /// network computer; when it cannot be reached, the change still holds and
+    /// the problem shows until the next refresh reconnects.
+    async fn replace_shares(&mut self, configs: Vec<ShareConfig>) -> Result<()> {
+        self.stop().await;
+        let changed = self.save_managed_shares(configs);
+        // A failed start records its problem and is retried by maintenance.
+        let _ = self.reconnect_saved().await;
+        changed
+    }
+    /// On the network computer: answer devices' Space requests with this
+    /// owner runtime.
+    pub fn serve_owner(&mut self, owner: crate::owner::OwnerHandle) {
+        if let Some(host) = &self.bridge_host {
+            host.serve_owner(owner.clone());
+        }
+        self.owner = Some(owner);
+    }
+    /// Ask the network computer for a Space on `directory`, shared with
+    /// `recipients`, then share it. `collection` changes an existing Space.
+    pub async fn share_space(
+        &mut self,
+        collection: Option<String>,
+        directory: std::path::PathBuf,
+        name: String,
+        recipients: Vec<String>,
+    ) -> Result<ShareConfig> {
+        let client = self
+            .bridge_client
+            .clone()
+            .context("Share folders on your network computer from its own screen")?;
+        let identity = self
+            .device
+            .as_ref()
+            .context("Join your network first")?
+            .session_identity()?;
+        let trust = client.refresh(&mut self.trust).await?;
+        let collection = collection.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let view = client
+            .share_space(identity, trust, collection, name, recipients)
+            .await?;
+        let config = Self::space_config(view, directory)?;
+        self.set_space(config.clone()).await?;
+        Ok(config)
+    }
+    /// The saved form of one of this device's Spaces.
+    pub fn space_config(view: SpaceView, directory: std::path::PathBuf) -> Result<ShareConfig> {
+        let grant = view.grant.context("Missing shared folder grant")?;
+        Ok(ShareConfig {
+            collection_id: view.collection,
+            directory,
+            attestation_id: grant.attestation_id,
+            policy_id: grant.policy_id,
+            name: view.name,
+            recipients: grant.recipients,
+        })
+    }
+    /// Stop one of this device's Spaces here, then ask the network computer
+    /// to forget it. Returns whether it confirmed; if it could not be reached,
+    /// it is asked again at a later refresh, and nothing is served meanwhile.
+    pub async fn unshare_space(&mut self, collection: &str) -> Result<bool> {
+        ensure!(
+            self.vault
+                .saved_shares()
+                .iter()
+                .any(|share| share.collection_id == collection),
+            "Only the device sharing a folder can stop sharing it"
+        );
+        self.drop_space(collection).await?;
+        let (Some(client), Some(device)) = (self.bridge_client.clone(), self.device.as_ref())
+        else {
+            return Ok(true);
+        };
+        let identity = device.session_identity()?;
+        let confirmed = async {
+            let trust = client.refresh(&mut self.trust).await?;
+            client
+                .unshare_space(identity, trust, collection.to_owned())
+                .await
+        }
+        .await;
+        Ok(confirmed.is_ok())
+    }
+    /// Take the network computer's list of Spaces for this device: keep it for
+    /// display, and use renewed grants for the Spaces this device shares.
+    /// Returns this device's Spaces the computer lists but this device no
+    /// longer shares.
+    pub fn apply_spaces(&mut self, views: Vec<SpaceView>) -> Result<Vec<String>> {
+        let own = self.status()?.node_public_key;
+        let mut saved = self.vault.saved_shares().to_vec();
+        let mut renewed = false;
+        let mut stale = Vec::new();
+        for view in views.iter().filter(|view| view.host == own) {
+            let Some(grant) = &view.grant else { continue };
+            let Some(config) = saved
+                .iter_mut()
+                .find(|share| share.collection_id == view.collection)
+            else {
+                stale.push(view.collection.clone());
+                continue;
+            };
+            if config.attestation_id != grant.attestation_id {
+                if let Some(share) = self
+                    .sharing
+                    .as_ref()
+                    .and_then(|shares| shares.iter().find(|s| s.collection_id() == view.collection))
+                {
+                    share.renew(&grant.attestation_id)?;
+                }
+                config.attestation_id = grant.attestation_id.clone();
+                renewed = true;
+            }
+        }
+        if renewed {
+            self.vault.save_shares(saved)?;
+        }
+        self.vault.save_spaces(views)?;
+        Ok(stale)
     }
     pub async fn create_pairing(
         &mut self,
@@ -664,7 +840,34 @@ impl DeviceController {
                 outcome?;
             }
         }
-        self.follow_members(identity, trust).await
+        self.follow_members(identity.clone(), trust.clone()).await?;
+        self.follow_spaces(identity, trust).await
+    }
+
+    /// Learn the Spaces shared with this device, pick up renewed grants for
+    /// its own, and finish stopping any the network computer still lists.
+    /// Like the member list, this never affects trust.
+    async fn follow_spaces(
+        &mut self,
+        identity: crate::session::SessionIdentity,
+        trust: crate::session::TrustSnapshot,
+    ) -> Result<()> {
+        let Some(client) = self.bridge_client.clone() else {
+            return Ok(());
+        };
+        let Ok(views) = client.spaces(identity.clone(), trust.clone()).await else {
+            return Ok(());
+        };
+        // A profile at its size limit keeps the last list.
+        let Ok(stale) = self.apply_spaces(views) else {
+            return Ok(());
+        };
+        for collection in stale {
+            let _ = client
+                .unshare_space(identity.clone(), trust.clone(), collection)
+                .await;
+        }
+        Ok(())
     }
 
     /// Learn the network's other devices from the network computer, telling it
@@ -812,6 +1015,9 @@ impl DeviceController {
             // Devices asking before this would get no list, never an empty one.
             if let Some(host) = &bridge_host {
                 host.publish_members(self.vault.peers().to_vec());
+                if let Some(owner) = &self.owner {
+                    host.serve_owner(owner.clone());
+                }
             }
             let endpoint = Arc::new(
                 SessionEndpoint::bind_with_transport(
@@ -1191,6 +1397,83 @@ mod tests {
         drop(device);
         let reopened = DeviceController::open(&path)?;
         assert_eq!(reopened.status()?.members, members);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires a native OS credential store; Linux runner uses an isolated Secret Service"]
+    fn listed_spaces_renew_this_devices_grants_and_name_the_ones_it_stopped() -> Result<()> {
+        use crate::session::bridge::SpaceGrant;
+        let dir = tempfile::tempdir()?;
+        let pin = TrustPin {
+            network_name: "disposable-space-test".into(),
+            root_public_key: STANDARD.encode([4; 32]),
+        };
+        let mut device = DeviceController::prepare_remote(&dir.path().join("device"), pin)?;
+        let own = device.status()?.node_public_key;
+        let phone = STANDARD.encode([5; 32]);
+        let (kept, stopped, theirs) = (
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+        );
+        let config = ShareConfig {
+            collection_id: kept.clone(),
+            directory: dir.path().join("photos"),
+            attestation_id: uuid::Uuid::new_v4().to_string(),
+            policy_id: format!("connect-{kept}"),
+            name: "Photos".into(),
+            recipients: vec![phone.clone()],
+        };
+        device.vault.save_shares(vec![config.clone()])?;
+        let grant = |collection: &str, attestation: String| SpaceGrant {
+            policy_id: format!("connect-{collection}"),
+            attestation_id: attestation,
+            recipients: vec![phone.clone()],
+            valid_until: "2027-01-01T00:00:00+00:00".into(),
+        };
+        let renewed = uuid::Uuid::new_v4().to_string();
+        let views = vec![
+            SpaceView {
+                collection: kept.clone(),
+                name: "Photos".into(),
+                host: own.clone(),
+                grant: Some(grant(&kept, renewed.clone())),
+            },
+            SpaceView {
+                collection: stopped.clone(),
+                name: "Old folder".into(),
+                host: own.clone(),
+                grant: Some(grant(&stopped, uuid::Uuid::new_v4().to_string())),
+            },
+            SpaceView {
+                collection: theirs.clone(),
+                name: "Recipes".into(),
+                host: phone.clone(),
+                grant: None,
+            },
+        ];
+        assert_eq!(device.apply_spaces(views.clone())?, vec![stopped.clone()]);
+        assert_eq!(
+            device.vault.saved_shares()[0].attestation_id,
+            renewed,
+            "A renewed grant is saved with the Space"
+        );
+        assert_eq!(
+            device.vault.saved_shares()[0].recipients,
+            config.recipients,
+            "Only its host changes a Space's devices"
+        );
+        let listed = device.status()?.spaces;
+        assert_eq!(listed.len(), 3);
+        assert!(
+            listed.iter().all(|s| s.grant.is_none()),
+            "Grants stay with the shares"
+        );
+        assert!(
+            !device.vault.save_spaces(views)?,
+            "An unchanged list writes nothing"
+        );
         Ok(())
     }
 

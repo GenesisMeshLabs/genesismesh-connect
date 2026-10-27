@@ -68,6 +68,93 @@ enum Operation {
     Attestation,
     Settings,
     Members,
+    Spaces,
+    ShareSpace,
+    UnshareSpace,
+}
+
+/// A Space as a device learns it from its network computer: another device's
+/// with its name and host only; its own with the grant it shares under.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SpaceView {
+    pub collection: String,
+    pub name: String,
+    pub host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<SpaceGrant>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SpaceGrant {
+    pub policy_id: String,
+    pub attestation_id: String,
+    pub recipients: Vec<String>,
+    pub valid_until: String,
+}
+impl SpaceView {
+    /// What `node` may learn about `space`: nothing unless it hosts the Space
+    /// or the Space names it.
+    pub fn of(space: crate::owner::Space, node: &str) -> Option<Self> {
+        let own = space.host == node;
+        if !own && !space.recipients.iter().any(|r| r == node) {
+            return None;
+        }
+        Some(Self {
+            grant: own.then_some(SpaceGrant {
+                policy_id: space.policy_id,
+                attestation_id: space.attestation_id,
+                recipients: space.recipients,
+                valid_until: space.valid_until,
+            }),
+            collection: space.collection,
+            name: space.name,
+            host: space.host,
+        })
+    }
+    pub(crate) fn check(&self) -> Result<()> {
+        uuid::Uuid::parse_str(&self.collection)?;
+        let key = |node: &str| {
+            use base64::{Engine as _, engine::general_purpose::STANDARD};
+            STANDARD.decode(node).is_ok_and(|k| k.len() == 32)
+        };
+        ensure!(
+            !self.name.trim().is_empty()
+                && self.name.chars().count() <= 64
+                && !self.name.chars().any(char::is_control)
+                && key(&self.host),
+            "Invalid shared folder"
+        );
+        if let Some(grant) = &self.grant {
+            uuid::Uuid::parse_str(&grant.attestation_id)?;
+            ensure!(
+                grant.policy_id == format!("connect-{}", self.collection)
+                    && (1..=31).contains(&grant.recipients.len())
+                    && grant.recipients.iter().all(|r| key(r))
+                    && grant.valid_until.len() <= 64,
+                "Invalid shared folder grant"
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ShareSpaceRequest {
+    collection: String,
+    name: String,
+    recipients: Vec<String>,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct UnshareSpaceRequest {
+    collection: String,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SpacesAnswer {
+    spaces: Vec<SpaceView>,
 }
 
 /// The longest session address a member list carries. Real addresses are a

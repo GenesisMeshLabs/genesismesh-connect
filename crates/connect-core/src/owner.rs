@@ -37,6 +37,47 @@ impl Drop for OwnerBackup {
     }
 }
 
+/// One device's folder shared with chosen devices, as the network computer's
+/// registry keeps it. The authority holds its policy and the host's attestation.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Space {
+    pub collection: String,
+    pub name: String,
+    pub host: String,
+    pub subject: String,
+    pub recipients: Vec<String>,
+    pub created_at: String,
+    pub policy_id: String,
+    pub policy_version: u64,
+    pub attestation_id: String,
+    pub valid_until: String,
+}
+
+/// What the network computer's authority bridge asks of the owner runtime on
+/// a device's behalf. The host is always the authenticated device.
+#[derive(Debug)]
+pub enum OwnerCall {
+    Share {
+        host: String,
+        collection: String,
+        name: String,
+        recipients: Vec<String>,
+    },
+    Remove {
+        host: String,
+        collection: String,
+    },
+    List,
+}
+pub struct OwnerRequest {
+    pub call: OwnerCall,
+    pub reply: tokio::sync::oneshot::Sender<Result<Value>>,
+}
+/// The bridge's way to the owner runtime: whoever holds the runtime (the app
+/// or the node) answers each request in turn.
+pub type OwnerHandle = tokio::sync::mpsc::Sender<OwnerRequest>;
+
 /// Copying a large authority database takes longer than ordinary operations.
 const RECOVERY_LIMIT: Duration = Duration::from_secs(600);
 
@@ -261,6 +302,60 @@ impl OwnerRuntime {
             .filter(|s| !s.is_empty() && s.len() <= 512)
             .map(str::to_owned)
             .context("The network did not provide an invitation")
+    }
+    /// Create a Space, or change its name and devices; only its host may.
+    /// `subject` is for a desktop enrolled before devices had their own.
+    pub fn space_share(
+        &mut self,
+        host: &str,
+        collection: &str,
+        name: &str,
+        recipients: &[String],
+        subject: Option<&str>,
+    ) -> Result<Space> {
+        let mut request = json!({"op":"space_share","host":host,"collection":collection,"name":name,"recipients":recipients});
+        if let Some(subject) = subject {
+            request["subject"] = json!(subject);
+        }
+        Ok(serde_json::from_value(self.request(request)?)?)
+    }
+    /// Stop a Space: its policy is deactivated. False if it did not exist.
+    pub fn space_remove(&mut self, host: &str, collection: &str) -> Result<bool> {
+        Ok(serde_json::from_value(self.request(
+            json!({"op":"space_remove","host":host,"collection":collection}),
+        )?)?)
+    }
+    pub fn space_list(&mut self) -> Result<Vec<Space>> {
+        Ok(serde_json::from_value(
+            self.request(json!({"op":"space_list"}))?,
+        )?)
+    }
+    /// Renew the Spaces whose policy ends within 30 days; returns them.
+    pub fn space_renew(&mut self) -> Result<Vec<String>> {
+        Ok(serde_json::from_value(
+            self.request(json!({"op":"space_renew"}))?,
+        )?)
+    }
+    /// Answer one bridge request.
+    pub fn answer(&mut self, call: OwnerCall) -> Result<Value> {
+        Ok(match call {
+            OwnerCall::Share {
+                host,
+                collection,
+                name,
+                recipients,
+            } => serde_json::to_value(self.space_share(
+                &host,
+                &collection,
+                &name,
+                &recipients,
+                None,
+            )?)?,
+            OwnerCall::Remove { host, collection } => {
+                json!(self.space_remove(&host, &collection)?)
+            }
+            OwnerCall::List => serde_json::to_value(self.space_list()?)?,
+        })
     }
     pub fn share(&mut self, host: &str, peer: &str, collection: &str) -> Result<Value> {
         self.request(json!({"op":"share","host":host,"peer":peer,"collection":collection}))

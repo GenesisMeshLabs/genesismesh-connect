@@ -143,6 +143,73 @@ impl BridgeAuthority {
         Ok(answer.members)
     }
 
+    /// The Spaces this device hosts or that name it.
+    pub async fn spaces(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+    ) -> Result<Vec<super::SpaceView>> {
+        let value = self
+            .authenticated(identity, trust, Operation::Spaces, &serde_json::json!({}))
+            .await?;
+        let answer: super::SpacesAnswer = serde_json::from_value(value)?;
+        ensure!(answer.spaces.len() <= 64, "Too many shared folders");
+        for space in &answer.spaces {
+            space.check()?;
+        }
+        Ok(answer.spaces)
+    }
+
+    /// Ask the network computer for a Space on one of this device's folders,
+    /// or to change its name and devices.
+    pub async fn share_space(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+        collection: String,
+        name: String,
+        recipients: Vec<String>,
+    ) -> Result<super::SpaceView> {
+        let node = identity.public_key();
+        let value = self
+            .authenticated(
+                identity,
+                trust,
+                Operation::ShareSpace,
+                &serde_json::to_value(super::ShareSpaceRequest {
+                    collection: collection.clone(),
+                    name,
+                    recipients,
+                })?,
+            )
+            .await?;
+        let space: super::SpaceView = serde_json::from_value(value)?;
+        space.check()?;
+        ensure!(
+            space.collection == collection && space.host == node && space.grant.is_some(),
+            "The network computer answered for another folder"
+        );
+        Ok(space)
+    }
+
+    /// Stop one of this device's Spaces. False if the computer had none.
+    pub async fn unshare_space(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+        collection: String,
+    ) -> Result<bool> {
+        let value = self
+            .authenticated(
+                identity,
+                trust,
+                Operation::UnshareSpace,
+                &serde_json::to_value(super::UnshareSpaceRequest { collection })?,
+            )
+            .await?;
+        Ok(serde_json::from_value(value)?)
+    }
+
     /// Public, signed documents solve trust bootstrap after suspension. The
     /// locally pinned store verifies them before any credential is used.
     pub async fn refresh(&self, store: &mut TrustStore) -> Result<TrustSnapshot> {

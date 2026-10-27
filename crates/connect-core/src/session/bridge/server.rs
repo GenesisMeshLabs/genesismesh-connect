@@ -24,6 +24,8 @@ struct Published {
     /// Session addresses members reported for their own paired endpoint, until
     /// the network computer saves them.
     reported: Mutex<std::collections::BTreeMap<String, String>>,
+    /// The owner runtime, where this computer runs one.
+    owner: Mutex<Option<crate::owner::OwnerHandle>>,
 }
 
 impl AuthorityBridge {
@@ -99,6 +101,7 @@ impl AuthorityBridge {
             session_ticket: Mutex::new(None),
             members: Mutex::new(None),
             reported: Mutex::new(Default::default()),
+            owner: Mutex::new(None),
         });
         let task = tokio::spawn(accept(
             endpoint.clone(),
@@ -137,6 +140,14 @@ impl AuthorityBridge {
             .members
             .lock()
             .expect("bridge publication mutex poisoned") = Some(members);
+    }
+    /// Answer devices' Space requests through this owner runtime.
+    pub fn serve_owner(&self, owner: crate::owner::OwnerHandle) {
+        *self
+            .published
+            .owner
+            .lock()
+            .expect("bridge publication mutex poisoned") = Some(owner);
     }
     /// Session addresses members reported since the last call, by node.
     pub fn take_reported(&self) -> std::collections::BTreeMap<String, String> {
@@ -301,6 +312,8 @@ struct Budgets {
     enrollments: Mutex<Budget>,
     settings: Mutex<Budget>,
     members: Mutex<Budget>,
+    spaces: Mutex<Budget>,
+    space_changes: Mutex<Budget>,
 }
 async fn exchange(
     connection: &Connection,
@@ -345,7 +358,10 @@ async fn exchange(
         | Operation::Evaluate
         | Operation::Attestation
         | Operation::Settings
-        | Operation::Members => {
+        | Operation::Members
+        | Operation::Spaces
+        | Operation::ShareSpace
+        | Operation::UnshareSpace => {
             let peer = authenticate_for(
                 connection,
                 local_id,
@@ -374,6 +390,8 @@ async fn exchange(
                     Operation::Renew => &budgets.renewals,
                     Operation::Settings => &budgets.settings,
                     Operation::Members => &budgets.members,
+                    Operation::Spaces => &budgets.spaces,
+                    Operation::ShareSpace | Operation::UnshareSpace => &budgets.space_changes,
                     _ => &budgets.collections,
                 })
                 .lock()
@@ -439,6 +457,19 @@ async fn exchange(
                         .certificate(&peer, &credentials.expected_node, Utc::now())?;
                     members(signed, &credentials.expected_node, published)
                 }
+                Operation::Spaces | Operation::ShareSpace | Operation::UnshareSpace => {
+                    credentials
+                        .trust
+                        .certificate(&peer, &credentials.expected_node, Utc::now())?;
+                    spaces(
+                        request.operation,
+                        signed,
+                        &credentials.expected_node,
+                        &credentials.identity.public_key(),
+                        published,
+                    )
+                    .await
+                }
                 Operation::Trust => unreachable!(),
             }
         }
@@ -490,6 +521,107 @@ fn members(request: Value, node: &str, published: &Published) -> Result<Value> {
             })
             .collect(),
     })?)
+}
+
+/// One request to the owner runtime, answered by whoever holds it.
+async fn ask(owner: &crate::owner::OwnerHandle, call: crate::owner::OwnerCall) -> Result<Value> {
+    let (reply, answer) = tokio::sync::oneshot::channel();
+    owner
+        .send(crate::owner::OwnerRequest { call, reply })
+        .await
+        .map_err(|_| anyhow::anyhow!("The owner runtime stopped"))?;
+    timeout(Duration::from_secs(10), answer)
+        .await
+        .context("The owner runtime did not answer")?
+        .context("The owner runtime stopped")?
+}
+
+/// One Space operation for an authenticated, saved device, through the owner
+/// runtime. The device can only act as the host of its own Spaces, share
+/// with devices this computer saved (or this computer), and see the Spaces
+/// that it hosts or that name it.
+async fn spaces(
+    operation: Operation,
+    request: Value,
+    node: &str,
+    computer: &str,
+    published: &Published,
+) -> Result<Value> {
+    let owner = published
+        .owner
+        .lock()
+        .expect("bridge publication mutex poisoned")
+        .clone()
+        .context("This network computer does not share folders for devices")?;
+    let saved: Vec<String> = published
+        .members
+        .lock()
+        .expect("bridge publication mutex poisoned")
+        .as_ref()
+        .context("The device list is not ready")?
+        .iter()
+        .map(|m| m.node.clone())
+        .collect();
+    ensure!(
+        saved.iter().any(|n| n == node),
+        "Only saved devices share folders"
+    );
+    match operation {
+        Operation::Spaces => {
+            ensure!(
+                request.as_object().is_some_and(|o| o.is_empty()),
+                "Unsupported spaces fields"
+            );
+            let list: Vec<crate::owner::Space> =
+                serde_json::from_value(ask(&owner, crate::owner::OwnerCall::List).await?)?;
+            Ok(serde_json::to_value(SpacesAnswer {
+                spaces: list
+                    .into_iter()
+                    .filter_map(|space| SpaceView::of(space, node))
+                    .collect(),
+            })?)
+        }
+        Operation::ShareSpace => {
+            let request: ShareSpaceRequest = serde_json::from_value(request)?;
+            uuid::Uuid::parse_str(&request.collection)?;
+            ensure!(
+                !request.recipients.is_empty()
+                    && request.recipients.len() <= 31
+                    && request
+                        .recipients
+                        .iter()
+                        .all(|r| r != node && (r == computer || saved.contains(r))),
+                "Share only with devices of this network"
+            );
+            let space: crate::owner::Space = serde_json::from_value(
+                ask(
+                    &owner,
+                    crate::owner::OwnerCall::Share {
+                        host: node.to_owned(),
+                        collection: request.collection,
+                        name: request.name,
+                        recipients: request.recipients,
+                    },
+                )
+                .await?,
+            )?;
+            Ok(serde_json::to_value(
+                SpaceView::of(space, node).context("Unexpected shared folder")?,
+            )?)
+        }
+        Operation::UnshareSpace => {
+            let request: UnshareSpaceRequest = serde_json::from_value(request)?;
+            ask(
+                &owner,
+                crate::owner::OwnerCall::Remove {
+                    host: node.to_owned(),
+                    collection: request.collection,
+                },
+            )
+            .await
+        }
+        _ => anyhow::bail!("Unsupported spaces operation"),
+    }
 }
 
 pub(super) fn check_collection_decision(
@@ -608,6 +740,9 @@ async fn accept(
         // Each device asks once per trust refresh (every 30 seconds).
         settings: Mutex::new(Budget::new(120)),
         members: Mutex::new(Budget::new(120)),
+        // Each device asks once per refresh; changes come from people.
+        spaces: Mutex::new(Budget::new(120)),
+        space_changes: Mutex::new(Budget::new(16)),
     });
     loop {
         tokio::select! {

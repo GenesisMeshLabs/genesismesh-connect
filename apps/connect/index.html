@@ -177,22 +177,11 @@
                 Add a device
               </button>
             </div>
-            <section id="shared-folder" class="home-card" hidden>
-              <div class="folder-heading">
-                <span class="folder-symbol" aria-hidden="true">▤</span>
-                <div>
-                  <h2 id="shared-name"></h2>
-                  <p>Read-only access for <span id="shared-peer"></span></p>
-                </div>
-              </div>
-              <p class="home-muted">
-                Includes subfolders. Files up to 1 GB.
-              </p>
-              <button id="stop-share-button" class="text-button">
-                Stop sharing this folder
-              </button>
-            </section>
+            <div id="space-list" class="space-list" role="list"></div>
             <section id="remote-folder" class="home-card" hidden>
+              <button id="all-spaces" class="text-button" hidden>
+                ← All shared folders
+              </button>
               <div class="folder-heading">
                 <span class="folder-symbol" aria-hidden="true">▤</span>
                 <div>

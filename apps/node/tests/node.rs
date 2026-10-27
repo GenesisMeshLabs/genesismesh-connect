@@ -33,6 +33,22 @@ fn sealed(root: &Path, name: &str) -> Result<(PathBuf, PathBuf)> {
     Ok((root.join(format!("{name}-store")), credentials))
 }
 
+/// Devices in this test process keep their secrets in one sealed store; a
+/// process chooses its store once.
+fn devices_sealed() {
+    static STORE: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    STORE.get_or_init(|| {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let (store, credentials) = sealed(root.path(), "devices").expect("sealed store");
+        connect_core::device::use_sealed_store(
+            store,
+            &credentials.join(connect_core::device::MASTER_KEY_CREDENTIAL),
+        )
+        .expect("sealed store");
+        root
+    });
+}
+
 struct Server {
     state: PathBuf,
     store: PathBuf,
@@ -92,11 +108,7 @@ fn stop(mut child: Child) -> Result<()> {
 #[ignore = "Requires the packaged, standalone owner runtime"]
 fn a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let (phone_store, phone_credentials) = sealed(directory.path(), "phone")?;
-    connect_core::device::use_sealed_store(
-        phone_store,
-        &phone_credentials.join(connect_core::device::MASTER_KEY_CREDENTIAL),
-    )?;
+    devices_sealed();
     let (store, credentials) = sealed(directory.path(), "server")?;
     let server = Server {
         state: directory.path().join("server"),
@@ -211,6 +223,254 @@ fn a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart() -> Result
         assert_eq!(status["devices"], json!(["Test phone"]));
         Ok::<_, anyhow::Error>(())
     })();
+    runtime.block_on(phone.stop());
+    stop(child)?;
+    outcome
+}
+
+/// A random version 4 UUID for a request.
+fn request_id() -> Result<String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    ))
+}
+
+/// Pair a device with the running server the way the app does.
+fn join(
+    server: &Server,
+    runtime: &tokio::runtime::Runtime,
+    profile: &Path,
+    name: &str,
+) -> Result<DeviceController> {
+    let begun = server.control(json!({"op":"pair_begin","name":"Home server"}))?;
+    let card = PairCard::parse(begun["link"].as_str().context("Missing link")?)?;
+    let mut device = DeviceController::prepare_remote(profile, card.pin.clone())?;
+    let mut joining = runtime.block_on(device.request_pairing(card.clone(), name.into()))?;
+    let pending = server.control(json!({"op":"pair_pending"}))?;
+    let id = pending["id"]
+        .as_str()
+        .context("Missing request")?
+        .to_owned();
+    let (joined, approval) = std::thread::scope(|scope| {
+        let approval = scope.spawn(|| server.control(json!({"op":"pair_approve","id":id})));
+        let joined = runtime.block_on(async {
+            let grant = joining.grant().await?;
+            device.use_bridge(grant.route).await?;
+            device.enroll_host(&grant.invitation).await?;
+            device.start(&card.host_node).await?;
+            device
+                .send(&grant.session_ticket, "Device verifies server")
+                .await?;
+            let ticket = device.status()?.ticket.context("Missing device address")?;
+            device.remember_pairing(PairedDevice {
+                name: card.host_name.clone(),
+                node: card.host_node.clone(),
+                ticket: grant.session_ticket,
+            })?;
+            joining.finish(ticket).await?;
+            joining.close().await;
+            Ok::<_, anyhow::Error>(())
+        });
+        (joined, approval.join().expect("approval thread"))
+    });
+    joined?;
+    approval?;
+    Ok(device)
+}
+
+#[test]
+#[ignore = "Requires the packaged, standalone owner runtime"]
+fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
+    use connect_core::session::sharing::ReadRequest;
+    let directory = tempfile::tempdir()?;
+    devices_sealed();
+    let (store, credentials) = sealed(directory.path(), "server")?;
+    let server = Server {
+        state: directory.path().join("server"),
+        store,
+        credentials,
+    };
+    let init = server.command(&["init", "--name", "Home"])?.output()?;
+    ensure!(
+        init.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let runtime = tokio::runtime::Runtime::new()?;
+    let child = server.run()?;
+    let outcome = (|| {
+        server.control(json!({"op":"connection","setting":"local_network"}))?;
+        let mut pc = join(&server, &runtime, &directory.path().join("pc"), "Home PC")?;
+        let mut phone = join(&server, &runtime, &directory.path().join("phone"), "Phone")?;
+        runtime.block_on(pc.check_network())?;
+        runtime.block_on(phone.check_network())?;
+        let pc_node = pc.status()?.node_public_key;
+        let phone_node = phone.status()?.node_public_key;
+        let server_node = phone.status()?.bridge_host_node.context("Missing server")?;
+
+        // The PC shares a folder with the phone; the server issues the Space.
+        let photos = directory.path().join("photos");
+        std::fs::create_dir(&photos)?;
+        std::fs::write(photos.join("beach.txt"), b"Sand and sea")?;
+        let shared = runtime.block_on(pc.share_space(
+            None,
+            photos.clone(),
+            "Family photos".into(),
+            vec![phone_node.clone()],
+        ))?;
+        assert_eq!(shared.name, "Family photos");
+        assert_eq!(shared.recipients, vec![phone_node.clone()]);
+        assert_eq!(pc.status()?.shares, vec![shared.clone()]);
+        // Another Space, shared only with the server: the phone never sees it.
+        let private = directory.path().join("private");
+        std::fs::create_dir(&private)?;
+        std::fs::write(private.join("diary.txt"), b"Not for the phone")?;
+        let hidden = runtime.block_on(pc.share_space(
+            None,
+            private,
+            "Private".into(),
+            vec![server_node.clone()],
+        ))?;
+        let status = server.control(json!({"op":"status"}))?;
+        let mut listed: Vec<String> = status["spaces"]
+            .as_array()
+            .context("Missing spaces")?
+            .iter()
+            .map(|s| {
+                format!(
+                    "{} on {}",
+                    s["name"].as_str().unwrap_or("?"),
+                    s["host"].as_str().unwrap_or("?")
+                )
+            })
+            .collect();
+        listed.sort();
+        assert_eq!(listed, ["Family photos on Home PC", "Private on Home PC"]);
+
+        // The phone learns only the Space that names it, and browses and
+        // reads it directly from the PC.
+        runtime.block_on(phone.check_network())?;
+        let spaces = phone.status()?.spaces;
+        assert_eq!(spaces.len(), 1);
+        assert_eq!(
+            (
+                spaces[0].name.as_str(),
+                spaces[0].host.as_str(),
+                &spaces[0].grant
+            ),
+            ("Family photos", pc_node.as_str(), &None)
+        );
+        let pc_ticket = phone
+            .status()?
+            .members
+            .into_iter()
+            .find(|m| m.node == pc_node)
+            .context("The phone does not know the PC")?
+            .ticket;
+        let session = phone.session()?;
+        let page = runtime.block_on(session.browse_from(
+            &pc_node,
+            &pc_ticket,
+            None,
+            Vec::new(),
+            Some(shared.collection_id.clone()),
+        ))?;
+        assert_eq!(page.collection_id, shared.collection_id);
+        assert_eq!(
+            page.files
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect::<Vec<_>>(),
+            ["beach.txt"]
+        );
+        let read = runtime.block_on(session.read_file_from(
+            Some(&pc_node),
+            &pc_ticket,
+            ReadRequest {
+                request_id: request_id()?,
+                collection_id: shared.collection_id.clone(),
+                file_name: "beach.txt".into(),
+                expected_sha256: None,
+            },
+        ))?;
+        assert_eq!(read.text.as_deref(), Some("Sand and sea"));
+        // An app from before Spaces names none and gets the Space shared with it.
+        let legacy =
+            runtime.block_on(session.browse_from(&pc_node, &pc_ticket, None, Vec::new(), None))?;
+        assert_eq!(legacy.collection_id, shared.collection_id);
+        // The Space that does not name the phone releases nothing to it.
+        assert!(
+            runtime
+                .block_on(session.browse_from(
+                    &pc_node,
+                    &pc_ticket,
+                    None,
+                    Vec::new(),
+                    Some(hidden.collection_id.clone()),
+                ))
+                .is_err()
+        );
+
+        // Only the PC can stop its Spaces.
+        assert!(
+            runtime
+                .block_on(phone.unshare_space(&shared.collection_id))
+                .is_err()
+        );
+        let status = server.control(json!({"op":"status"}))?;
+        assert_eq!(status["spaces"].as_array().map(Vec::len), Some(2));
+        assert!(runtime.block_on(pc.unshare_space(&shared.collection_id))?);
+        assert_eq!(pc.status()?.shares, vec![hidden.clone()]);
+        let status = server.control(json!({"op":"status"}))?;
+        assert_eq!(status["spaces"].as_array().map(Vec::len), Some(1));
+        runtime.block_on(phone.check_network())?;
+        assert!(phone.status()?.spaces.is_empty());
+        assert!(
+            runtime
+                .block_on(phone.session()?.browse_from(
+                    &pc_node,
+                    &pc_ticket,
+                    None,
+                    Vec::new(),
+                    Some(shared.collection_id.clone()),
+                ))
+                .is_err(),
+            "A stopped Space serves nothing"
+        );
+        Ok::<_, anyhow::Error>((pc, phone))
+    })();
+    stop(child)?;
+    let (mut pc, mut phone) = outcome?;
+    // With the server down, the PC still stops sharing at once; the server
+    // has not confirmed, so the PC finishes the job when it is back.
+    let hidden = pc.status()?.shares[0].collection_id.clone();
+    assert!(!runtime.block_on(pc.unshare_space(&hidden))?);
+    assert!(pc.status()?.shares.is_empty());
+    // The registry survives a restart of the server.
+    let child = server.run()?;
+    let outcome = (|| {
+        let status = server.control(json!({"op":"status"}))?;
+        assert_eq!(status["spaces"][0]["name"], "Private");
+        runtime.block_on(pc.check_network())?;
+        let status = server.control(json!({"op":"status"}))?;
+        assert_eq!(
+            status["spaces"],
+            json!([]),
+            "The PC asks the server again to forget the Space it stopped"
+        );
+        Ok::<_, anyhow::Error>(())
+    })();
+    runtime.block_on(pc.stop());
     runtime.block_on(phone.stop());
     stop(child)?;
     outcome

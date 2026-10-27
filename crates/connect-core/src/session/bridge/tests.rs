@@ -667,3 +667,141 @@ async fn settings_come_only_from_the_authenticated_host_and_name_its_endpoints()
     bridge.close().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own() -> Result<()> {
+    let f = Fixture::new();
+    let http = authority(&f).await?;
+    let bridge = host(&f, &http).await?;
+    let client = BridgeAuthority::new(route(&bridge, &f))?;
+    let ticket = |port: u16| {
+        crate::session::canonical_ticket(
+            &json!({
+                "version": 1,
+                "endpoint": EndpointAddr::new(iroh::SecretKey::generate().public())
+                    .with_ip_addr(([192, 0, 2, 20], port).into()),
+            })
+            .to_string(),
+        )
+        .unwrap()
+    };
+    let (me, tablet, stranger) = (
+        public(&f.client),
+        public(&support::key()),
+        public(&support::key()),
+    );
+    let computer = public(&f.server);
+    let collection = uuid::Uuid::new_v4().to_string();
+
+    assert!(
+        client.spaces(identity(&f), f.trust()?).await.is_err(),
+        "A computer without an owner runtime shares nothing for devices"
+    );
+    // A stand-in owner runtime that keeps the calls it receives.
+    let (owner, mut requests) = tokio::sync::mpsc::channel::<crate::owner::OwnerRequest>(8);
+    bridge.serve_owner(owner);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let log = calls.clone();
+    let space = |collection: &str, host: &str, recipients: Vec<String>| crate::owner::Space {
+        collection: collection.into(),
+        name: "Photos".into(),
+        host: host.into(),
+        subject: "connect-device-test".into(),
+        recipients,
+        created_at: "2026-10-27T00:00:00+00:00".into(),
+        policy_id: format!("connect-{collection}"),
+        policy_version: 1,
+        attestation_id: uuid::Uuid::new_v4().to_string(),
+        valid_until: "2027-01-25T00:00:00+00:00".into(),
+    };
+    let listed = vec![
+        space(&collection, &me, vec![tablet.clone()]),
+        space(&uuid::Uuid::new_v4().to_string(), &tablet, vec![me.clone()]),
+        space(
+            &uuid::Uuid::new_v4().to_string(),
+            &tablet,
+            vec![computer.clone()],
+        ),
+    ];
+    let answers = listed.clone();
+    let runtime = tokio::spawn(async move {
+        while let Some(request) = requests.recv().await {
+            let result = match &request.call {
+                crate::owner::OwnerCall::List => Ok(serde_json::to_value(&answers).unwrap()),
+                crate::owner::OwnerCall::Share {
+                    host,
+                    collection,
+                    recipients,
+                    ..
+                } => Ok(serde_json::to_value(space(collection, host, recipients.clone())).unwrap()),
+                crate::owner::OwnerCall::Remove { .. } => Ok(json!(true)),
+            };
+            log.lock().unwrap().push(format!("{:?}", request.call));
+            let _ = request.reply.send(result);
+        }
+    });
+
+    assert!(
+        client.spaces(identity(&f), f.trust()?).await.is_err(),
+        "No answer before the computer has published its devices"
+    );
+    let saved = |node: &str, port: u16| crate::device::PairedDevice {
+        name: "Device".into(),
+        node: node.into(),
+        ticket: ticket(port),
+    };
+    bridge.publish_members(vec![saved(&me, 7000), saved(&tablet, 7001)]);
+
+    let spaces = client.spaces(identity(&f), f.trust()?).await?;
+    assert_eq!(spaces.len(), 2, "Its own Space and the one naming it");
+    assert!(spaces[0].host == me && spaces[0].grant.is_some());
+    assert!(spaces[1].host == tablet && spaces[1].grant.is_none());
+
+    // The caller is always the host, and names only saved devices or the
+    // computer itself.
+    let shared = client
+        .share_space(
+            identity(&f),
+            f.trust()?,
+            collection.clone(),
+            "Photos".into(),
+            vec![tablet.clone(), computer.clone()],
+        )
+        .await?;
+    assert_eq!(shared.host, me);
+    for recipients in [vec![stranger.clone()], vec![me.clone()], vec![]] {
+        assert!(
+            client
+                .share_space(
+                    identity(&f),
+                    f.trust()?,
+                    uuid::Uuid::new_v4().to_string(),
+                    "Photos".into(),
+                    recipients,
+                )
+                .await
+                .is_err()
+        );
+    }
+    assert!(
+        client
+            .unshare_space(identity(&f), f.trust()?, collection.clone())
+            .await?
+    );
+    let calls = calls.lock().unwrap().clone();
+    assert_eq!(
+        calls.len(),
+        3,
+        "Refused requests never reach the owner: {calls:?}"
+    );
+    assert!(calls[1].contains(&format!("host: \"{me}\"")));
+    assert!(calls[2].starts_with("Remove") && calls[2].contains(&format!("host: \"{me}\"")));
+
+    // A device the computer has not saved gets nothing, even when selected.
+    bridge.publish_members(vec![saved(&tablet, 7001)]);
+    assert!(client.spaces(identity(&f), f.trust()?).await.is_err());
+    assert!(http.requests.lock().unwrap().is_empty());
+    bridge.close().await;
+    runtime.abort();
+    Ok(())
+}

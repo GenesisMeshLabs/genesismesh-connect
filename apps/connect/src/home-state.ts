@@ -13,11 +13,32 @@ export interface HomeStatus {
   selected_device: string | null;
   ready: boolean;
   sharing: string | null;
+  spaces: HomeSpace[];
+  can_share: boolean;
   joining: string | null;
   request: { id: string; name: string; node: string; code: string } | null;
   problem: string | null;
   legacy: boolean;
   connection: ConnectionStatus | null;
+}
+/** A shared folder: this device's, or another device's shared with it. */
+export interface HomeSpace {
+  id: string;
+  name: string;
+  host: string;
+  host_id: string;
+  own: boolean;
+}
+/** Where a shared folder lives, in a few words. */
+export function spaceSummary(space: HomeSpace) {
+  return space.own ? "Shared from this device · read-only" : `On ${space.host}`;
+}
+/** What the empty Files view suggests next. */
+export function filesEmptyText(status: HomeStatus) {
+  if (!status.can_share) return "Nothing is shared with this device yet.";
+  return status.devices.length
+    ? "Share a folder to make it available on your other devices."
+    : "Add a device to start sharing.";
 }
 export type Connectivity = "public_relays" | "local_network";
 export interface ConnectionStatus {

@@ -62,12 +62,8 @@ pub(in crate::session) async fn serve(
     connection: &Connection,
     local: iroh::EndpointId,
     credentials: &Credentials,
-    share: &Share,
+    shares: &Shares,
 ) -> Result<()> {
-    let _permit = share
-        .budget
-        .try_acquire()
-        .context("Another read is in progress")?;
     let (mut send, mut recv) = connection.accept_bi().await?;
     let peer = authenticate_for(
         connection,
@@ -83,7 +79,26 @@ pub(in crate::session) async fn serve(
     let selected = credentials.for_authenticated(&peer)?;
     let credentials = &selected;
     uuid::Uuid::parse_str(&request.request_id)?;
-    let prepared = match share.prepare(credentials, &peer, &request).await {
+    // An unknown Space is refused like any other denial: nothing tells the
+    // peer whether it exists.
+    let share = shares.get(&request.collection_id);
+    let _permit = match share {
+        Some(share) => Some(
+            share
+                .budget
+                .try_acquire()
+                .context("Another read is in progress")?,
+        ),
+        None => None,
+    };
+    let prepared = match async {
+        share
+            .context("Unknown shared folder")?
+            .prepare(credentials, &peer, &request)
+            .await
+    }
+    .await
+    {
         Ok(prepared) => prepared,
         Err(_) => {
             header(&mut send, &Header::Denied).await?;
@@ -92,6 +107,7 @@ pub(in crate::session) async fn serve(
             return Ok(());
         }
     };
+    let share = share.context("Unknown shared folder")?;
     header(
         &mut send,
         &Header::Allowed {

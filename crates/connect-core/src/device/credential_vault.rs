@@ -167,6 +167,8 @@ mod tests {
             auto_connect: false,
             consumer_mode: false,
             saved_share: None,
+            shares: Vec::new(),
+            spaces: Vec::new(),
             network_connectivity: Default::default(),
             own_connectivity: None,
             session_port: None,

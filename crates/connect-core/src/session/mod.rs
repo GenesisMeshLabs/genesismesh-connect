@@ -203,7 +203,7 @@ impl SessionEndpoint {
             identity,
             trust,
             expected_node,
-            share,
+            share.map(|share| Arc::new(sharing::Shares::single(share))),
             None,
             crate::Connectivity::LocalNetwork,
         )
@@ -214,7 +214,7 @@ impl SessionEndpoint {
         identity: SessionIdentity,
         trust: TrustSnapshot,
         expected_node: String,
-        share: Option<Arc<sharing::Share>>,
+        share: Option<Arc<sharing::Shares>>,
         transport: Option<crate::connectivity::Transport>,
         connectivity: crate::Connectivity,
     ) -> Result<Self> {
@@ -539,6 +539,7 @@ impl SessionEndpoint {
             request_id: uuid::Uuid::new_v4().to_string(),
             after,
             directory: Vec::new(),
+            collection_id: None,
         };
         let result = tokio::select! {biased;_=changes.changed()=>Err(anyhow::anyhow!("Trust changed during file listing")),result=timeout(Duration::from_secs(20),sharing::listing::receive(&connection,self.endpoint.id(),&credentials,&request))=>result.context("File listing timed out").and_then(|r|r)};
         connection.close(0u32.into(), b"file list complete");
@@ -576,6 +577,7 @@ impl SessionEndpoint {
             request_id: uuid::Uuid::new_v4().to_string(),
             after,
             directory: Vec::new(),
+            collection_id: None,
         };
         let result = tokio::select! { biased;
             _=changes.changed()=>Err(anyhow::anyhow!("Trust changed during file listing")),
@@ -585,12 +587,15 @@ impl SessionEndpoint {
         result
     }
 
+    /// One page of a folder in the Space `collection_id`, or, without one,
+    /// in the first Space the host shares with this device.
     pub async fn browse_from(
         &self,
         node: &str,
         ticket: &str,
         after: Option<String>,
         directory: Vec<String>,
+        collection_id: Option<String>,
     ) -> Result<sharing::browse::Page> {
         let ticket: SessionTicket = wire::decode(ticket.as_bytes())?;
         ensure!(
@@ -617,6 +622,7 @@ impl SessionEndpoint {
             request_id: uuid::Uuid::new_v4().to_string(),
             after,
             directory,
+            collection_id,
         };
         let result = tokio::select! { biased;
             _=changes.changed()=>Err(anyhow::anyhow!("Trust changed during file listing")),
@@ -703,7 +709,7 @@ async fn accept_sessions(
     endpoint: Endpoint,
     state: watch::Sender<Option<Arc<Credentials>>>,
     accepted: Arc<AtomicU64>,
-    share: Option<Arc<sharing::Share>>,
+    share: Option<Arc<sharing::Shares>>,
 ) {
     let mut tasks = JoinSet::new();
     loop {

@@ -278,17 +278,25 @@
   place-items: center;
   flex-shrink: 0;
 }
-.device-row {
+.device-row,
+.space-row {
   display: flex;
   align-items: center;
   gap: 18px;
 }
-.device-row > div {
+.device-row > div,
+.space-row > div {
   flex: 1;
 }
 .device-row h2,
-.device-row p {
+.device-row p,
+.space-row h2,
+.space-row p {
   margin: 3px 0;
+}
+.space-list {
+  display: grid;
+  gap: 12px;
 }
 .home-badge {
   font-size: 0.7rem;
@@ -474,11 +482,13 @@
   .home-page-heading p {
     margin-bottom: 8px;
   }
-  .device-row {
+  .device-row,
+  .space-row {
     flex-wrap: wrap;
     gap: 14px;
   }
-  .device-row .secondary {
+  .device-row .secondary,
+  .space-row .secondary {
     width: auto;
   }
   .home-badge {

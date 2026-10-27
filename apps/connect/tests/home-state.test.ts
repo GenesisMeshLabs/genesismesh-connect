@@ -7,6 +7,8 @@ import {
   folderCrumbs,
   friendlyProblem,
   connectionSummary,
+  spaceSummary,
+  filesEmptyText,
   type HomeStatus,
 } from "../src/home-state.ts";
 const blank: HomeStatus = {
@@ -18,12 +20,23 @@ const blank: HomeStatus = {
   selected_device: null,
   ready: false,
   sharing: null,
+  spaces: [],
+  can_share: false,
   joining: null,
   request: null,
   problem: null,
   legacy: false,
   connection: null,
 };
+test("shared folders say where they live and what to do when there are none", () => {
+  const space = { id: "1", name: "Photos", host: "Home PC", host_id: "a", own: false };
+  assert.equal(spaceSummary(space), "On Home PC");
+  assert.match(spaceSummary({ ...space, own: true }), /this device/);
+  assert.match(filesEmptyText(blank), /Nothing is shared/);
+  assert.match(filesEmptyText({ ...blank, can_share: true }), /Add a device/);
+  const device = { id: "b", name: "Phone", selected: true, authority_connection: false, member: false };
+  assert.match(filesEmptyText({ ...blank, can_share: true, devices: [device] }), /Share a folder/);
+});
 test("approval remains visible while a certificate is being installed", () => {
   assert.equal(primaryScreen(blank), "welcome");
   assert.equal(primaryScreen({ ...blank, configured: true }), "workspace");

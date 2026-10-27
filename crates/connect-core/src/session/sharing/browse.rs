@@ -30,7 +30,12 @@ pub(in crate::session) fn validate(
     storage::directory(&page.directory)?;
     storage::name(&page.collection_id)?;
     ensure!(
-        page.directory == request.directory && page.files.len() <= 32,
+        page.directory == request.directory
+            && page.files.len() <= 32
+            && request
+                .collection_id
+                .as_ref()
+                .is_none_or(|id| id == &page.collection_id),
         "Wrong folder response"
     );
     let mut previous = request.after.as_deref();

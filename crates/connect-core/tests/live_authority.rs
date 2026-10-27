@@ -304,6 +304,7 @@ async fn authorized_file_pages_bind_versions_and_release_no_names_after_denial()
         collection_id: "family".into(),
         policy_id: "connect-read".into(),
         attestation_id: policy["attestation_id"].as_str().unwrap().into(),
+        ..Default::default()
     };
     let share = Arc::new(Share::open(
         config,
@@ -340,6 +341,7 @@ async fn authorized_file_pages_bind_versions_and_release_no_names_after_denial()
             collection_id: "family".into(),
             policy_id: "connect-read".into(),
             attestation_id: policy["attestation_id"].as_str().unwrap().into(),
+            ..Default::default()
         },
         authority.clone(),
         pin,
@@ -461,6 +463,7 @@ async fn remote_sharing_host_uses_bridge_for_governed_files_without_local_author
             collection_id: "family".into(),
             policy_id: "connect-read".into(),
             attestation_id: policy["attestation_id"].as_str().unwrap().into(),
+            ..Default::default()
         },
         AuthorityAccess::Remote(remote.clone()),
         pin,
@@ -496,7 +499,13 @@ async fn remote_sharing_host_uses_bridge_for_governed_files_without_local_author
         .await?;
     assert_eq!(report.text.as_deref(), Some("Shared from a remote device"));
     let nested = reader_endpoint
-        .browse_from(&host.public_key(), &ticket, None, vec!["Photos".into()])
+        .browse_from(
+            &host.public_key(),
+            &ticket,
+            None,
+            vec!["Photos".into()],
+            None,
+        )
         .await?;
     assert_eq!(nested.files[0].name, "image.txt");
     let file = &nested.files[0];
@@ -591,6 +600,7 @@ async fn protected_read_binds_snapshot_and_peer_and_refuses_policy_revocation_an
             directory: root.clone(),
             attestation_id: policy["attestation_id"].as_str().unwrap().into(),
             policy_id: "connect-read".into(),
+            ..Default::default()
         },
         authority.clone(),
         pin,
@@ -803,6 +813,7 @@ async fn windows_sharing_host_persists_its_role_but_reopens_with_sharing_disable
         directory: collection,
         attestation_id: policy["attestation_id"].as_str().unwrap().into(),
         policy_id: "connect-read".into(),
+        ..Default::default()
     }))?;
     assert!(host.status()?.sharing_enabled);
     let displayed = host.status()?.sharing_config.unwrap();
@@ -1426,6 +1437,7 @@ async fn large_downloads_keep_full_size_policy_and_verify_windows() -> Result<()
             collection_id: "family".into(),
             policy_id: "connect-read".into(),
             attestation_id: policy["attestation_id"].as_str().unwrap().into(),
+            ..Default::default()
         },
         authority.clone(),
         pin,
@@ -1619,6 +1631,7 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
             collection_id: "family".into(),
             policy_id: "connect-read".into(),
             attestation_id: policy["attestation_id"].as_str().unwrap().into(),
+            ..Default::default()
         },
         authority.clone(),
         pin,
@@ -1648,7 +1661,7 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
         1
     );
     let root = reader
-        .browse_from(&host.public_key(), &ticket, None, Vec::new())
+        .browse_from(&host.public_key(), &ticket, None, Vec::new(), None)
         .await?;
     assert_eq!(root.files.len(), 3);
     assert_eq!(
@@ -1656,13 +1669,19 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
         2
     );
     let page = reader
-        .browse_from(&host.public_key(), &ticket, None, nested.clone())
+        .browse_from(&host.public_key(), &ticket, None, nested.clone(), None)
         .await?;
     assert_eq!(page.directory, nested);
     assert_eq!(page.files.len(), 1);
     let file = &page.files[0];
     let other = reader
-        .browse_from(&host.public_key(), &ticket, None, vec!["Other".into()])
+        .browse_from(
+            &host.public_key(),
+            &ticket,
+            None,
+            vec!["Other".into()],
+            None,
+        )
         .await?;
     let before = share.released_names();
     for bad in [
@@ -1672,7 +1691,7 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
     ] {
         assert!(
             reader
-                .browse_from(&host.public_key(), &ticket, None, bad)
+                .browse_from(&host.public_key(), &ticket, None, bad, None)
                 .await
                 .is_err()
         );
@@ -1721,7 +1740,7 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
     process.command(json!({"op":"deny_list","peer_node":client.public_key()}))?;
     assert!(
         reader
-            .browse_from(&host.public_key(), &ticket, None, nested.clone())
+            .browse_from(&host.public_key(), &ticket, None, nested.clone(), None)
             .await
             .is_err()
     );
@@ -2053,7 +2072,7 @@ async fn members_learn_each_other_from_the_network_computer_and_connect() -> Res
     // A member that shares no folder offers no file protocol at all.
     let nothing = phone
         .session()?
-        .browse_from(&tablet_node, &tablet_ticket, None, Vec::new())
+        .browse_from(&tablet_node, &tablet_ticket, None, Vec::new(), None)
         .await;
     assert!(
         nothing
