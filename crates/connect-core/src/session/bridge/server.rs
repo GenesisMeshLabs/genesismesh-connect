@@ -813,11 +813,13 @@ async fn accept(
                     let incoming = timeout(DEADLINE, incoming);
                     let connection = tokio::select! { biased; _ = changes.changed() => return, result = incoming => match result { Ok(Ok(c)) => c, _ => return } };
                     limit_streams(&connection);
-                    tokio::select! { biased;
-                        _ = changes.changed() => {},
-                        _ = timeout(DEADLINE, exchange(&connection, &local, &credentials, &authority, &budgets, &forwarded, &published)) => {},
-                    }
-                    connection.close(0u32.into(), b"authority operation ended");
+                    // Only a cancel for new credentials says so: a device may
+                    // ask that operation again, never one that was refused.
+                    let reason: &[u8] = tokio::select! { biased;
+                        _ = changes.changed() => super::CREDENTIALS_CHANGED,
+                        _ = timeout(DEADLINE, exchange(&connection, &local, &credentials, &authority, &budgets, &forwarded, &published)) => b"authority operation ended",
+                    };
+                    connection.close(0u32.into(), reason);
                 });
             },
             _ = tasks.join_next(), if !tasks.is_empty() => {},

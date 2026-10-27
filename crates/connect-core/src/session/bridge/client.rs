@@ -9,10 +9,10 @@ pub struct BridgeRoute {
     pub host_node: String,
 }
 
-/// The network computer closed the connection before answering: it cancels
-/// in-flight operations whenever it refreshes its own credentials.
-fn interrupted(error: &anyhow::Error) -> bool {
-    format!("{error:#}").contains("authority operation ended")
+/// The network computer cancelled the operation because its own credentials
+/// changed, and said so; a refused operation never reads this way.
+pub(super) fn interrupted(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains(std::str::from_utf8(super::CREDENTIALS_CHANGED).unwrap_or("-"))
 }
 
 /// The endpoint a valid authority ticket names.

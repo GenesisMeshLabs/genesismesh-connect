@@ -878,3 +878,19 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
     runtime.abort();
     Ok(())
 }
+
+#[test]
+fn only_a_cancel_for_new_credentials_is_asked_again() {
+    let cancelled = anyhow::anyhow!(
+        "connection lost: closed by peer: {} (code 0)",
+        std::str::from_utf8(CREDENTIALS_CHANGED).unwrap()
+    );
+    assert!(client::interrupted(&cancelled));
+    for refused in [
+        "closed by peer: authority operation ended (code 0)",
+        "Desktop authority request refused or unavailable",
+        "Desktop authority timed out",
+    ] {
+        assert!(!client::interrupted(&anyhow::anyhow!(refused)), "{refused}");
+    }
+}
