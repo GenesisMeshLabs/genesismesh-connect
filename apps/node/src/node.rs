@@ -508,7 +508,11 @@ async fn handle(node: &Shared, request: Value) -> Result<Value> {
             // asking again finishes a removal that failed part way.
             let removal = tokio::task::block_in_place(|| node.owner.remove_device(&device))?;
             node.device.forget_device(&device).await?;
-            show_spaces(&mut node)?;
+            // The device is gone; the next pass over the Spaces finishes
+            // publishing them if this fails.
+            if let Err(problem) = show_spaces(&mut node) {
+                eprintln!("Publishing the shared folders failed: {problem:#}");
+            }
             println!("Removed {name} from the network.");
             Ok(serde_json::to_value(removal)?)
         }

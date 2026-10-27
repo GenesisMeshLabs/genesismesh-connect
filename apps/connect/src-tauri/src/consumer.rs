@@ -712,7 +712,15 @@ pub async fn remove_device(
     // The device is off the network now; what follows only tidies this
     // computer, and its next pass over the Spaces finishes what fails here.
     let tidied = async {
-        device.publish_spaces(spaces);
+        device.publish_spaces(spaces.clone());
+        let own_node = device.status()?.node_public_key;
+        // This computer's Spaces that changed take their new grants now.
+        device.apply_spaces(
+            spaces
+                .into_iter()
+                .filter_map(|space| connect_core::session::bridge::SpaceView::of(space, &own_node))
+                .collect(),
+        )?;
         let own: Vec<String> = device
             .status()?
             .shares

@@ -357,8 +357,13 @@ class Owner:
         if existing is not None and existing.get("kind", "folder") != kind:
             raise Refused("A shared folder and an inbox stay what they are.")
         if existing is None:
-            if self.policy_versions("connect-" + collection_id) and not adopt:
+            versions = self.policy_versions("connect-" + collection_id)
+            if versions and not adopt:
                 raise Refused("This folder already has a permission on this network.")
+            # Only a permission still on is adopted: one a removal turned off
+            # stays off.
+            if adopt and not any(v["active"] for v in versions):
+                raise Refused("This folder's permission is no longer on.")
             if sum(1 for s in spaces if s["host"] == host_node) >= MAX_HOST_SPACES:
                 raise Refused("A device can share up to 16 folders.")
             if len(spaces) >= MAX_SPACES:
@@ -434,7 +439,12 @@ class Owner:
         for active in response.json()["active"]:
             policy_id = active["policy_id"]
             collection = policy_id.removeprefix("connect-")
-            peers = [value for gate in active["policy"]["gates"] if gate["gate_id"] == "peer"
+            try:
+                uuid.UUID(collection)
+            except ValueError:
+                continue
+            peers = [value for gate in active["policy"]["gates"]
+                if gate["gate_id"] == "peer" and gate["config"].get("path") == "request_parameters.peer_node"
                 for value in gate["config"].get("values", [])]
             if policy_id.startswith("connect-") and collection not in spaces and host_node in peers:
                 self.admin(f"/admin/boundary-policies/{policy_id}/deactivate", {"version": active["version"]})

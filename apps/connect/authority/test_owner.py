@@ -199,6 +199,8 @@ class OwnerTests(unittest.TestCase):
                         if gate.gate_id=="peer": self.assertNotIn(phone_node,gate.config["values"])
                 self.assertFalse([p for p in active if p.policy_id in ("connect-"+only,"connect-"+photos,"connect-"+legacy)])
                 self.assertTrue([p for p in active if p.policy_id=="connect-"+other])
+                # A permission the removal turned off is never adopted again.
+                with self.assertRaises(Refused): owner.space_share(computer,legacy,"Old folder",[tablet],owner.subject(computer),adopt=True)
                 # Its key never joins again, not even with a plain invitation.
                 again=dict(join,invite_token=owner.invite(phone_node)["invite"],nonce=str(uuid.uuid4()))
                 rejoined=client.post("/join",json=sign_node_request(sign_executor_proof(again,executor),phone))
