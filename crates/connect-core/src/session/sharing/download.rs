@@ -384,12 +384,11 @@ impl Share {
             Ok::<_, anyhow::Error>((file, digest, permit))
         })
         .await?;
-        let (file, window_sha, permit) = match read {
-            Ok(read) => read,
-            Err(error) => {
-                self.downloads.forget(&token);
-                return Err(error);
-            }
+        // A snapshot that can no longer be read is gone: the requester asks
+        // again and gets a fresh one.
+        let Ok((file, window_sha, permit)) = read else {
+            self.downloads.forget(&token);
+            return Err(Expired.into());
         };
         let mut store = self.trust.lock().await;
         let trust = self.authority.refresh(&mut store).await?;
@@ -483,16 +482,14 @@ pub(in crate::session) async fn serve(
     // An unknown Space is refused like any other denial.
     let share = shares.get(&request.collection_id);
     let prepared = match share {
-        Some(share) => {
-            let permit = share
-                .budget
-                .clone()
-                .try_acquire_owned()
-                .context("Another file operation is running")?;
-            share
-                .prepare_window(credentials, &peer, &request, permit)
-                .await
-        }
+        Some(share) => match share.budget.clone().try_acquire_owned() {
+            Ok(permit) => {
+                share
+                    .prepare_window(credentials, &peer, &request, permit)
+                    .await
+            }
+            Err(_) => Err(Busy("Another file operation is running").into()),
+        },
         None => Err(anyhow::anyhow!("Unknown shared folder")),
     };
     let (mut prepared, _permit) = match prepared {

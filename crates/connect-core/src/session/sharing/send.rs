@@ -285,6 +285,9 @@ impl Incoming {
             };
             let part = directory.join(format!("{token}.part"));
             let loaded = (|| {
+                // A file saved just before the previous run ended is not
+                // taken again, whatever became of its saved record.
+                ensure!(!directory.join(format!("{token}.saved")).exists(), "Saved");
                 let metadata = std::fs::metadata(&path)?;
                 let age = metadata.modified()?.elapsed().unwrap_or_default();
                 ensure!(age < STAGED_FOR && entries.len() < MAX_STAGED, "Expired");
@@ -307,13 +310,6 @@ impl Incoming {
                 keep.insert(path.clone());
                 keep.insert(part);
                 entries.insert(token, staged);
-            }
-        }
-        // A file saved just before the previous run ended is not taken again.
-        for token in done.keys() {
-            if entries.remove(token).is_some() {
-                keep.remove(&directory.join(format!("{token}.json")));
-                keep.remove(&directory.join(format!("{token}.part")));
             }
         }
         for entry in std::fs::read_dir(directory)? {
@@ -344,7 +340,9 @@ impl Incoming {
         options.write(true).create(true).truncate(true);
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        options.open(&pending)?.write_all(bytes)?;
+        let mut file = options.open(&pending)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
         std::fs::rename(&pending, path)?;
         Ok(())
     }
@@ -1277,9 +1275,21 @@ mod tests {
         ));
         assert_eq!(std::fs::read_dir(folder.path())?.count(), 1);
         assert!(!incoming.part(&token).exists() && !incoming.meta(&token).exists());
-        // The receiving device restarts and still knows where it went.
+        // The receiving device stops before its staging went, then restarts:
+        // it still knows where the file went and does not take it up again.
+        let record = Record {
+            peer: "phone".into(),
+            collection: only.collection_id.clone(),
+            file_name: only.file_name.clone(),
+            size: window,
+            sha256: only.sha256.clone(),
+            received: 0,
+        };
+        incoming.save(&token, &record)?;
+        std::fs::write(incoming.part(&token), b"")?;
         drop(incoming);
         let incoming = Incoming::open(state.path())?;
+        assert!(!incoming.part(&token).exists() && !incoming.meta(&token).exists());
         assert!(matches!(
             incoming.token("phone", &only),
             Err(Refusal::Saved(name)) if name == "photo.jpg"
