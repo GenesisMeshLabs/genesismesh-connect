@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/connect-core", "apps/connect/src-tauri"]
+members = ["crates/connect-core", "apps/connect/src-tauri", "apps/node"]
 exclude = ["vendor/n0-dns-resolver", "vendor/tauri-plugin-view"]
 default-members = ["crates/connect-core"]
 resolver = "3"

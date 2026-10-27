@@ -1,6 +1,8 @@
 //! Durable desktop identity and explicit lifecycle; private keys never cross UI IPC.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) mod owner_store;
+#[cfg(target_os = "linux")]
+mod sealed_store;
 mod vault;
 
 /// A compiled native adapter is available. Opening a locked/missing OS store
