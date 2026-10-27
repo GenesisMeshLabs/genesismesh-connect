@@ -490,6 +490,115 @@ fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
             "The authority denies a stopped Space"
         );
         runtime.block_on(pc.drop_space(&shared.collection_id))?;
+
+        // The server removes the phone from the network: the phone's own
+        // Space and the one only it could see stop, and the one shared with
+        // it and the server no longer names it.
+        let folder = |name: &str| -> Result<std::path::PathBuf> {
+            let path = directory.path().join(name);
+            std::fs::create_dir(&path)?;
+            std::fs::write(path.join("note.txt"), name)?;
+            Ok(path)
+        };
+        let for_phone = runtime.block_on(pc.share_space(
+            None,
+            folder("for-phone")?,
+            "For the phone".into(),
+            vec![phone_node.clone()],
+            SpaceKind::Folder,
+        ))?;
+        let both = runtime.block_on(pc.share_space(
+            None,
+            folder("both")?,
+            "Both".into(),
+            vec![phone_node.clone(), server_node.clone()],
+            SpaceKind::Folder,
+        ))?;
+        let notes = runtime.block_on(phone.share_space(
+            None,
+            folder("notes")?,
+            "Phone notes".into(),
+            vec![pc_node.clone()],
+            SpaceKind::Folder,
+        ))?;
+        let revocations = pc.status()?.trust_checkpoint.crl_sequence;
+        let removed = server.command(&["remove", "Phone"])?.output()?;
+        ensure!(
+            removed.status.success(),
+            "remove failed: {}",
+            String::from_utf8_lossy(&removed.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&removed.stdout).contains("Phone is no longer on the network")
+        );
+        let status = server.control(json!({"op":"status"}))?;
+        assert_eq!(status["devices"], json!(["Home PC"]));
+        let mut listed: Vec<String> = status["spaces"]
+            .as_array()
+            .context("Missing spaces")?
+            .iter()
+            .map(|s| s["name"].as_str().unwrap_or("?").to_owned())
+            .collect();
+        listed.sort();
+        assert_eq!(listed, ["Both", "Private"]);
+        assert!(
+            server
+                .control(json!({"op":"remove","name":"Phone"}))
+                .is_err_and(|e| e.to_string().contains("No device is called")),
+            "A removed device is no longer listed"
+        );
+        // The PC learns it at its next refreshes: the phone is no longer a
+        // member, "Both" names only the server, and the Space only the
+        // phone could see stops once two listings in a row leave it out.
+        runtime.block_on(pc.check_network())?;
+        assert!(
+            pc.status()?
+                .shares
+                .iter()
+                .any(|s| s.collection_id == for_phone.collection_id),
+            "One listing is not enough to stop a Space"
+        );
+        runtime.block_on(pc.check_network())?;
+        let status = pc.status()?;
+        assert!(status.members.iter().all(|m| m.node != phone_node));
+        assert!(
+            status
+                .shares
+                .iter()
+                .all(|s| s.collection_id != for_phone.collection_id)
+        );
+        let kept = status
+            .shares
+            .iter()
+            .find(|s| s.collection_id == both.collection_id)
+            .context("The PC stopped a Space that still has a device")?;
+        assert_eq!(kept.recipients, vec![server_node.clone()]);
+        // The PC has seen the phone's certificates revoked, and the phone
+        // reaches neither the server nor the PC.
+        assert!(pc.status()?.trust_checkpoint.crl_sequence > revocations);
+        assert!(
+            runtime.block_on(phone.check_network()).is_err() || phone.status()?.problem.is_some()
+        );
+        assert!(
+            runtime
+                .block_on(phone.session()?.browse_from(
+                    &pc_node,
+                    &pc_ticket,
+                    None,
+                    Vec::new(),
+                    Some(both.collection_id.clone()),
+                ))
+                .is_err(),
+            "A removed device reaches nothing"
+        );
+        assert!(
+            !server.control(json!({"op":"status"}))?["spaces"]
+                .as_array()
+                .context("Missing spaces")?
+                .iter()
+                .any(|s| s["name"] == notes.name.as_str())
+        );
+        assert!(runtime.block_on(pc.unshare_space(&both.collection_id))?);
         Ok::<_, anyhow::Error>((pc, phone))
     })();
     stop(child)?;

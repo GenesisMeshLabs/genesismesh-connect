@@ -36,6 +36,8 @@ Under systemd:
 While the service runs:
   pair [--name NAME]   Add a device; NAME is how this server appears on it
   status               Show the network, its connection and its devices
+  remove NAME|KEY      Take a device off the network: it is revoked, its shared
+                       folders stop, and other folders no longer include it
   connection public|private
                        Public relays, or private: local network only
   recovery NAME        Write recovery/NAME in the state directory and show its
@@ -181,6 +183,7 @@ pub async fn main(args: Vec<String>) -> Result<()> {
         }
         "pair" => pair(&paths, options.name.as_deref().unwrap_or("Network server")).await,
         "status" => status(&paths).await,
+        "remove" => remove(&paths, options.argument("device name or key")?).await,
         "connection" => {
             let setting = match options.argument("setting: public or private")? {
                 "public" => Connectivity::PublicRelays,
@@ -402,6 +405,11 @@ fn keep_spaces(node: &mut Node, renewed: &mut Option<Instant>) -> Result<()> {
         }
         *renewed = Some(Instant::now());
     }
+    show_spaces(node)
+}
+
+/// Publish the registry for devices and take it up here.
+fn show_spaces(node: &mut Node) -> Result<()> {
     let own = node.device.status()?.node_public_key;
     let spaces = tokio::task::block_in_place(|| node.owner.space_list())?;
     // Devices list Spaces from this copy, never waiting for the runtime.
@@ -473,6 +481,40 @@ async fn handle(node: &Shared, request: Value) -> Result<Value> {
                 "certificate_expires_at": status.certificate_expires_at,
                 "problem": status.problem,
             }))
+        }
+        "remove" => {
+            let name = request["name"]
+                .as_str()
+                .context("Name the device to remove")?;
+            let mut node = node.lock().await;
+            // By name, or by its key when two devices share a name.
+            let named: Vec<String> = node
+                .device
+                .status()?
+                .devices
+                .into_iter()
+                .filter(|d| d.name == name || d.node == name)
+                .map(|d| d.node)
+                .collect();
+            let device = match named.as_slice() {
+                [one] => one.clone(),
+                [] => bail!("No device is called {name:?}. The status command lists them."),
+                several => bail!(
+                    "Several devices are called {name:?}. Remove one by its key: {}",
+                    several.join(", ")
+                ),
+            };
+            // Revoked first, so nothing accepts it while the rest is done;
+            // asking again finishes a removal that failed part way.
+            let removal = tokio::task::block_in_place(|| node.owner.remove_device(&device))?;
+            node.device.forget_device(&device).await?;
+            // The device is gone; the next pass over the Spaces finishes
+            // publishing them if this fails.
+            if let Err(problem) = show_spaces(&mut node) {
+                eprintln!("Publishing the shared folders failed: {problem:#}");
+            }
+            println!("Removed {name} from the network.");
+            Ok(serde_json::to_value(removal)?)
         }
         "pair_begin" => {
             let name = request["name"]
@@ -706,6 +748,24 @@ async fn pair(paths: &Paths, name: &str) -> Result<()> {
     } else {
         request(paths, json!({"op":"pair_reject","id":id})).await?;
         println!("Not allowed. The invitation can no longer be used.");
+    }
+    Ok(())
+}
+
+async fn remove(paths: &Paths, name: &str) -> Result<()> {
+    let removal: connect_core::owner::Removal =
+        serde_json::from_value(request(paths, json!({"op":"remove","name":name})).await?)?;
+    println!(
+        "{name} is no longer on the network. It can join again only after a fresh setup of Connect on it."
+    );
+    if !removal.stopped.is_empty() {
+        println!("Shared folders stopped: {}.", removal.stopped.len());
+    }
+    if !removal.changed.is_empty() {
+        println!(
+            "Shared folders that no longer include it: {}.",
+            removal.changed.len()
+        );
     }
     Ok(())
 }

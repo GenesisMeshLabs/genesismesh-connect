@@ -119,7 +119,9 @@ guarantee**. A specific certificate ceases being acceptable once its revocation
 is observed or it reaches the five-minute issue-age limit. Ordinary NA revocation
 targets a certificate; another unrevoked certificate for the same node key,
 including a renewal predecessor during its overlap, can still renew. Operators
-must revoke all active credentials for a compromised node. Whole-device lifecycle
+must revoke all active credentials for a compromised node; removing a device
+from a Connect network does that, since every Connect device is enrolled as an
+edge node and core revokes all of its certificates at once. Whole-device lifecycle
 and a measured active-transfer cutoff remain necessary before broad file-sharing
 deployment. The [small-read prototype](protected-read.md) uses live decisions,
 per-chunk validity checks and a bounded release window; it does not claim an

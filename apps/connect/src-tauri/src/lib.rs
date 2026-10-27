@@ -127,6 +127,7 @@ pub fn run() {
             consumer::check_network,
             consumer::select_device,
             consumer::forget_device,
+            consumer::remove_device,
             consumer::set_network_connection,
             consumer::set_device_local_only,
             desktop::device_status,
