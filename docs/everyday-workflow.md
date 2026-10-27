@@ -210,8 +210,11 @@ receives the relative file path for any path-based read gates. A download
 can continue from where it stopped: when the sharing device no longer has its
 snapshot (after 15 minutes, or a restart), it takes a fresh one of the same
 version and serves from the offset, and each window is still decided for the
-whole file; a file that changed in between is refused. The app does not yet
-keep unfinished downloads across its own restarts. Mobile folder sharing remains pending.
+whole file; a file that changed in between is refused, and the app's check of
+the whole file's digest never lets two versions mix. While the app runs it
+asks a broken window again for up to about two minutes, reaching the device
+afresh and taking a fresh snapshot when needed; it does not yet keep
+unfinished downloads across its own restarts. Mobile folder sharing remains pending.
 
 Existing 64-KiB permissions stay unchanged. **Share a folder again** and select
 the folder to issue a new larger-file permission. Both apps need the new build
@@ -261,7 +264,7 @@ The receiving device decides every step:
 
 Current bounds: files up to 1 GiB, windows of 64 KiB to 32 MiB sized to the
 connection, up to four unfinished incoming files and 2 GiB of staging per
-inbox, and ten minutes before an abandoned file is dropped. Windows from
+inbox, and an hour before an abandoned file is dropped. Windows from
 several senders take turns; one that waits more than ten seconds, or finds
 the inbox full, is told the device is busy rather than refused (before its
 budget or an authority request is spent), and the app tries that window again
@@ -286,15 +289,19 @@ about 120 windows a minute for the whole network.
 
 An interrupted send continues where it stopped. The receiving device keeps an
 unfinished file's bytes and a small record (sender, file, digest, how much has
-arrived) in its private staging, so the file survives a restart of either
-device for an hour. A window sent at the wrong place, for example after a
-lost confirmation, is answered with where the file stands, and only its own
-sender is told; a transfer the device no longer has is answered with "start
-again". After a restart the whole-file hash is worked out once more from the
-staged bytes before the file is saved. The app retries a busy window; keeping
-unfinished sends across the app's own restarts comes next. Sending from
-phones, and phones receiving files, need the phone builds' file pickers and
-are not available yet.
+arrived) in its private staging, readable only by the app, for an hour; a
+window that breaks off is cut back to what was recorded rather than lost.
+While the sending app runs, it asks a broken window again for up to about two
+minutes, reaching the device afresh each time. A window at the wrong place,
+for example after a lost confirmation, is answered with where the file
+stands, and only its own sender is told. Sending the same file again (same
+sender, inbox, name, size and digest), for example after the sending app
+restarted, continues the file already there instead of starting another; a
+transfer the device no longer has is answered with "start again", which the
+app does once. After the receiving device restarts, the whole-file hash is
+worked out again from the staged bytes before the file is saved. Sending
+from phones, and phones receiving files, need the phone builds' file pickers
+and are not available yet.
 
 ## Verification boundary
 

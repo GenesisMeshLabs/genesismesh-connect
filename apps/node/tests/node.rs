@@ -569,8 +569,9 @@ fn send_with(
         ))?;
         let window = match window {
             Outcome::Sent(window) => window,
-            Outcome::ContinueAt(received) => {
-                offset = received;
+            Outcome::ContinueAt { token: kept, at } => {
+                token = Some(kept);
+                offset = at;
                 continue;
             }
             Outcome::StartOver => anyhow::bail!("The receiving device lost the file"),
@@ -940,6 +941,18 @@ fn transfers_continue_where_they_stopped() -> Result<()> {
         let mut pc = DeviceController::open(&pc_path)?;
         pc.restore_managed_share()?;
         runtime.block_on(pc.reconnect_saved())?;
+        // The same file started again, as after the phone's app restarted,
+        // continues the transfer the PC kept on disk.
+        let again = runtime.block_on(phone.session()?.send_window_to(
+            &pc_node,
+            &pc_ticket()?,
+            window(None, 0),
+            &mut file,
+        ))?;
+        assert!(
+            matches!(&again, Outcome::ContinueAt { token, at } if *token == first.token && *at == first.bytes as u64),
+            "{again:?}"
+        );
         // A window sent again at the old place learns where the file stands.
         let resumed = runtime.block_on(phone.session()?.send_window_to(
             &pc_node,
@@ -948,7 +961,10 @@ fn transfers_continue_where_they_stopped() -> Result<()> {
             &mut file,
         ))?;
         let mut offset = match resumed {
-            Outcome::ContinueAt(at) => at,
+            Outcome::ContinueAt { token, at } => {
+                assert_eq!(token, first.token);
+                at
+            }
             other => anyhow::bail!("Expected to continue: {other:?}"),
         };
         assert_eq!(offset, first.bytes as u64);
@@ -1010,6 +1026,23 @@ fn transfers_continue_where_they_stopped() -> Result<()> {
             &mut output,
         ))?;
         let mut offset = first.bytes as u64;
+        // The PC restarts: its snapshot is gone, and the old token with it.
+        runtime.block_on(pc.stop());
+        drop(pc);
+        let mut pc = DeviceController::open(&pc_path)?;
+        pc.restore_managed_share()?;
+        runtime.block_on(pc.reconnect_saved())?;
+        let session = phone.session()?;
+        assert!(
+            runtime
+                .block_on(session.download_window_from(
+                    &pc_node,
+                    &pc_ticket()?,
+                    request(Some(first.token.clone()), offset),
+                    &mut output,
+                ))
+                .is_err()
+        );
         let mut token = None;
         loop {
             let next = runtime.block_on(session.download_window_from(
@@ -1029,6 +1062,24 @@ fn transfers_continue_where_they_stopped() -> Result<()> {
         let mut downloaded = Vec::new();
         output.read_to_end(&mut downloaded)?;
         assert_eq!(downloaded, film);
+        // A file changed in between is refused, never stitched.
+        std::fs::write(
+            directory.path().join("photos").join("film.bin"),
+            b"a new film",
+        )?;
+        let mut other = tempfile::tempfile()?;
+        other.write_all(&film[..MIN_WINDOW_BYTES as usize])?;
+        assert!(
+            runtime
+                .block_on(session.download_window_from(
+                    &pc_node,
+                    &pc_ticket()?,
+                    request(None, u64::from(MIN_WINDOW_BYTES)),
+                    &mut other,
+                ))
+                .is_err(),
+            "A changed file is not continued"
+        );
         Ok::<_, anyhow::Error>((pc, phone))
     })();
     stop(child)?;

@@ -90,9 +90,10 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
         if size > MAX_FILE_BYTES {
             return Err("Choose a file up to 1 GB.".into());
         }
-        let (session, peer) =
+        let (mut session, mut peer) =
             crate::consumer::session(&app.state::<crate::desktop::DesktopState>(), Some(&space))
                 .await?;
+        let handle = app.clone();
         let id = uuid::Uuid::new_v4().to_string();
         let (cancel, mut canceled) = watch::channel(false);
         *state.job.lock().expect("send state") = Some(Job {
@@ -134,6 +135,8 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                 update(&jobs, &task_id, |job| job.progress.state = "sending".into());
                 let (mut token, mut offset, mut length) = (None, 0u64, MIN_WINDOW_BYTES);
                 let mut started_over = false;
+                // Answers that only move the file along, without a window.
+                let mut continued = 0;
                 loop {
                     let now = file.metadata()?;
                     ensure!(
@@ -151,8 +154,11 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                         offset,
                         length,
                     };
-                    // A busy inbox takes the window a little later.
-                    let mut waits = 0;
+                    // A busy inbox takes the window a little later; after a
+                    // dropped connection or a restart of either device, the
+                    // same window is asked again and the other device says
+                    // where the file stands.
+                    let (mut waits, mut attempts) = (0, 0u32);
                     let window = loop {
                         match session
                             .send_window_to(&peer.node, &peer.ticket, request.clone(), &mut file)
@@ -166,14 +172,35 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                                 waits += 1;
                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                             }
+                            Err(error)
+                                if attempts < 6
+                                    && !error.to_string().contains("isn't accepting files") =>
+                            {
+                                attempts += 1;
+                                tokio::time::sleep(std::time::Duration::from_secs(
+                                    1 << attempts.min(5),
+                                ))
+                                .await;
+                                if let Ok((again, host)) = crate::consumer::session(
+                                    &handle.state::<crate::desktop::DesktopState>(),
+                                    Some(&space),
+                                )
+                                .await
+                                {
+                                    (session, peer) = (again, host);
+                                }
+                            }
                             Err(error) => return Err(error),
                         }
                     };
                     let window = match window {
                         Outcome::Sent(window) => window,
                         // The other device holds the file up to here.
-                        Outcome::ContinueAt(received) => {
-                            offset = received;
+                        Outcome::ContinueAt { token: kept, at } => {
+                            ensure!(continued < 32, "The other device does not take this file");
+                            continued += 1;
+                            token = Some(kept);
+                            offset = at;
                             update(&jobs, &task_id, |job| job.progress.sent = offset);
                             continue;
                         }
