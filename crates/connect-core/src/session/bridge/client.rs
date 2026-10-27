@@ -6,6 +6,7 @@ pub struct Listing {
     pub spaces: Vec<super::SpaceView>,
     /// None from a computer that predates inboxes or did not answer.
     pub inboxes: Option<Vec<super::SpaceView>>,
+    pub services: Option<Vec<super::SpaceView>>,
     /// Every collection it listed, entries this device cannot use included.
     pub listed: std::collections::BTreeSet<String>,
 }
@@ -187,12 +188,22 @@ impl BridgeAuthority {
             )
             .await?;
         let inboxes = self
-            .listed(identity, trust, Operation::Inboxes, &mut listed)
+            .listed(
+                identity.clone(),
+                trust.clone(),
+                Operation::Inboxes,
+                &mut listed,
+            )
+            .await
+            .ok();
+        let services = self
+            .listed(identity, trust, Operation::Services, &mut listed)
             .await
             .ok();
         Ok(Listing {
             spaces,
             inboxes,
+            services,
             listed,
         })
     }
@@ -252,6 +263,25 @@ impl BridgeAuthority {
             "The network computer answered for another folder"
         );
         Ok(space)
+    }
+
+    pub async fn access_policy(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+        collection: String,
+        settings: Option<crate::owner::AccessPolicy>,
+    ) -> Result<Value> {
+        self.authenticated(
+            identity,
+            trust,
+            Operation::AccessPolicy,
+            &serde_json::to_value(super::AccessRequest {
+                collection,
+                settings,
+            })?,
+        )
+        .await
     }
 
     /// Stop one of this device's Spaces. False if the computer had none.
@@ -362,7 +392,8 @@ impl BridgeAuthority {
             [
                 "connect.collection.read",
                 "connect.collection.list",
-                "connect.inbox.write"
+                "connect.inbox.write",
+                "connect.service.connect"
             ]
             .contains(&capability),
             "Unsupported collection action"

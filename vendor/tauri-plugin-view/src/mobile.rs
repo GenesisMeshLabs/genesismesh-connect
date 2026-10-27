@@ -25,6 +25,12 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 pub struct View<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> View<R> {
+  pub fn web(&self, payload: WebRequest) -> crate::Result<WebResponse> {
+    self.0.run_mobile_plugin("web", payload).map_err(Into::into)
+  }
+  pub fn pick(&self, payload: PickRequest) -> crate::Result<PickResponse> {
+    self.0.run_mobile_plugin("pick", payload).map_err(Into::into)
+  }
   pub fn view(&self, payload: ViewRequest) -> crate::Result<ViewResponse> {
     self
       .0

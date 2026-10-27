@@ -32,6 +32,8 @@ def main():
                 elif op=="space_share" and {"op","host","collection","name","recipients"}<=set(request)<={"op","host","collection","name","recipients","subject","kind"}: result=owner.space_share(request["host"],request["collection"],request["name"],request["recipients"],request.get("subject"),kind=request.get("kind","folder"))
                 elif op=="space_adopt" and set(request)=={"op","host","collection","name","recipients","subject"}: result=owner.space_share(request["host"],request["collection"],request["name"],request["recipients"],request["subject"],adopt=True)
                 elif op=="space_remove" and set(request)=={"op","host","collection"}: result=owner.space_remove(request["host"],request["collection"])
+                elif op=="access_get" and set(request)=={"op","host","collection"}: result=owner.access_get(request["host"],request["collection"])
+                elif op=="access_update" and set(request)=={"op","host","collection","settings"}: result=owner.access_update(request["host"],request["collection"],request["settings"])
                 elif op=="space_list" and set(request)=={"op"}: result=owner.space_list()
                 elif op=="space_renew" and set(request)=={"op"}: result=owner.space_renew()
                 elif op=="remove_device" and set(request)=={"op","node"}: result=owner.remove_device(request["node"])

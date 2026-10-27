@@ -24,6 +24,7 @@ zeroize = { version = "1", features = ["derive"] }
 cap-std = "=4.0.3"
 cap-fs-ext = "=4.0.3"
 sha2 = "0.11"
+fs2 = "=0.4.3"
 aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }
 hkdf = "0.13.0"
 data-encoding = "2.11"

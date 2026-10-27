@@ -55,6 +55,25 @@ pub struct Space {
     pub policy_version: u64,
     pub attestation_id: String,
     pub valid_until: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_expires_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccessPolicy {
+    pub version: u64,
+    pub recipients: Vec<String>,
+    pub expires_at: Option<String>,
+    pub max_bytes: u64,
+    pub max_seconds: u32,
+    pub extra_gates: Vec<Value>,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccessUpdate {
+    pub space: Space,
+    pub settings: AccessPolicy,
 }
 
 /// What removing a device from the network did.
@@ -98,6 +117,11 @@ pub enum OwnerCall {
         name: String,
         recipients: Vec<String>,
         kind: crate::session::sharing::SpaceKind,
+    },
+    Access {
+        host: String,
+        collection: String,
+        settings: Option<AccessPolicy>,
     },
     Remove {
         host: String,
@@ -388,6 +412,21 @@ impl OwnerRuntime {
             self.request(json!({"op":"space_list"}))?,
         )?)
     }
+    pub fn access_get(&mut self, host: &str, collection: &str) -> Result<AccessPolicy> {
+        Ok(serde_json::from_value(self.request(
+            json!({"op":"access_get","host":host,"collection":collection}),
+        )?)?)
+    }
+    pub fn access_update(
+        &mut self,
+        host: &str,
+        collection: &str,
+        settings: &AccessPolicy,
+    ) -> Result<AccessUpdate> {
+        Ok(serde_json::from_value(self.request(
+            json!({"op":"access_update","host":host,"collection":collection,"settings":settings}),
+        )?)?)
+    }
     /// Renew the Spaces whose policy ends within 30 days; returns them.
     pub fn space_renew(&mut self) -> Result<Vec<String>> {
         Ok(serde_json::from_value(
@@ -411,6 +450,16 @@ impl OwnerRuntime {
                 None,
                 kind,
             )?)?,
+            OwnerCall::Access {
+                host,
+                collection,
+                settings,
+            } => match settings {
+                Some(settings) => {
+                    serde_json::to_value(self.access_update(&host, &collection, &settings)?)?
+                }
+                None => serde_json::to_value(self.access_get(&host, &collection)?)?,
+            },
             OwnerCall::Remove { host, collection } => {
                 json!(self.space_remove(&host, &collection)?)
             }
@@ -454,6 +503,7 @@ mod tests {
     #[test]
     fn only_spaces_the_host_no_longer_saves_are_orphaned() {
         let space = |collection: &str, host: &str| Space {
+            access_expires_at: None,
             collection: collection.into(),
             name: "Photos".into(),
             host: host.into(),

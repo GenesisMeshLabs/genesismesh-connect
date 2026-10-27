@@ -4,7 +4,7 @@ use connect_core::{
     session::{SessionReport, bridge::BridgeRoute},
 };
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 use tauri::Manager;
 use tokio::sync::Mutex;
 
@@ -15,6 +15,39 @@ pub(crate) struct Slot {
 pub struct DesktopState {
     pub(crate) profile: PathBuf,
     pub(crate) slot: Mutex<Slot>,
+    pub(crate) transfers: Arc<tokio::sync::RwLock<()>>,
+    // Display-only information remains readable while the controller reconnects.
+    // Protected operations always use the live controller and its trust checks.
+    display: std::sync::Mutex<DisplayStatus>,
+}
+
+#[derive(Clone)]
+pub(crate) struct DisplayStatus {
+    pub(crate) device: Option<Arc<DeviceStatus>>,
+    pub(crate) problem: Option<String>,
+    pub(crate) updating: bool,
+}
+
+impl DesktopState {
+    pub(crate) fn display_status(&self) -> Result<DisplayStatus, String> {
+        let mut display = self
+            .display
+            .lock()
+            .map_err(|_| "Device display unavailable")?;
+        if let Ok(slot) = self.slot.try_lock() {
+            display.device = slot
+                .controller
+                .as_ref()
+                .map(|c| c.status().map(Arc::new))
+                .transpose()
+                .map_err(message)?;
+            display.problem = slot.problem.clone();
+            display.updating = false;
+        } else {
+            display.updating = true;
+        }
+        Ok(display.clone())
+    }
 }
 
 #[derive(Serialize)]
@@ -45,7 +78,18 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
         None => profile,
     };
-    let (controller, problem) = if profile.exists() {
+    let cleanup = if DeviceController::leaving(&profile) {
+        crate::downloads::clear_previous_network(app)
+            .and_then(|()| DeviceController::finish_leave(&profile))
+    } else {
+        Ok(())
+    };
+    let (controller, problem) = if let Err(error) = cleanup {
+        (
+            None,
+            Some(format!("Could not finish leaving the network: {error}")),
+        )
+    } else if profile.exists() {
         match DeviceController::open(&profile) {
             Ok(device) => (Some(device), None),
             Err(error) => (
@@ -56,8 +100,18 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         (None, None)
     };
+    let display = DisplayStatus {
+        device: controller
+            .as_ref()
+            .map(|c| c.status().map(Arc::new))
+            .transpose()?,
+        problem: problem.clone(),
+        updating: false,
+    };
     app.manage(DesktopState {
         profile,
+        transfers: Arc::new(tokio::sync::RwLock::new(())),
+        display: std::sync::Mutex::new(display),
         slot: Mutex::new(Slot {
             controller,
             problem,
@@ -264,4 +318,38 @@ pub async fn device_send(
         .round_trip(&ticket, &message)
         .await
         .map_err(self::message)
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::*;
+
+    #[test]
+    fn display_is_available_while_reconnecting_and_refreshes_afterward() {
+        let state = DesktopState {
+            profile: PathBuf::new(),
+            transfers: Arc::new(tokio::sync::RwLock::new(())),
+            slot: Mutex::new(Slot {
+                controller: None,
+                problem: None,
+            }),
+            display: std::sync::Mutex::new(DisplayStatus {
+                device: None,
+                problem: Some("Saved network is opening".into()),
+                updating: false,
+            }),
+        };
+        let mut reconnecting = state.slot.try_lock().unwrap();
+        let saved = state.display_status().unwrap();
+        assert!(saved.updating);
+        assert_eq!(saved.problem.as_deref(), Some("Saved network is opening"));
+        reconnecting.problem = Some("Network computer is unavailable".into());
+        drop(reconnecting);
+        let current = state.display_status().unwrap();
+        assert!(!current.updating);
+        assert_eq!(
+            current.problem.as_deref(),
+            Some("Network computer is unavailable")
+        );
+    }
 }

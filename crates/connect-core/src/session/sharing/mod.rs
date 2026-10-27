@@ -5,6 +5,7 @@ pub mod catalog;
 pub mod download;
 pub mod listing;
 pub mod send;
+pub mod service;
 mod storage;
 mod transfer;
 use super::*;
@@ -31,8 +32,14 @@ pub enum SpaceKind {
     #[default]
     Folder,
     Inbox,
+    Web,
+    Ssh,
+    Tcp,
 }
 impl SpaceKind {
+    pub fn is_service(&self) -> bool {
+        matches!(self, Self::Web | Self::Ssh | Self::Tcp)
+    }
     pub(crate) fn is_folder(&self) -> bool {
         *self == Self::Folder
     }
@@ -53,6 +60,8 @@ pub struct ShareConfig {
     pub recipients: Vec<String>,
     #[serde(default, skip_serializing_if = "SpaceKind::is_folder")]
     pub kind: SpaceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<service::Target>,
 }
 pub struct Share {
     config: ShareConfig,
@@ -93,6 +102,15 @@ impl Share {
                 }),
             "Invalid shared folder"
         );
+        let authority = authority.into();
+        ensure!(
+            config.kind.is_service() == config.service.is_some(),
+            "Service target does not match resource kind"
+        );
+        if let Some(target) = &config.service {
+            target.validate()?;
+            authority.check_service_port(target.port)?;
+        }
         let directory = Arc::new(Collection::open(&config.directory)?);
         std::fs::create_dir_all(state)?;
         let checkpoint = state.join("trust.json");
@@ -109,7 +127,7 @@ impl Share {
             attestation: std::sync::RwLock::new(config.attestation_id.clone()),
             config,
             directory,
-            authority: authority.into(),
+            authority,
             trust: tokio::sync::Mutex::new(trust),
             receipts,
             released: AtomicU64::new(0),
@@ -443,6 +461,42 @@ fn verify_receipt(
     Ok(())
 }
 
+pub(crate) fn validate_file_name(name: &str) -> Result<()> {
+    storage::receivable(name)
+}
+
+/// Local owner access uses the same no-follow path rules as remote browsing.
+/// This is not a remotely exposed operation and issues no network permission.
+pub fn local_browse(
+    root: &Path,
+    collection: &str,
+    directory: &[String],
+    after: Option<&str>,
+) -> Result<browse::Page> {
+    let folder = Collection::open(root)?.nested(directory)?;
+    let (files, next) = folder.browse(after)?;
+    Ok(browse::Page {
+        collection_id: collection.into(),
+        directory: directory.to_vec(),
+        files,
+        next,
+    })
+}
+pub fn local_file(
+    root: &Path,
+    directory: &[String],
+    name: &str,
+    version: &str,
+) -> Result<std::fs::File> {
+    let folder = Collection::open(root)?.nested(directory)?;
+    let (file, entry) = folder.downloadable(name)?;
+    ensure!(
+        entry.version == version,
+        "The file changed. Refresh the file list and try again."
+    );
+    Ok(file.into_std())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,6 +550,7 @@ mod tests {
                 name: name.into(),
                 recipients: recipients.iter().map(|r| (*r).to_owned()).collect(),
                 kind,
+                service: None,
             },
             crate::authority::LocalAuthority::new("http://127.0.0.1:9")?,
             pin,

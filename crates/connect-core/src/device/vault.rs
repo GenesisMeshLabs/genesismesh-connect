@@ -77,6 +77,8 @@ struct Record {
     #[serde(default)]
     auto_connect: bool,
     #[serde(default)]
+    disconnected: bool,
+    #[serde(default)]
     consumer_mode: bool,
     /// The single shared folder of profiles from before Spaces; moved into
     /// `shares` when opened.
@@ -137,6 +139,7 @@ impl Vault {
             peers: Vec::new(),
             members: Vec::new(),
             auto_connect: false,
+            disconnected: false,
             consumer_mode: false,
             saved_share: None,
             shares: Vec::new(),
@@ -475,6 +478,35 @@ impl Vault {
     }
     pub fn auto_connect(&self) -> bool {
         self.record.auto_connect
+    }
+    pub fn disconnected(&self) -> bool {
+        self.record.disconnected
+    }
+    pub fn set_disconnected(&mut self, value: bool) -> Result<()> {
+        self.update(|record| record.disconnected = value)
+    }
+    /// Idempotent credential cleanup for an explicitly abandoned profile.
+    pub(super) fn erase(path: &Path) -> Result<()> {
+        if !path.try_exists()? {
+            return Ok(());
+        }
+        ensure!(
+            std::fs::symlink_metadata(path)?.is_file(),
+            "Invalid identity file"
+        );
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "android"
+        ))]
+        {
+            let mut reference = Vec::new();
+            File::open(path)?.take(256).read_to_end(&mut reference)?;
+            credential::forget_if_present(&reference, &platform_store()?)?;
+        }
+        std::fs::remove_file(path)?;
+        Ok(())
     }
     pub fn network_connectivity(&self) -> crate::Connectivity {
         self.record.network_connectivity

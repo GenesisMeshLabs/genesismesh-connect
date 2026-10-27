@@ -79,6 +79,7 @@ pub(super) fn hex(bytes: &[u8]) -> String {
 }
 pub(super) struct Collection {
     directory: Dir,
+    storage_path: std::path::PathBuf,
 }
 impl Collection {
     pub fn nested(&self, segments: &[String]) -> Result<Self> {
@@ -90,7 +91,12 @@ impl Collection {
         for segment in segments {
             directory = directory.open_dir_nofollow(segment)?;
         }
-        Ok(Self { directory })
+        Ok(Self {
+            directory,
+            storage_path: segments
+                .iter()
+                .fold(self.storage_path.clone(), |path, part| path.join(part)),
+        })
     }
     pub fn list(
         &self,
@@ -156,7 +162,30 @@ impl Collection {
             .follow(FollowSymlinks::No);
         let write = |target: &mut std::fs::File, source: &mut std::fs::File| -> Result<()> {
             source.seek(SeekFrom::Start(0))?;
-            std::io::copy(source, target)?;
+            use std::io::Write;
+            let size = source.metadata()?.len();
+            crate::transfer_limits::ensure_space(&self.storage_path, size)?;
+            let mut buffer = [0u8; 64 * 1024];
+            let mut remaining = size;
+            let mut checked = 0;
+            loop {
+                let count = source.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                ensure!(
+                    count as u64 <= remaining,
+                    "Incoming file changed while saving"
+                );
+                if checked == 0 || checked >= crate::transfer_limits::SPACE_CHECK_BYTES {
+                    crate::transfer_limits::ensure_space(&self.storage_path, remaining)?;
+                    checked = 0;
+                }
+                target.write_all(&buffer[..count])?;
+                remaining -= count as u64;
+                checked += count as u64;
+            }
+            ensure!(remaining == 0, "Incoming file ended early");
             target.sync_all()?;
             Ok(())
         };
@@ -250,6 +279,7 @@ impl Collection {
         ensure!(path.is_absolute(), "Collection root must be absolute");
         Ok(Self {
             directory: Dir::open_ambient_dir(path, cap_std::ambient_authority())?,
+            storage_path: path.to_owned(),
         })
     }
     pub fn snapshot(&self, file_name: &str) -> Result<Zeroizing<Vec<u8>>> {

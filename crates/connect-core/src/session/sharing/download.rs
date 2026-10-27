@@ -12,7 +12,7 @@ use std::{
     time::Instant,
 };
 
-pub const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
+pub use crate::transfer_limits::MAX_FILE_BYTES;
 pub const MAX_WINDOW_BYTES: u32 = 32 * 1024 * 1024;
 pub const MIN_WINDOW_BYTES: u32 = 64 * 1024;
 const MAX_HEADER: usize = 512 * 1024;
@@ -224,7 +224,6 @@ impl State {
         let file_name = request.file_name.clone();
         let version = request.version.clone();
         let cache = self.directory.clone();
-        let mut stored = 0u64;
         for (index, file) in std::fs::read_dir(&cache)?.enumerate() {
             ensure!(index < 16, Busy("Download snapshot cache is full"));
             let metadata = std::fs::symlink_metadata(file?.path())?;
@@ -232,41 +231,39 @@ impl State {
                 metadata.is_file() && !metadata.file_type().is_symlink(),
                 "Unexpected download snapshot cache entry"
             );
-            stored = stored
-                .checked_add(metadata.len())
-                .ok_or(Busy("Download snapshot cache is full"))?;
         }
-        ensure!(
-            stored.saturating_add(request.size) <= 2 * MAX_FILE_BYTES,
-            Busy("Download snapshot cache is full")
-        );
+        crate::transfer_limits::ensure_space(&cache, request.size)?;
         // The blocking job retains the permit even if its network task is
         // canceled, preventing concurrent orphan snapshot copies from piling up.
+        let token = uuid::Uuid::new_v4().to_string();
+        let entries = self.entries.clone();
+        let saved_token = token.clone();
+        let peer = peer.to_owned();
+        let requested = request.clone();
+        // Publish inside the blocking job: a network timeout must not discard
+        // a large completed copy and force the next request to start it over.
         let (snapshot, permit) = tokio::task::spawn_blocking(move || {
-            Ok::<_, anyhow::Error>((
-                source.download_snapshot(&file_name, &version, &cache)?,
-                permit,
-            ))
+            let snapshot = source.download_snapshot(&file_name, &version, &cache)?;
+            ensure!(
+                snapshot.size == requested.size,
+                "File size changed. Refresh the list."
+            );
+            entries.lock().expect("download cache").insert(
+                saved_token,
+                Cached {
+                    peer,
+                    collection: requested.collection_id,
+                    file: requested.file_name,
+                    directory: requested.directory,
+                    version: requested.version,
+                    touched: Instant::now(),
+                    finished: false,
+                    snapshot: snapshot.clone(),
+                },
+            );
+            Ok::<_, anyhow::Error>((snapshot, permit))
         })
         .await??;
-        ensure!(
-            snapshot.size == request.size,
-            "File size changed. Refresh the list."
-        );
-        let token = uuid::Uuid::new_v4().to_string();
-        self.entries.lock().expect("download cache").insert(
-            token.clone(),
-            Cached {
-                peer: peer.to_owned(),
-                collection: request.collection_id.clone(),
-                file: request.file_name.clone(),
-                directory: request.directory.clone(),
-                version: request.version.clone(),
-                touched: Instant::now(),
-                finished: false,
-                snapshot: snapshot.clone(),
-            },
-        );
         let pending = PendingSnapshot {
             entries: self.entries.clone(),
             token: Some(token.clone()),
@@ -415,6 +412,46 @@ impl Share {
             request.collection_id == self.config.collection_id,
             "Unknown shared folder"
         );
+        if request.token.is_none() {
+            // Authorize the full declared size before making a potentially
+            // large private copy. A hash-dependent custom policy must also
+            // allow this explicit preparation phase (no bytes leave here).
+            let mut store = self.trust.lock().await;
+            let trust = self
+                .authority
+                .refresh(&mut store)
+                .await
+                .context(Busy("The network computer could not be asked just now."))?;
+            drop(store);
+            trust.certificate(peer, &credentials.expected_node, Utc::now())?;
+            let context = format!("connect-prepare:{}", uuid::Uuid::new_v4());
+            let attestation_id = self.attestation_id();
+            let attestation = self
+                .authority
+                .attestation(&credentials.identity, &trust, &attestation_id)
+                .await?["attestation"]
+                .clone();
+            let decision = self
+                .authority
+                .evaluate(
+                    &credentials.identity,
+                    &trust,
+                    &attestation_id,
+                    &context,
+                    json!({"collection_id":request.collection_id,"file_name":relative_name(request),
+                    "peer_node":credentials.expected_node,"size":request.size,"phase":"prepare"}),
+                    "connect.collection.read",
+                )
+                .await?["decision"]
+                .clone();
+            trust.read_decision(
+                &decision,
+                &attestation,
+                &context,
+                &self.config.policy_id,
+                &credentials.identity.public_key(),
+            )?;
+        }
         let (token, snapshot, permit, pending) = self
             .downloads
             .snapshot(
@@ -814,6 +851,26 @@ pub(in crate::session) async fn receive(
 mod tests {
     use super::*;
 
+    #[test]
+    fn exact_size_boundary_and_large_offsets() -> Result<()> {
+        let mut request = Request {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            collection_id: "files".into(),
+            file_name: "archive.bin".into(),
+            directory: vec![],
+            version: "a".repeat(64),
+            size: MAX_FILE_BYTES,
+            offset: MAX_FILE_BYTES - 1,
+            length: MIN_WINDOW_BYTES,
+            token: None,
+        };
+        validate(&request)?;
+        request.size += 1;
+        assert!(validate(&request).is_err());
+        request.size = 1;
+        assert!(validate(&request).is_err());
+        Ok(())
+    }
     #[test]
     fn an_authority_that_cannot_be_asked_is_busy() {
         let error = anyhow::anyhow!("connection refused")

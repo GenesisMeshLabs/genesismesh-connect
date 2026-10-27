@@ -15,6 +15,27 @@ use std::{
     time::Duration,
 };
 
+/// These integration fixtures all live in one process on one machine. Use
+/// loopback explicitly so VPN/LAN address selection cannot decide their outcome.
+fn local_ticket(ticket: String) -> Result<String> {
+    let mut value: Value = serde_json::from_str(&ticket)?;
+    let addresses = value["endpoint"]["addrs"]
+        .as_array()
+        .context("Missing local addresses")?;
+    let address = addresses
+        .iter()
+        .filter_map(|a| a["Ip"].as_str()?.parse::<std::net::SocketAddr>().ok())
+        .min_by_key(|a| if a.is_ipv4() { 0 } else { 1 })
+        .context("Missing local socket")?;
+    let socket = if address.is_ipv4() {
+        std::net::SocketAddr::from(([127, 0, 0, 1], address.port()))
+    } else {
+        std::net::SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), address.port())
+    };
+    value["endpoint"]["addrs"] = json!([{ "Ip": socket.to_string() }]);
+    Ok(serde_json::to_string(&value)?)
+}
+
 struct AuthorityProcess {
     child: Child,
     input: ChildStdin,
@@ -423,7 +444,7 @@ async fn remote_sharing_host_uses_bridge_for_governed_files_without_local_author
     .await?;
     let remote = BridgeAuthority::new(BridgeRoute {
         host_node: owner.public_key(),
-        ticket: bridge.ticket()?,
+        ticket: local_ticket(bridge.ticket()?)?,
     })?;
     let mut host_store = TrustStore::create(&dir.path().join("host-trust.json"), pin.clone())?;
     let executor = key();
@@ -482,7 +503,7 @@ async fn remote_sharing_host_uses_bridge_for_governed_files_without_local_author
         host.public_key(),
     )
     .await?;
-    let ticket = host_endpoint.ticket()?;
+    let ticket = local_ticket(host_endpoint.ticket()?)?;
     let page = reader_endpoint.list_files(&ticket, None).await?;
     assert_eq!(page.files.len(), 1);
     assert_eq!(page.files[0].name, "note.txt");
@@ -1456,7 +1477,7 @@ async fn large_downloads_keep_full_size_policy_and_verify_windows() -> Result<()
         host.public_key(),
     )
     .await?;
-    let ticket = host_endpoint.ticket()?;
+    let ticket = local_ticket(host_endpoint.ticket()?)?;
     let page = client_endpoint
         .catalog_from(&host.public_key(), &ticket, None)
         .await?;
@@ -1650,7 +1671,7 @@ async fn nested_browsing_and_downloads_bind_paths_and_preserve_flat_clients() ->
         host.public_key(),
     )
     .await?;
-    let ticket = server.ticket()?;
+    let ticket = local_ticket(server.ticket()?)?;
     // Existing catalog clients retain their flat v1 response format.
     assert_eq!(
         reader
@@ -2240,5 +2261,204 @@ async fn a_running_share_decides_with_its_renewed_attestation() -> Result<()> {
     client_endpoint.close().await;
     process.command(json!({"op":"stop"}))?;
     process.child.wait()?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "Requires CONNECT_NA_PYTHON; real local TCP service with policy denial and active-session revocation"]
+async fn service_streams_require_policy_and_stop_when_access_changes() -> Result<()> {
+    use connect_core::session::sharing::{Share, ShareConfig, SpaceKind, service::Target};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+        time::timeout,
+    };
+    let (mut process, info) = AuthorityProcess::start()?;
+    let authority = LocalAuthority::new(info["url"].as_str().unwrap())?;
+    let pin: TrustPin = serde_json::from_value(info["pin"].clone())?;
+    let directory = tempfile::tempdir()?;
+    let mut host_store = TrustStore::create(&directory.path().join("host.json"), pin.clone())?;
+    let host_key = key();
+    let executor = key();
+    let invite =
+        process.command(json!({"op":"edge_invite","node_public_key":public(&host_key)}))?;
+    let (host, _) = authority
+        .enroll_host(
+            host_key,
+            &executor,
+            invite["invite"].as_str().unwrap(),
+            &mut host_store,
+        )
+        .await?;
+    let mut client_store = TrustStore::create(&directory.path().join("client.json"), pin.clone())?;
+    let client_key = key();
+    let invite = process.command(json!({"op":"invite","node_public_key":public(&client_key)}))?;
+    let client = authority
+        .enroll(
+            client_key,
+            invite["invite"].as_str().unwrap(),
+            &mut client_store,
+        )
+        .await?;
+    let collection = uuid::Uuid::new_v4().to_string();
+    let grant=process.command(json!({"op":"service_policy","collection":collection,"host_node":host.public_key(),"peer_node":client.public_key()}))?;
+    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+    let port = listener.local_addr()?.port();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let count = accepted.clone();
+    let echo = tokio::spawn(async move {
+        while let Ok((mut tcp, _)) = listener.accept().await {
+            count.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                let mut bytes = [0; 128];
+                while let Ok(n) = tcp.read(&mut bytes).await {
+                    if n == 0 {
+                        break;
+                    }
+                    if tcp.write_all(&bytes[..n]).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    let folder = directory.path().join("private");
+    std::fs::create_dir(&folder)?;
+    let config = ShareConfig {
+        collection_id: collection.clone(),
+        directory: folder,
+        attestation_id: grant["attestation_id"].as_str().unwrap().into(),
+        policy_id: grant["policy_id"].as_str().unwrap().into(),
+        kind: SpaceKind::Tcp,
+        recipients: vec![client.public_key()],
+        service: Some(Target {
+            port,
+            max_bytes: 65536,
+            max_seconds: 60,
+        }),
+        ..Default::default()
+    };
+    let mut blocked = config.clone();
+    blocked.service.as_mut().unwrap().port = info["url"]
+        .as_str()
+        .unwrap()
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .parse()?;
+    assert!(
+        Share::open(
+            blocked,
+            authority.clone(),
+            pin.clone(),
+            &directory.path().join("blocked")
+        )
+        .is_err()
+    );
+    let share = Arc::new(Share::open(
+        config,
+        authority.clone(),
+        pin,
+        &directory.path().join("service"),
+    )?);
+    let server = SessionEndpoint::bind_with_share(
+        host.session_identity()?,
+        authority.refresh(&mut host_store).await?,
+        client.public_key(),
+        Some(share),
+    )
+    .await?;
+    let client_endpoint = Arc::new(
+        SessionEndpoint::bind(
+            client.session_identity()?,
+            authority.refresh(&mut client_store).await?,
+            host.public_key(),
+        )
+        .await?,
+    );
+    let ticket = local_ticket(server.ticket()?)?;
+    async fn pair() -> Result<(TcpStream, TcpStream)> {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+        let app = TcpStream::connect(listener.local_addr()?).await?;
+        let (native, _) = listener.accept().await?;
+        Ok((app, native))
+    }
+    let (_, native) = pair().await?;
+    assert!(
+        client_endpoint
+            .forward_service(
+                &host.public_key(),
+                &ticket,
+                &collection,
+                SpaceKind::Web,
+                native
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        accepted.load(Ordering::SeqCst),
+        0,
+        "Wrong service kind must not dial target"
+    );
+    let (_, native) = pair().await?;
+    assert!(
+        client_endpoint
+            .forward_service(
+                &host.public_key(),
+                &ticket,
+                &uuid::Uuid::new_v4().to_string(),
+                SpaceKind::Tcp,
+                native
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(accepted.load(Ordering::SeqCst), 0);
+    let (mut app, native) = pair().await?;
+    let endpoint = client_endpoint.clone();
+    let node = host.public_key();
+    let destination = ticket.clone();
+    let id = collection.clone();
+    let forwarding = tokio::spawn(async move {
+        endpoint
+            .forward_service(&node, &destination, &id, SpaceKind::Tcp, native)
+            .await
+    });
+    app.write_all(b"hello service").await?;
+    let mut reply = [0; 13];
+    timeout(Duration::from_secs(15), app.read_exact(&mut reply)).await??;
+    assert_eq!(&reply, b"hello service");
+    process.command(
+        json!({"op":"deny_service","collection":collection,"peer_node":client.public_key()}),
+    )?;
+    timeout(Duration::from_secs(15), forwarding)
+        .await??
+        .expect_err("Changed policy closes the stream");
+    let (_, native) = pair().await?;
+    assert!(
+        client_endpoint
+            .forward_service(
+                &host.public_key(),
+                &ticket,
+                &collection,
+                SpaceKind::Tcp,
+                native
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        accepted.load(Ordering::SeqCst),
+        1,
+        "Denied connection must not reach target"
+    );
+    client_endpoint.close().await;
+    server.close().await;
+    echo.abort();
     Ok(())
 }

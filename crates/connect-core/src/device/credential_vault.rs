@@ -34,6 +34,15 @@ pub(super) fn forget(reference: &[u8], store: &impl Store) -> Result<()> {
     open(reference, store)?;
     store.delete(&account(reference, store)?)
 }
+/// A previous leave may have deleted the secret before removing its reference.
+pub(super) fn forget_if_present(reference: &[u8], store: &impl Store) -> Result<()> {
+    let id = account(reference, store)?;
+    if store.get(&id)?.is_some() {
+        open(reference, store)?;
+        store.delete(&id)?;
+    }
+    Ok(())
+}
 pub(super) fn open(reference: &[u8], store: &impl Store) -> Result<Zeroizing<Vec<u8>>> {
     let id = account(reference, store)?;
     let bytes=store.get(&id)?.context("The saved device identity is unavailable. Unlock its system credential store; the identity has not been replaced.")?;
@@ -165,6 +174,7 @@ mod tests {
             peers: Vec::new(),
             members: Vec::new(),
             auto_connect: false,
+            disconnected: false,
             consumer_mode: false,
             saved_share: None,
             shares: Vec::new(),
@@ -174,6 +184,30 @@ mod tests {
             session_port: None,
             bridge_port: None,
         }
+    }
+    #[test]
+    fn leaving_retries_deleted_credentials_but_preserves_unavailable_or_foreign_ones() -> Result<()>
+    {
+        let store = TestStore {
+            secrets: RefCell::new(HashMap::new()),
+            unavailable: Cell::new(false),
+        };
+        let mut value = record();
+        value.storage_id = uuid::Uuid::new_v4().to_string();
+        let reference = reference(&value.storage_id, &store);
+        store.set(&value.storage_id, &serde_json::to_vec(&value)?)?;
+        store.unavailable.set(true);
+        assert!(forget_if_present(&reference, &store).is_err());
+        assert_eq!(store.secrets.borrow().len(), 1);
+        store.unavailable.set(false);
+        assert!(forget_if_present(b"another-provider", &store).is_err());
+        forget_if_present(&reference, &store)?;
+        forget_if_present(&reference, &store)?;
+        assert!(store.secrets.borrow().is_empty());
+        let mut old = serde_json::to_value(&value)?;
+        old.as_object_mut().unwrap().remove("disconnected");
+        assert!(!serde_json::from_value::<Record>(old)?.disconnected);
+        Ok(())
     }
     #[test]
     fn legacy_pair_migration_and_multiple_devices_preserve_keys_and_selection() -> Result<()> {

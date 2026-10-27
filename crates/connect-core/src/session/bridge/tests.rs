@@ -750,6 +750,7 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
     let calls = Arc::new(Mutex::new(Vec::new()));
     let log = calls.clone();
     let space = |collection: &str, host: &str, recipients: Vec<String>| crate::owner::Space {
+        access_expires_at: None,
         collection: collection.into(),
         name: "Photos".into(),
         host: host.into(),
@@ -781,6 +782,11 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
                     ..
                 } => Ok(serde_json::to_value(space(collection, host, recipients.clone())).unwrap()),
                 crate::owner::OwnerCall::Remove { .. } => Ok(json!(true)),
+                crate::owner::OwnerCall::Access {
+                    host,
+                    collection,
+                    settings,
+                } => Ok(json!({"host":host,"collection":collection,"settings":settings})),
             };
             log.lock().unwrap().push(format!("{:?}", request.call));
             let _ = request.reply.send(result);
@@ -869,6 +875,43 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
         1,
         "A removal shows at once"
     );
+
+    // Access edits carry the authenticated caller, never a caller-supplied host.
+    let settings = crate::owner::AccessPolicy {
+        version: 1,
+        recipients: vec![tablet.clone()],
+        expires_at: None,
+        max_bytes: 4096,
+        max_seconds: 300,
+        extra_gates: vec![],
+    };
+    let response = client
+        .access_policy(
+            identity(&f),
+            f.trust()?,
+            collection.clone(),
+            Some(settings.clone()),
+        )
+        .await?;
+    assert_eq!(response["host"], me);
+    assert_eq!(response["collection"], collection);
+    assert_eq!(response["settings"]["max_seconds"], 300);
+    for recipients in [vec![stranger.clone()], vec![me.clone()], vec![]] {
+        assert!(
+            client
+                .access_policy(
+                    identity(&f),
+                    f.trust()?,
+                    collection.clone(),
+                    Some(crate::owner::AccessPolicy {
+                        recipients,
+                        ..settings.clone()
+                    })
+                )
+                .await
+                .is_err()
+        );
+    }
 
     // A device the computer has not saved gets nothing, even when selected.
     bridge.publish_members(vec![saved(&tablet, 7001)]);

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -33,7 +33,24 @@ let manifest = readFileSync(manifestPath, "utf8");
 if (/android:allowBackup=/.test(manifest))
   manifest = manifest.replace(/android:allowBackup="[^"]*"/, 'android:allowBackup="false"');
 else manifest = manifest.replace("<application", '<application android:allowBackup="false"');
+// Web services reach only the native loopback tunnel over HTTP. Keep ordinary
+// network traffic under Android's TLS default, including release builds.
+if (/android:networkSecurityConfig=/.test(manifest))
+  manifest = manifest.replace(/android:networkSecurityConfig="[^"]*"/, 'android:networkSecurityConfig="@xml/connect_network_security"');
+else manifest = manifest.replace("<application", '<application android:networkSecurityConfig="@xml/connect_network_security"');
 writeFileSync(manifestPath, manifest);
+writeFileSync(resolve(project, "app/src/main/res/xml/connect_network_security.xml"), `<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+  <base-config cleartextTrafficPermitted="false" />
+  <domain-config cleartextTrafficPermitted="true"><domain>127.0.0.1</domain><domain>localhost</domain></domain-config>
+</network-security-config>
+`);
+// Preserve Tauri's existing debug-only HTTP development-server support.
+const debugXml = resolve(project, "app/src/debug/res/xml");
+mkdirSync(debugXml, { recursive: true });
+writeFileSync(resolve(debugXml, "connect_network_security.xml"), `<?xml version="1.0" encoding="utf-8"?>
+<network-security-config><base-config cleartextTrafficPermitted="true" /></network-security-config>
+`);
 // Only verified downloads may be offered to another app through FileProvider.
 writeFileSync(resolve(project, "app/src/main/res/xml/file_paths.xml"), `<?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">

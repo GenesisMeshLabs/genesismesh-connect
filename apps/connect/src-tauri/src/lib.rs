@@ -4,7 +4,10 @@ use tokio::sync::Mutex;
 mod consumer;
 mod desktop;
 mod downloads;
+mod lifecycle;
+mod picking;
 mod sends;
+mod services;
 mod workflow;
 
 #[derive(Default)]
@@ -92,6 +95,7 @@ pub fn run() {
             workflow::setup(app)?;
             downloads::setup(app)?;
             sends::setup(app);
+            services::setup(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -106,11 +110,24 @@ pub fn run() {
             workflow::recovery_restore,
             consumer::pair_cancel,
             consumer::home_status,
+            lifecycle::disconnect_network,
+            lifecycle::reconnect_network,
+            lifecycle::leave_network,
             consumer::pair_begin,
             consumer::pair_approve,
             consumer::pair_reject,
             consumer::pair_join,
+            services::share_service,
+            services::get_access_policy,
+            services::update_access_policy,
+            services::open_service,
+            services::service_connections,
+            services::close_service,
+            services::launch_service,
             consumer::share_folder,
+            consumer::share_file,
+            consumer::browse_received,
+            consumer::export_received,
             consumer::receive_files,
             sends::send_file,
             sends::send_status,

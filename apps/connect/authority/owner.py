@@ -34,13 +34,16 @@ from genesis_mesh.na_service.server import NetworkAuthorityService
 from protection import discard, protect, unprotect, ready
 
 
+MAX_FILE_BYTES = (1 << 53) - 1  # Exact byte counts in signed JSON and JavaScript.
+
+
 class Refused(Exception):
     pass
 
 
 # What each kind of Space lets its devices do: read a shared folder, or
 # write into the host's inbox.
-KINDS = {"folder": ["connect.collection.read", "connect.collection.list"],
+KINDS = {"web": ["connect.service.connect"], "ssh": ["connect.service.connect"], "tcp": ["connect.service.connect"], "folder": ["connect.collection.read", "connect.collection.list"],
          "inbox": ["connect.inbox.write"]}
 # Every device reaches this authority through Connect's bridge on loopback,
 # so per-address limits would cap the whole network as one client. They sit
@@ -284,7 +287,7 @@ class Owner:
                 "parameter_equals":{"request_parameters.collection_id":[collection_id]}},
             "gates":[{"gate_id":"collection","gate_type":"allowlist.v1","order":0,"config":{"path":"request_parameters.collection_id","values":[collection_id]}},
                 {"gate_id":"peer","gate_type":"allowlist.v1","order":1,"config":{"path":"request_parameters.peer_node","values":[peer_node]}},
-                {"gate_id":"size","gate_type":"max_value.v1","order":2,"config":{"path":"request_parameters.size","max":1073741824}}]})
+                {"gate_id":"size","gate_type":"max_value.v1","order":2,"config":{"path":"request_parameters.size","max":MAX_FILE_BYTES}}]})
         self.admin(f"/admin/boundary-policies/{policy_id}/activate",{"version":result["version"]})
         attestation=self.admin("/admin/attestations",{"subject_id":subject,"subject_public_key":host_node,"roles":["role:client"],"validity_hours":720,"claims":{"capabilities":["connect.collection.read","connect.collection.list"]}})
         return {"collection_id":collection_id,"policy_id":policy_id,"attestation_id":attestation["attestation_id"]}
@@ -309,20 +312,24 @@ class Owner:
     def _save_spaces(self, spaces):
         atomic(self.directory / "spaces.json", json.dumps({"version": 1, "spaces": spaces}).encode())
 
-    def _grant(self, host_node, subject, collection_id, recipients, kind="folder"):
+    def _grant(self, host_node, subject, collection_id, recipients, kind="folder", template=None, expires_at=None):
         """Publish and activate the Space's policy for exactly these devices,
         and attest the host for it. Returns the registry fields."""
         capabilities = KINDS[kind]
         policy_id = "connect-" + collection_id
         now = datetime.now(timezone.utc)
         valid_until = now + timedelta(days=SPACE_DAYS)
+        if expires_at:
+            valid_until = min(valid_until, datetime.fromisoformat(expires_at))
+        if valid_until <= now:
+            raise Refused("This access policy has expired.")
         result = self.admin("/admin/boundary-policies", {"policy_id": policy_id,
             "valid_from": now.isoformat(), "valid_until": valid_until.isoformat(),
-            "selector": {"capabilities": capabilities,
+            "selector": template["selector"] if template is not None else {"capabilities": capabilities,
                 "parameter_equals": {"request_parameters.collection_id": [collection_id]}},
-            "gates": [{"gate_id": "collection", "gate_type": "allowlist.v1", "order": 0, "config": {"path": "request_parameters.collection_id", "values": [collection_id]}},
+            "gates": template["gates"] if template is not None else [{"gate_id": "collection", "gate_type": "allowlist.v1", "order": 0, "config": {"path": "request_parameters.collection_id", "values": [collection_id]}},
                 {"gate_id": "peer", "gate_type": "allowlist.v1", "order": 1, "config": {"path": "request_parameters.peer_node", "values": sorted(recipients)}},
-                {"gate_id": "size", "gate_type": "max_value.v1", "order": 2, "config": {"path": "request_parameters.size", "max": 1073741824}}]})
+                {"gate_id": "size", "gate_type": "max_value.v1", "order": 2, "config": {"path": "request_parameters.size", "max": MAX_FILE_BYTES}}]})
         self.admin(f"/admin/boundary-policies/{policy_id}/activate", {"version": result["version"]})
         attestation = self.admin("/admin/attestations", {"subject_id": subject, "subject_public_key": host_node,
             "roles": ["role:client"], "validity_hours": SPACE_DAYS * 24,
@@ -368,6 +375,13 @@ class Owner:
                 raise Refused("A device can share up to 16 folders.")
             if len(spaces) >= MAX_SPACES:
                 raise Refused("This network shares up to 64 folders.")
+        if existing is not None:
+            settings = self.access_get(host_node, collection_id)
+            settings["recipients"] = recipients
+            entry = self.access_update(host_node, collection_id, settings)["space"]
+            entry["name"] = space
+            self._save_spaces([entry if s["collection"] == collection_id else s for s in self._spaces()])
+            return entry
         entry = {"collection": collection_id, "name": space, "host": host_node, "kind": kind,
             "subject": subject, "recipients": recipients,
             "created_at": existing["created_at"] if existing else datetime.now(timezone.utc).isoformat()}
@@ -375,6 +389,83 @@ class Owner:
         spaces = [s for s in spaces if s["collection"] != collection_id] + [entry]
         self._save_spaces(spaces)
         return entry
+
+    def _access_policy(self, host_node, collection_id):
+        host_node = node(host_node)
+        uuid.UUID(collection_id)
+        entry = next((s for s in self._spaces() if s["collection"] == collection_id), None)
+        if entry is None or entry["host"] != host_node:
+            raise Refused("Only the device sharing this item can manage its access.")
+        active = [v for v in self.policy_versions(entry["policy_id"]) if v["active"]]
+        if len(active) != 1:
+            raise Refused("This policy is disabled or needs attention at the network authority.")
+        version = active[0]
+        policy = version["policy"]
+        if policy["selector"].get("parameter_equals", {}).get("request_parameters.collection_id") != [collection_id]:
+            raise Refused("This custom policy needs review at the network authority before editing here.")
+        gates = {g["gate_id"]: g for g in policy["gates"]}
+        for key, kind, field in [("collection", "allowlist.v1", "collection_id"), ("peer", "allowlist.v1", "peer_node"), ("size", "max_value.v1", "size")]:
+            g = gates.get(key, {})
+            if g.get("gate_type") != kind or g.get("config", {}).get("path") != "request_parameters." + field:
+                raise Refused("A custom access gate needs review at the network authority before editing here.")
+        if "duration" in gates and (entry.get("kind") not in ("web", "ssh", "tcp") or gates["duration"].get("gate_type") != "max_value.v1" or gates["duration"].get("config", {}).get("path") != "request_parameters.duration_seconds"):
+            raise Refused("A custom duration rule needs review before editing here.")
+        return entry, version, gates
+
+    def access_get(self, host_node, collection_id):
+        entry, version, gates = self._access_policy(host_node, collection_id)
+        return {"version": version["version"], "recipients": gates["peer"]["config"]["values"],
+            "expires_at": entry.get("access_expires_at"), "max_bytes": gates["size"]["config"]["max"],
+            "max_seconds": gates.get("duration", {}).get("config", {}).get("max", 3600),
+            "extra_gates": [g for g in version["policy"]["gates"] if g["gate_id"] not in ("collection", "peer", "size", "duration")]}
+
+    def access_update(self, host_node, collection_id, settings):
+        entry, version, gates = self._access_policy(host_node, collection_id)
+        if not isinstance(settings, dict) or set(settings) != {"version", "recipients", "expires_at", "max_bytes", "max_seconds", "extra_gates"}:
+            raise Refused("Invalid access policy settings.")
+        if settings["version"] != version["version"]:
+            raise Refused("This policy changed. Reload its settings before saving.")
+        recipients = settings["recipients"]
+        if not isinstance(recipients, list) or not 1 <= len(recipients) <= 31:
+            raise Refused("Choose at least one device.")
+        recipients = sorted({node(r) for r in recipients})
+        if host_node in recipients:
+            raise Refused("Choose another device.")
+        for field, maximum in [("max_bytes", MAX_FILE_BYTES), ("max_seconds", 3600)]:
+            if type(settings[field]) is not int or not 1 <= settings[field] <= maximum:
+                raise Refused("Invalid policy limit.")
+        expires = settings["expires_at"]
+        if expires is not None:
+            if not isinstance(expires, str): raise Refused("Choose an expiry date.")
+            try:
+                at = datetime.fromisoformat(expires)
+                if at.tzinfo is None or at <= datetime.now(timezone.utc): raise ValueError()
+                expires = at.astimezone(timezone.utc).isoformat()
+            except (ValueError, TypeError): raise Refused("Choose a future expiry date.")
+        extra = settings["extra_gates"]
+        if not isinstance(extra, list) or len(extra) > 24 or len(json.dumps(extra)) > 16000:
+            raise Refused("Too many additional policy rules.")
+        ids = set()
+        for gate in extra:
+            if not isinstance(gate, dict) or not isinstance(gate.get("gate_id"), str) or gate["gate_id"] in ids | {"collection", "peer", "size", "duration"}:
+                raise Refused("Additional rules must have distinct, non-reserved gate IDs.")
+            ids.add(gate["gate_id"])
+        template = json.loads(json.dumps(version["policy"]))
+        collection = gates["collection"]
+        if collection["config"].get("values") != [collection_id]:
+            raise Refused("The policy's resource scope needs review at the network authority.")
+        peer = json.loads(json.dumps(gates["peer"])); peer["config"]["values"] = recipients
+        size = json.loads(json.dumps(gates["size"])); size["config"]["max"] = settings["max_bytes"]
+        template["gates"] = [collection, peer, size]
+        if entry.get("kind") in ("web", "ssh", "tcp"):
+            template["gates"].append({"gate_id":"duration","gate_type":"max_value.v1","order":3,
+                "config":{"path":"request_parameters.duration_seconds","max":settings["max_seconds"]}})
+        template["gates"].extend(extra)
+        # The core validates every gate before a new version is activated.
+        granted = self._grant(host_node, entry["subject"], collection_id, recipients, entry.get("kind", "folder"), template, expires)
+        entry.update(granted); entry["recipients"] = recipients; entry["access_expires_at"] = expires
+        self._save_spaces([entry if s["collection"] == collection_id else s for s in self._spaces()])
+        return {"space": entry, "settings": self.access_get(host_node, collection_id)}
 
     def space_remove(self, host_node, collection_id):
         """Stop a Space: its policy is deactivated, so no decision allows it."""
@@ -462,7 +553,15 @@ class Owner:
                 # One failure leaves that Space for the next pass; every
                 # renewal is saved as it is made.
                 try:
-                    entry.update(self._grant(entry["host"], entry["subject"], entry["collection"], entry["recipients"], entry.get("kind", "folder")))
+                    if entry.get("access_expires_at") and datetime.fromisoformat(entry["access_expires_at"]) <= limit:
+                        continue
+                    active = [version for version in self.policy_versions(entry["policy_id"]) if version["active"]]
+                    if len(active) != 1:
+                        # Renewal never re-enables a disabled resource.
+                        continue
+                    # Keep operator edits, including explicit smaller size limits.
+                    # The higher default applies to newly shared resources only.
+                    entry.update(self._grant(entry["host"], entry["subject"], entry["collection"], entry["recipients"], entry.get("kind", "folder"), active[0]["policy"], entry.get("access_expires_at")))
                 except Exception:
                     continue
                 self._save_spaces(spaces)

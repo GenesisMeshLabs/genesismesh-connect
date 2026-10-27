@@ -77,6 +77,8 @@ enum Operation {
     /// Inbox Spaces, listed apart: apps from before inboxes refuse a kind
     /// they do not know, and never ask for these.
     Inboxes,
+    Services,
+    AccessPolicy,
 }
 
 /// A Space as a device learns it from its network computer: another device's
@@ -164,6 +166,13 @@ struct ShareSpaceRequest {
     )]
     kind: crate::session::sharing::SpaceKind,
 }
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AccessRequest {
+    collection: String,
+    settings: Option<crate::owner::AccessPolicy>,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct UnshareSpaceRequest {

@@ -377,6 +377,8 @@ async fn exchange(
         | Operation::Members
         | Operation::Spaces
         | Operation::Inboxes
+        | Operation::Services
+        | Operation::AccessPolicy
         | Operation::ShareSpace
         | Operation::UnshareSpace => {
             let peer = authenticate_for(
@@ -407,8 +409,9 @@ async fn exchange(
                     Operation::Renew => &budgets.renewals,
                     Operation::Settings => &budgets.settings,
                     Operation::Members => &budgets.members,
-                    Operation::Spaces | Operation::Inboxes => &budgets.spaces,
-                    Operation::ShareSpace | Operation::UnshareSpace => &budgets.space_changes,
+                    Operation::Spaces | Operation::Inboxes | Operation::Services => &budgets.spaces,
+                    Operation::ShareSpace | Operation::UnshareSpace | Operation::AccessPolicy =>
+                        &budgets.space_changes,
                     _ => &budgets.collections,
                 })
                 .lock()
@@ -476,6 +479,8 @@ async fn exchange(
                 }
                 Operation::Spaces
                 | Operation::Inboxes
+                | Operation::Services
+                | Operation::AccessPolicy
                 | Operation::ShareSpace
                 | Operation::UnshareSpace => {
                     credentials
@@ -588,7 +593,7 @@ async fn spaces(
         "Only saved devices share folders"
     );
     match operation {
-        Operation::Spaces | Operation::Inboxes => {
+        Operation::Spaces | Operation::Inboxes | Operation::Services => {
             ensure!(
                 request.as_object().is_some_and(|o| o.is_empty()),
                 "Unsupported spaces fields"
@@ -607,10 +612,53 @@ async fn spaces(
             Ok(serde_json::to_value(SpacesAnswer {
                 spaces: list
                     .into_iter()
-                    .filter(|space| space.kind == kind)
+                    .filter(|space| {
+                        if matches!(operation, Operation::Services) {
+                            space.kind.is_service()
+                        } else {
+                            space.kind == kind
+                        }
+                    })
                     .filter_map(|space| SpaceView::of(space, node))
                     .collect(),
             })?)
+        }
+        Operation::AccessPolicy => {
+            let request: super::AccessRequest = serde_json::from_value(request)?;
+            uuid::Uuid::parse_str(&request.collection)?;
+            if let Some(settings) = &request.settings {
+                ensure!(
+                    !settings.recipients.is_empty()
+                        && settings.recipients.len() <= 31
+                        && settings
+                            .recipients
+                            .iter()
+                            .all(|r| r != node && (r == computer || saved.contains(r))),
+                    "Choose devices of this network"
+                );
+            }
+            let response = ask(
+                &owner,
+                crate::owner::OwnerCall::Access {
+                    host: node.into(),
+                    collection: request.collection,
+                    settings: request.settings,
+                },
+            )
+            .await?;
+            if let Some(entry) = response.get("space") {
+                let entry: crate::owner::Space = serde_json::from_value(entry.clone())?;
+                if let Some(list) = published
+                    .spaces
+                    .lock()
+                    .expect("bridge publication mutex poisoned")
+                    .as_mut()
+                {
+                    list.retain(|s| s.collection != entry.collection);
+                    list.push(entry);
+                }
+            }
+            Ok(response)
         }
         Operation::ShareSpace => {
             let request: ShareSpaceRequest = serde_json::from_value(request)?;
@@ -729,6 +777,13 @@ pub(super) fn check_collection_decision(
         .as_object()
         .context("Invalid collection parameters")?;
     let allowed: &[&str] = match body["requested_capability"].as_str() {
+        Some("connect.collection.read") if id.starts_with("connect-prepare:") => {
+            ensure!(
+                parameters.get("phase").and_then(Value::as_str) == Some("prepare"),
+                "Invalid preparation phase"
+            );
+            &["collection_id", "file_name", "peer_node", "phase", "size"]
+        }
         Some("connect.collection.read") => {
             &["collection_id", "file_name", "peer_node", "sha256", "size"]
         }
@@ -740,6 +795,16 @@ pub(super) fn check_collection_decision(
             "directory",
         ],
         Some("connect.collection.list") => &["collection_id", "peer_node", "size", "page_digest"],
+        Some("connect.service.connect") if id.starts_with("connect-service:") => {
+            ensure!(
+                parameters
+                    .get("duration_seconds")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|n| (1..=3600).contains(&n)),
+                "Invalid service duration"
+            );
+            &["collection_id", "peer_node", "size", "duration_seconds"]
+        }
         Some("connect.inbox.write") if id.starts_with("connect-send:") => {
             &["collection_id", "file_name", "peer_node", "sha256", "size"]
         }
@@ -766,7 +831,11 @@ pub(super) fn check_collection_decision(
                 .as_str()
                 .is_some_and(|s| STANDARD.decode(s).is_ok_and(|k| k.len() == 32))
             && parameters["size"].as_u64().is_some_and(|n| n
-                <= if id.starts_with("connect-download:") || id.starts_with("connect-send:") {
+                <= if id.starts_with("connect-download:")
+                    || id.starts_with("connect-send:")
+                    || id.starts_with("connect-prepare:")
+                    || id.starts_with("connect-service:")
+                {
                     crate::session::sharing::download::MAX_FILE_BYTES
                 } else {
                     65536

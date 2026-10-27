@@ -102,6 +102,19 @@ def main():
                     reply({"attestation_id":attestation["attestation_id"], "policy_id":"connect-read"})
                 else:
                     reply({"denied":True})
+            elif command["op"] in ("service_policy", "deny_service"):
+                policy_id = "connect-" + command["collection"]
+                capabilities = ["connect.service.connect"]
+                result = admin("/admin/boundary-policies", {"policy_id":policy_id, "valid_from":now.isoformat(),
+                    "valid_until":(now+timedelta(days=1)).isoformat(),
+                    "selector":{"capabilities":capabilities,"parameter_equals":{"request_parameters.collection_id":[command["collection"]]}},
+                    "gates":[{"gate_id":"peer","gate_type":"allowlist.v1","order":0,"config":{"path":"request_parameters.peer_node","values":[command["peer_node"] if command["op"]=="service_policy" else "denied"]}},
+                        {"gate_id":"size","gate_type":"max_value.v1","order":1,"config":{"path":"request_parameters.size","max":command.get("max_bytes",65536)}}]})
+                admin(f"/admin/boundary-policies/{policy_id}/activate", {"version":result["version"]})
+                if command["op"]=="service_policy":
+                    attestation=admin("/admin/attestations",{"subject_id":"connect-host","subject_public_key":command["host_node"],"roles":["role:client"],"claims":{"capabilities":capabilities}})
+                    reply({"attestation_id":attestation["attestation_id"],"policy_id":policy_id})
+                else: reply({"denied":True})
             elif command["op"] == "revoke_attestation":
                 admin(f"/admin/attestations/{command['attestation_id']}/revoke", {"reason":"test"})
                 reply({"revoked":True})

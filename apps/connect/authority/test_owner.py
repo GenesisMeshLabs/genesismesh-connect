@@ -5,12 +5,47 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from owner import Owner, Refused
+from owner import Owner, Refused, MAX_FILE_BYTES
 from protection import MAGIC
 from genesis_mesh.crypto import generate_keypair
 
 
 class OwnerTests(unittest.TestCase):
+    def test_service_access_editor_versions_limits_expiry_and_preserves_extra_rules(self):
+        import uuid
+        from datetime import datetime, timezone, timedelta
+        with tempfile.TemporaryDirectory() as directory:
+            owner=Owner(Path(directory)/"owner")
+            try:
+                owner.create("Service policy test")
+                host,phone,other=[generate_keypair().public_key_b64 for _ in range(3)]
+                collection=str(uuid.uuid4())
+                entry=owner.space_share(host,collection,"My app",[phone],kind="web")
+                settings=owner.access_get(host,collection)
+                settings["max_bytes"]=4096;settings["max_seconds"]=300
+                settings["expires_at"]=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()
+                custom={"gate_id":"custom-deny","gate_type":"denylist.v1","order":4,"mode":"enforce","disclose_input":False,"config":{"path":"request_parameters.peer_node","values":[other]}}
+                settings["extra_gates"]=[custom]
+                result=owner.access_update(host,collection,settings)
+                self.assertEqual(result["settings"]["version"],2)
+                self.assertEqual(result["settings"]["max_bytes"],4096)
+                self.assertEqual(result["settings"]["extra_gates"],[custom])
+                with self.assertRaises(Refused):owner.access_update(host,collection,settings)
+                with self.assertRaises(Refused):owner.access_get(other,collection)
+                with self.assertRaises(Refused):owner.access_update(other,collection,result["settings"])
+                changed=owner.space_share(host,collection,"Renamed",[phone,other],kind="web")
+                updated=owner.access_get(host,collection)
+                self.assertEqual(updated["max_bytes"],4096)
+                self.assertEqual(updated["extra_gates"],[custom])
+                self.assertEqual(updated["expires_at"],settings["expires_at"])
+                self.assertNotIn(collection,owner.space_renew())
+                broken=dict(updated);broken["extra_gates"]=[dict(custom,gate_id="peer")]
+                with self.assertRaises(Refused):owner.access_update(host,collection,broken)
+                expired=dict(updated);expired["expires_at"]=(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat()
+                with self.assertRaises(Refused):owner.access_update(host,collection,expired)
+                self.assertEqual(owner.access_get(host,collection)["version"],3)
+            finally:owner.close()
+
     def test_create_reopen_and_bound_invite_use_real_authority(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)/"owner"
@@ -82,6 +117,9 @@ class OwnerTests(unittest.TestCase):
                 def peers(policy):
                     return next(g.config["values"] for g in policy.gates if g.gate_id=="peer")
                 self.assertEqual([peers(p) for p in active(entry["policy_id"])],[[phone]])
+                size_gate = next(g for g in active(entry["policy_id"])[0].gates if g.gate_id == "size")
+                self.assertEqual(size_gate.config["max"], (1 << 53) - 1)
+                self.assertEqual(size_gate.config["max"], MAX_FILE_BYTES)
                 # Its host changes the devices: a new version replaces the old.
                 changed=owner.space_share(host,collection,"Photos",[tablet,phone,phone])
                 self.assertEqual(changed["policy_version"],2)
@@ -146,6 +184,34 @@ class OwnerTests(unittest.TestCase):
                 for index in range(16): owner.space_share(host,str(uuid.uuid4()),f"Folder {index}",[phone])
                 with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"One more",[phone])
             finally: owner.close()
+
+    def test_renewal_preserves_operator_limits_and_does_not_reactivate_a_stopped_policy(self):
+        import uuid
+        from datetime import datetime, timedelta, timezone
+        with tempfile.TemporaryDirectory() as directory:
+            owner = Owner(Path(directory) / "owner")
+            try:
+                owner.create("Limits")
+                host, phone = (generate_keypair().public_key_b64 for _ in range(2))
+                entry = owner.space_share(host, str(uuid.uuid4()), "Restricted", [phone])
+                policy = owner.policy_versions(entry["policy_id"])[0]["policy"]
+                for gate in policy["gates"]:
+                    if gate["gate_id"] == "size": gate["config"]["max"] = 23
+                # Simulate a tighter operator policy outside the consumer UI.
+                changed = owner.admin("/admin/boundary-policies", {key: policy[key] for key in ("policy_id", "valid_from", "valid_until", "selector", "gates")})
+                owner.admin(f"/admin/boundary-policies/{entry['policy_id']}/activate", {"version": changed["version"]})
+                entry["valid_until"] = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+                owner._save_spaces([entry])
+                self.assertEqual(owner.space_renew(), [entry["collection"]])
+                active = next(v for v in owner.policy_versions(entry["policy_id"]) if v["active"])
+                self.assertEqual(next(g for g in active["policy"]["gates"] if g["gate_id"] == "size")["config"]["max"], 23)
+                owner.admin(f"/admin/boundary-policies/{entry['policy_id']}/deactivate", {"version": active["version"]})
+                entry["valid_until"] = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+                owner._save_spaces([entry])
+                self.assertEqual(owner.space_renew(), [])
+                self.assertFalse(any(v["active"] for v in owner.policy_versions(entry["policy_id"])))
+            finally:
+                owner.close()
 
     def test_removing_a_device_revokes_it_and_takes_it_off_every_space(self):
         import base64

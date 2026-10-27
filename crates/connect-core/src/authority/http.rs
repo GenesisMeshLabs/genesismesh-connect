@@ -15,6 +15,9 @@ pub struct LocalAuthority {
 }
 
 impl LocalAuthority {
+    pub(crate) fn port(&self) -> u16 {
+        self.base.port().expect("validated authority port")
+    }
     pub(super) async fn exchange_public_attestation(&self, id: &str) -> Result<Value> {
         self.exchange(Method::GET, &format!("/attestations/{id}"), None)
             .await

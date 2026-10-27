@@ -231,6 +231,7 @@ impl SessionEndpoint {
         trust.certificate(&identity.certificate, &identity.public_key(), Utc::now())?;
         let mut protocols = vec![ALPN.to_vec()];
         if share.is_some() {
+            protocols.push(wire::Protocol::Service.alpn().to_vec());
             protocols.push(wire::Protocol::Read.alpn().to_vec());
             protocols.push(wire::Protocol::List.alpn().to_vec());
             protocols.push(wire::Protocol::Catalog.alpn().to_vec());
@@ -769,6 +770,13 @@ async fn accept_sessions(
                 tasks.spawn(async move {
                     let Ok(Ok(connection)) = timeout(DEADLINE, incoming).await else { return };
                     limit_streams(&connection);
+                    if connection.alpn()==wire::Protocol::Service.alpn() {
+                        if let Some(shares) = share.as_deref() {
+                            let _ = sharing::service::serve(&connection, local_id, &credentials, shares, changes).await;
+                        }
+                        connection.close(0u32.into(), b"service ended");
+                        return;
+                    }
                     let deadline=if connection.alpn()==wire::Protocol::Download.alpn() || connection.alpn()==wire::Protocol::NestedDownload.alpn() || connection.alpn()==wire::Protocol::Send.alpn(){Duration::from_secs(120)}else if connection.alpn()==wire::Protocol::Read.alpn(){Duration::from_secs(20)}else{DEADLINE};
                     let exchange = timeout(deadline, async {
                         if connection.alpn()==wire::Protocol::Read.alpn(){

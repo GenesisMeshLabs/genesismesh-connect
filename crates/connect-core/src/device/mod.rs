@@ -5,6 +5,7 @@ pub(crate) mod owner_store;
 mod sealed_store;
 #[cfg(target_os = "linux")]
 pub use sealed_store::{MASTER_KEY_CREDENTIAL, use_sealed_store};
+mod lifecycle;
 mod vault;
 pub(crate) use vault::validate_peer;
 
@@ -45,6 +46,7 @@ pub struct PairedDevice {
 
 #[derive(Serialize)]
 pub struct DeviceStatus {
+    pub disconnected: bool,
     pub network: String,
     pub root_public_key: String,
     pub trust_checkpoint: crate::authority::TrustCheckpointStatus,
@@ -177,6 +179,10 @@ impl DeviceController {
     }
 
     fn prepare_profile(path: &Path, authority: Option<String>, pin: TrustPin) -> Result<Self> {
+        ensure!(
+            !Self::leaving(path),
+            "Finish leaving the previous network first."
+        );
         ensure!(!path.exists(), "This device is already prepared");
         let parent = path.parent().context("Missing application directory")?;
         std::fs::create_dir_all(parent)?;
@@ -239,6 +245,10 @@ impl DeviceController {
     }
 
     pub fn open(path: &Path) -> Result<Self> {
+        ensure!(
+            !Self::leaving(path),
+            "Leaving this network is unfinished. Restart Connect to finish cleanup."
+        );
         let vault = Vault::open(&path.join("device.bin"))?;
         let trust = TrustStore::open(&path.join("trust.json"), vault.pin())?;
         let authority = vault.authority().map(LocalAuthority::new).transpose()?;
@@ -276,6 +286,7 @@ impl DeviceController {
 
     pub fn status(&self) -> Result<DeviceStatus> {
         Ok(DeviceStatus {
+            disconnected: self.vault.disconnected(),
             network: self.vault.pin().network_name.clone(),
             root_public_key: self.vault.pin().root_public_key.clone(),
             trust_checkpoint: self.trust.status(),
@@ -430,6 +441,7 @@ impl DeviceController {
     }
 
     pub async fn enroll(&mut self, invite: &str) -> Result<()> {
+        self.require_connected()?;
         ensure!(self.device.is_none(), "This device is already enrolled");
         ensure!(
             self.bridge_client.is_some() || self.authority.is_some(),
@@ -456,6 +468,7 @@ impl DeviceController {
         Ok(())
     }
     pub async fn enroll_host(&mut self, invite: &str) -> Result<()> {
+        self.require_connected()?;
         ensure!(
             self.device.is_none(),
             "Choose sharing host enrollment before enrolling this profile"
@@ -607,6 +620,7 @@ impl DeviceController {
         recipients: Vec<String>,
         kind: crate::session::sharing::SpaceKind,
     ) -> Result<ShareConfig> {
+        self.require_connected()?;
         let client = self
             .bridge_client
             .clone()
@@ -625,6 +639,69 @@ impl DeviceController {
         self.set_space(config.clone()).await?;
         Ok(config)
     }
+    pub async fn share_service(
+        &mut self,
+        directory: std::path::PathBuf,
+        name: String,
+        recipients: Vec<String>,
+        kind: crate::session::sharing::SpaceKind,
+        target: crate::session::sharing::service::Target,
+    ) -> Result<ShareConfig> {
+        self.require_connected()?;
+        target.validate()?;
+        ensure!(kind.is_service(), "Choose a service type");
+        let client = self
+            .bridge_client
+            .clone()
+            .context("Share from the network computer using its own screen")?;
+        let identity = self
+            .device
+            .as_ref()
+            .context("Join first")?
+            .session_identity()?;
+        let trust = client.refresh(&mut self.trust).await?;
+        let view = client
+            .share_space(
+                identity,
+                trust,
+                uuid::Uuid::new_v4().to_string(),
+                name,
+                recipients,
+                kind,
+            )
+            .await?;
+        let mut config = Self::space_config(view, directory)?;
+        config.service = Some(target);
+        self.set_space(config.clone()).await?;
+        Ok(config)
+    }
+    pub async fn access_policy(
+        &mut self,
+        collection: String,
+        settings: Option<crate::owner::AccessPolicy>,
+    ) -> Result<serde_json::Value> {
+        self.require_connected()?;
+        ensure!(
+            self.vault
+                .saved_shares()
+                .iter()
+                .any(|s| s.collection_id == collection),
+            "Only the sharing device can manage access"
+        );
+        let client = self
+            .bridge_client
+            .clone()
+            .context("Manage access on the network computer")?;
+        let identity = self
+            .device
+            .as_ref()
+            .context("Join first")?
+            .session_identity()?;
+        let trust = client.refresh(&mut self.trust).await?;
+        client
+            .access_policy(identity, trust, collection, settings)
+            .await
+    }
     /// The saved form of one of this device's Spaces.
     pub fn space_config(view: SpaceView, directory: std::path::PathBuf) -> Result<ShareConfig> {
         let grant = view.grant.context("Missing shared folder grant")?;
@@ -636,6 +713,7 @@ impl DeviceController {
             name: view.name,
             recipients: grant.recipients,
             kind: view.kind,
+            service: None,
         })
     }
     /// Stop one of this device's Spaces here, then ask the network computer
@@ -650,6 +728,9 @@ impl DeviceController {
             "Only the device sharing a folder can stop sharing it"
         );
         self.drop_space(collection).await?;
+        if self.vault.disconnected() {
+            return Ok(false);
+        }
         // The network computer's own Spaces are removed by its owner runtime.
         let (Some(client), Some(device)) = (self.bridge_client.clone(), self.device.as_ref())
         else {
@@ -758,6 +839,7 @@ impl DeviceController {
         card: crate::session::pairing::PairCard,
         name: String,
     ) -> Result<crate::session::pairing::PairClient> {
+        self.require_connected()?;
         ensure!(
             self.vault.pin() == &card.pin && self.device.is_none(),
             "This device already belongs to a network. Its identity was preserved."
@@ -773,6 +855,7 @@ impl DeviceController {
     /// Only an already-enrolled device can adopt the bridge. Complete one
     /// mutually authenticated renewal, then atomically persist route + credential.
     pub async fn use_bridge(&mut self, route: BridgeRoute) -> Result<()> {
+        self.require_connected()?;
         ensure!(
             self.sharing.is_none(),
             "Disable sharing before changing the authority connection"
@@ -825,6 +908,7 @@ impl DeviceController {
     }
 
     pub async fn start(&mut self, peer: &str) -> Result<()> {
+        self.require_connected()?;
         ensure!(
             STANDARD.decode(peer).is_ok_and(|k| k.len() == 32),
             "Enter the other device's node public key"
@@ -844,6 +928,7 @@ impl DeviceController {
     /// Call every 30 seconds while running, and immediately after resume. Every
     /// failed check suspends sessions; an unchanged old CRL alone is not freshness.
     pub async fn refresh(&mut self) -> Result<()> {
+        self.require_connected()?;
         if self.device.is_none() {
             return Ok(());
         }
@@ -909,6 +994,7 @@ impl DeviceController {
             return Ok(());
         };
         let inboxes_listed = listing.inboxes.is_some();
+        let services_listed = listing.services.is_some();
         let mut views = listing.spaces;
         // Inboxes the computer did not list just now stay as last listed.
         views.extend(listing.inboxes.unwrap_or_else(|| {
@@ -916,6 +1002,14 @@ impl DeviceController {
                 .spaces()
                 .iter()
                 .filter(|space| space.kind == crate::session::sharing::SpaceKind::Inbox)
+                .cloned()
+                .collect()
+        }));
+        views.extend(listing.services.unwrap_or_else(|| {
+            self.vault
+                .spaces()
+                .iter()
+                .filter(|s| s.kind.is_service())
                 .cloned()
                 .collect()
         }));
@@ -936,11 +1030,14 @@ impl DeviceController {
             .into_iter()
             .filter(|collection| {
                 !listing.listed.contains(collection)
-                    && (inboxes_listed
-                        || self.vault.saved_shares().iter().any(|share| {
-                            share.collection_id == *collection
-                                && share.kind != crate::session::sharing::SpaceKind::Inbox
-                        }))
+                    && self.vault.saved_shares().iter().any(|share| {
+                        share.collection_id == *collection
+                            && match share.kind {
+                                crate::session::sharing::SpaceKind::Inbox => inboxes_listed,
+                                kind if kind.is_service() => services_listed,
+                                _ => true,
+                            }
+                    })
             })
             .collect();
         let ended: Vec<String> = unlisted.intersection(&self.unlisted).cloned().collect();
@@ -985,7 +1082,8 @@ impl DeviceController {
         self.endpoint.is_some()
     }
     pub fn needs_maintenance(&self) -> bool {
-        self.endpoint.is_some() || self.pairing.is_some() || self.vault.auto_connect()
+        !self.vault.disconnected()
+            && (self.endpoint.is_some() || self.pairing.is_some() || self.vault.auto_connect())
     }
 
     fn record_outcome<T>(&mut self, outcome: &Result<T>) {
@@ -1008,6 +1106,7 @@ impl DeviceController {
     }
 
     async fn refresh_inner(&mut self, start: bool) -> Result<crate::session::TrustSnapshot> {
+        self.require_connected()?;
         let device = self.device.as_mut().context("Enroll this device first")?;
         if device.renewal_due() {
             if let Some(endpoint) = &self.endpoint {
@@ -1134,6 +1233,7 @@ impl DeviceController {
     }
 
     pub fn session(&self) -> Result<Arc<SessionEndpoint>> {
+        self.require_connected()?;
         self.endpoint
             .clone()
             .context("Start an authenticated session first")
@@ -1205,7 +1305,7 @@ impl DeviceController {
         self.vault.enable_consumer()
     }
     pub async fn reconnect_saved(&mut self) -> Result<()> {
-        if !self.vault.auto_connect() || self.endpoint.is_some() {
+        if self.vault.disconnected() || !self.vault.auto_connect() || self.endpoint.is_some() {
             return Ok(());
         }
         let Some(peer) = self.vault.paired() else {

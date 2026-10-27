@@ -21,7 +21,6 @@ const MAX_HEADER: usize = 512 * 1024;
 /// total size.
 const MAX_STAGED: usize = 4;
 const MAX_STAGED_PER_SENDER: usize = 2;
-const MAX_STAGED_BYTES: u64 = 2 * MAX_FILE_BYTES;
 /// An unfinished file nobody continues is dropped after this long, long
 /// enough for either device to restart and carry on.
 const STAGED_FOR: Duration = Duration::from_secs(3600);
@@ -502,6 +501,21 @@ impl Incoming {
     ) -> std::result::Result<(File, Option<Sha256>), Refusal> {
         let mut entries = self.entries.lock().expect("incoming files");
         self.expire(&mut entries);
+        // Reserve the outstanding bytes of all admitted files, not just this
+        // window. Recheck on every window because other apps can fill storage.
+        let pending = entries
+            .values()
+            .try_fold(0u64, |total, entry| {
+                total.checked_add(entry.record.size.saturating_sub(entry.record.received))
+            })
+            .ok_or(Refusal::Busy)?;
+        let additional = if entries.contains_key(token) {
+            pending
+        } else {
+            pending.checked_add(request.size).ok_or(Refusal::Busy)?
+        };
+        crate::transfer_limits::ensure_space(&self.directory, additional)
+            .map_err(|_| Refusal::Busy)?;
         if let Some(entry) = entries.get_mut(token) {
             // Checked again here: a window that waited its turn may have been
             // overtaken by one for the same offset.
@@ -661,14 +675,11 @@ fn same_file(record: &Record, peer: &str, request: &Request) -> bool {
 }
 /// Whether the inbox has room for one more unfinished file from `peer`.
 fn room(entries: &BTreeMap<String, Staged>, peer: &str, size: u64) -> bool {
-    let staged: u64 = entries.values().map(|entry| entry.record.size).sum();
     let own = entries
         .values()
         .filter(|entry| entry.record.peer == peer)
         .count();
-    entries.len() < MAX_STAGED
-        && own < MAX_STAGED_PER_SENDER
-        && staged.saturating_add(size) <= MAX_STAGED_BYTES
+    entries.len() < MAX_STAGED && own < MAX_STAGED_PER_SENDER && size <= MAX_FILE_BYTES
 }
 
 fn validate(request: &Request) -> Result<()> {

@@ -129,6 +129,47 @@ pub struct Downloads {
     unfinished: Arc<Mutex<BTreeMap<String, Record>>>,
     budget: Arc<tokio::sync::Semaphore>,
 }
+
+fn clear_directory(directory: &Path) -> Result<()> {
+    if !directory.try_exists()? {
+        return Ok(());
+    }
+    let metadata = std::fs::symlink_metadata(directory)?;
+    ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "Invalid download cache"
+    );
+    let parent = directory
+        .parent()
+        .context("Missing cache parent")?
+        .canonicalize()?;
+    ensure!(
+        directory.canonicalize()?.parent() == Some(parent.as_path()),
+        "Download cache is outside its directory"
+    );
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let metadata = std::fs::symlink_metadata(entry.path())?;
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            std::fs::remove_dir_all(entry.path())?;
+        } else {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn clear_previous_network(app: &tauri::App) -> Result<()> {
+    clear_directory(&app.path().app_cache_dir()?.join("connect-downloads"))
+}
+
+/// Called with the exclusive transfer guard, after the device has stopped.
+pub(crate) fn clear_network(state: &Downloads) -> Result<()> {
+    state.job.lock().expect("download state").take();
+    clear_directory(&state.directory)?;
+    state.unfinished.lock().expect("download state").clear();
+    Ok(())
+}
 pub fn setup(app: &mut tauri::App) -> Result<()> {
     let directory = app.path().app_cache_dir()?.join("connect-downloads");
     std::fs::create_dir_all(&directory)?;
@@ -440,7 +481,7 @@ pub async fn download_file(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     if size > MAX_FILE_BYTES {
-        return Err("Choose a file up to 1 GB.".into());
+        return Err("This file exceeds the supported exact byte-count range.".into());
     }
     let record = Record {
         collection_id,
@@ -495,6 +536,12 @@ async fn start(
     existing: Option<String>,
     record: Record,
 ) -> Result<String, String> {
+    let network = app
+        .state::<crate::desktop::DesktopState>()
+        .transfers
+        .clone()
+        .try_read_owned()
+        .map_err(|_| "This device is changing networks. Try again shortly.")?;
     let state = app.state::<Downloads>();
     let permit = state
         .budget
@@ -535,6 +582,7 @@ async fn start(
     let unfinished = state.unfinished.clone();
     let task_id = id.clone();
     tauri::async_runtime::spawn(async move {
+        let _network = network;
         let folder_path = cache.join(&folder_id);
         let size = record.size;
         // A file that keeps changing: nothing to continue.
@@ -555,6 +603,10 @@ async fn start(
             store(&folder_path.join(RECORD), &record)?;
             folder.keep = true;
             let mut output = open_bytes(&folder_path, &mut record)?;
+            connect_core::transfer_limits::ensure_space(
+                &cache,
+                size.saturating_sub(record.received),
+            )?;
             store(&folder_path.join(RECORD), &record)?;
             update(&jobs, &task_id, |job| {
                 job.progress.received = record.received
@@ -567,6 +619,7 @@ async fn start(
             // A download that had every byte when it stopped is only checked.
             let mut done = offset == size && digest.is_some();
             while !done {
+                connect_core::transfer_limits::ensure_space(&cache, size.saturating_sub(offset))?;
                 let started = Instant::now();
                 let mut request = Request {
                     request_id: uuid::Uuid::new_v4().to_string(),
@@ -580,6 +633,7 @@ async fn start(
                     length,
                 };
                 let (mut retries, mut attempts) = (0, 0u32);
+                let waiting_since = Instant::now();
                 let window = loop {
                     match session
                         .download_window_from(
@@ -591,6 +645,15 @@ async fn start(
                         .await
                     {
                         Ok(window) => break window,
+                        Err(error)
+                            if error.to_string().contains("busy")
+                                && waiting_since.elapsed() < Duration::from_secs(30 * 60) =>
+                        {
+                            // A large immutable copy may outlast one connection.
+                            // The host retains it; cancellation still drops this
+                            // future through the transfer's outer select.
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                        }
                         Err(error)
                             if retries < 5
                                 && (error.to_string() == "Trust changed during download"
@@ -827,10 +890,16 @@ pub async fn save_download(id: String, app: tauri::AppHandle) -> Result<bool, St
         else {
             return Ok(false);
         };
-        tokio::task::spawn_blocking(move || std::fs::copy(&file.path, destination.path()))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
+        tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
+            connect_core::transfer_limits::ensure_space(
+                destination.path().parent().context("Missing save folder")?,
+                file.path.metadata()?.len(),
+            )?;
+            Ok(std::fs::copy(&file.path, destination.path())?)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
         Ok(true)
     }
     #[cfg(mobile)]
@@ -848,6 +917,36 @@ pub async fn save_download(id: String, app: tauri::AppHandle) -> Result<bool, St
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn leaving_clears_only_download_cache_and_is_repeatable() -> anyhow::Result<()> {
+        let app = tempfile::tempdir()?;
+        let cache = app.path().join("connect-downloads");
+        std::fs::create_dir_all(cache.join("partial"))?;
+        std::fs::write(cache.join("partial/file"), b"partial")?;
+        std::fs::write(app.path().join("exported.txt"), b"keep")?;
+        super::clear_directory(&cache)?;
+        super::clear_directory(&cache)?;
+        assert_eq!(std::fs::read_dir(&cache)?.count(), 0);
+        assert_eq!(std::fs::read(app.path().join("exported.txt"))?, b"keep");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn leaving_cache_does_not_follow_links() -> anyhow::Result<()> {
+        let app = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        std::fs::write(outside.path().join("keep"), b"keep")?;
+        let cache = app.path().join("connect-downloads");
+        std::os::unix::fs::symlink(outside.path(), &cache)?;
+        assert!(super::clear_directory(&cache).is_err());
+        std::fs::remove_file(&cache)?;
+        std::fs::create_dir(&cache)?;
+        std::os::unix::fs::symlink(outside.path(), cache.join("linked"))?;
+        super::clear_directory(&cache)?;
+        assert_eq!(std::fs::read(outside.path().join("keep"))?, b"keep");
+        Ok(())
+    }
     use super::*;
 
     fn record(name: &str, received: u64) -> Record {

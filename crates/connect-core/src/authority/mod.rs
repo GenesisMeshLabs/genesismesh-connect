@@ -161,7 +161,8 @@ impl LocalAuthority {
             [
                 "connect.collection.read",
                 "connect.collection.list",
-                "connect.inbox.write"
+                "connect.inbox.write",
+                "connect.service.connect"
             ]
             .contains(&capability),
             "Unsupported collection action"

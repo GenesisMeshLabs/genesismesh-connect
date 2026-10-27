@@ -113,7 +113,10 @@ impl Collection {
         );
         Ok(())
     }
-    fn downloadable(&self, file_name: &str) -> Result<(cap_std::fs::File, Entry)> {
+    pub(in crate::session::sharing) fn downloadable(
+        &self,
+        file_name: &str,
+    ) -> Result<(cap_std::fs::File, Entry)> {
         name(file_name)?;
         let mut options = OpenOptions::new();
         options.read(true).follow(FollowSymlinks::No);
@@ -126,7 +129,7 @@ impl Collection {
         let metadata = file.metadata()?;
         ensure!(
             metadata.is_file() && metadata.nlink() == 1 && metadata.len() <= MAX_FILE_BYTES,
-            "Choose a regular file up to 1 GiB with one link"
+            "Choose a regular file with one link and an exactly representable size"
         );
         let entry = Entry {
             name: file_name.to_owned(),
@@ -180,8 +183,10 @@ impl Collection {
         let mut source = source.into_std();
         source.try_lock_shared().context("The file is in use")?;
         let mut snapshot = tempfile::NamedTempFile::new_in(cache)?;
+        crate::transfer_limits::ensure_space(cache, entry.bytes)?;
         let mut hash = Sha256::new();
         let mut copied = 0u64;
+        let mut checked_at = 0u64;
         let mut buffer = Zeroizing::new([0u8; 64 * 1024]);
         loop {
             let count = source.read(&mut *buffer)?;
@@ -193,6 +198,13 @@ impl Collection {
                 copied <= entry.bytes && copied <= MAX_FILE_BYTES,
                 "The file changed while preparing it"
             );
+            if copied - checked_at >= crate::transfer_limits::SPACE_CHECK_BYTES {
+                crate::transfer_limits::ensure_space(
+                    cache,
+                    entry.bytes.saturating_sub(copied) + count as u64,
+                )?;
+                checked_at = copied;
+            }
             snapshot.write_all(&buffer[..count])?;
             hash.update(&buffer[..count]);
         }
@@ -213,6 +225,75 @@ impl Collection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "Writes and hashes a real snapshot above 1 GiB; requires free disk space"]
+    fn snapshot_above_one_gib_is_complete_and_bounded() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let cache = tempfile::tempdir()?;
+        let size = (1u64 << 30) + 17;
+        crate::transfer_limits::ensure_space(cache.path(), size * 2)?;
+        let mut file = File::create(root.path().join("big.bin"))?;
+        file.set_len(size)?;
+        file.seek(SeekFrom::Start(size - 3))?;
+        file.write_all(b"end")?;
+        drop(file);
+        let collection = Collection::open(root.path())?;
+        let entry = &collection.catalog(None)?.0[0];
+        let snapshot = collection.download_snapshot("big.bin", &entry.version, cache.path())?;
+        assert_eq!(snapshot.size, size);
+        let (mut last, digest) = snapshot.window(size - 3, 3)?;
+        let mut bytes = [0; 3];
+        last.read_exact(&mut bytes)?;
+        assert_eq!(&bytes, b"end");
+        assert_eq!(digest, super::super::sha(b"end"));
+        let mut expected = Sha256::new();
+        let zeros = [0u8; 65536];
+        let mut remaining = size - 3;
+        while remaining > 0 {
+            let n = remaining.min(zeros.len() as u64) as usize;
+            expected.update(&zeros[..n]);
+            remaining -= n as u64;
+        }
+        expected.update(b"end");
+        assert_eq!(snapshot.sha256, super::super::hex(&expected.finalize()));
+        Ok(())
+    }
+    #[test]
+    fn sparse_file_above_four_gib_has_exact_catalog_size_and_offsets() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("archive.bin");
+        let size = (1u64 << 32) + 123;
+        let mut file = File::create(&path)?;
+        file.set_len(size)?;
+        file.seek(SeekFrom::Start(size - 3))?;
+        file.write_all(b"end")?;
+        drop(file);
+        let collection = Collection::open(root.path())?;
+        let (entries, _) = collection.catalog(None)?;
+        assert_eq!(entries[0].bytes, size);
+        collection.check_download_version("archive.bin", &entries[0].version, size)?;
+        assert!(
+            collection
+                .check_download_version("archive.bin", &entries[0].version, size - 1)
+                .is_err()
+        );
+        // Exercise snapshot window offsets without copying a multi-GB fixture.
+        let mut staged = tempfile::NamedTempFile::new_in(root.path())?;
+        staged.as_file().set_len(size)?;
+        staged.seek(SeekFrom::Start(size - 3))?;
+        staged.write_all(b"end")?;
+        let snapshot = Snapshot {
+            file: staged,
+            size,
+            sha256: String::new(),
+        };
+        let (mut window, digest) = snapshot.window(size - 3, 3)?;
+        let mut bytes = [0; 3];
+        window.read_exact(&mut bytes)?;
+        assert_eq!(&bytes, b"end");
+        assert_eq!(digest, super::super::sha(b"end"));
+        Ok(())
+    }
     #[test]
     fn nested_folders_are_confined_and_paged_without_following_links() -> Result<()> {
         use super::super::super::browse::Kind;

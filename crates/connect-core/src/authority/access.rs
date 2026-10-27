@@ -14,6 +14,13 @@ impl From<LocalAuthority> for AuthorityAccess {
     }
 }
 impl AuthorityAccess {
+    pub(crate) fn check_service_port(&self, port: u16) -> Result<()> {
+        ensure!(
+            !matches!(self, Self::Local(authority) if authority.port() == port),
+            "The network authority cannot be shared as a service"
+        );
+        Ok(())
+    }
     pub(crate) async fn refresh(&self, store: &mut TrustStore) -> Result<TrustSnapshot> {
         match self {
             Self::Local(authority) => authority.refresh(store).await,
