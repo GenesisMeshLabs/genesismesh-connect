@@ -446,13 +446,11 @@ async fn spaces_once(
                     }
                 }
             }
-            // This computer's Spaces it no longer shares are removed again,
+            // This computer's Spaces it no longer saves are removed again,
             // for example after a stop the runtime could not finish.
             let mut spaces = runtime.space_list()?;
-            for space in spaces.iter().filter(|space| {
-                space.host == node && !shares.iter().any(|s| s.collection_id == space.collection)
-            }) {
-                let _ = runtime.space_remove(&node, &space.collection);
+            for collection in connect_core::owner::orphaned(&spaces, &node, &shares) {
+                let _ = runtime.space_remove(&node, &collection);
             }
             spaces = runtime.space_list()?;
             Ok::<_, anyhow::Error>((spaces, moved))
@@ -467,29 +465,37 @@ async fn spaces_once(
         *renewed = Some(std::time::Instant::now());
     }
     let mut slot = desktop.slot.lock().await;
-    drop(owner);
     let Some(device) = slot.controller.as_mut() else {
         return Ok(());
     };
+    // Published while no change can come between the list and its copy.
+    device.publish_spaces(spaces.clone());
+    drop(owner);
+    let mut problem = None;
     for (space, directory) in moved {
-        // Only a folder still shared as it was gets its new form.
+        // Only a folder still shared as it was gets its new form; a failure
+        // leaves it as it was, for the next pass.
         let still = device
             .status()?
             .shares
             .iter()
             .any(|s| s.collection_id == space.collection && s.name.is_empty());
-        if let Some(view) = SpaceView::of(space, &status.node_public_key).filter(|_| still) {
-            device
+        if let Some(view) = SpaceView::of(space, &status.node_public_key).filter(|_| still)
+            && let Err(error) = device
                 .set_space(DeviceController::space_config(view, directory)?)
-                .await?;
+                .await
+        {
+            problem = Some(error.to_string());
         }
     }
-    device.publish_spaces(spaces.clone());
     let views = spaces
         .into_iter()
         .filter_map(|space| SpaceView::of(space, &status.node_public_key))
         .collect();
     device.apply_spaces(views)?;
+    if problem.is_some() {
+        slot.problem = problem;
+    }
     Ok(())
 }
 

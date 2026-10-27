@@ -68,7 +68,8 @@ pub struct DeviceStatus {
     pub sharing_enabled: bool,
     /// The first shared folder, for profiles from before Spaces.
     pub sharing_config: Option<ShareConfig>,
-    /// The Spaces this device shares.
+    /// The Spaces this device shares, as saved: a folder that could not be
+    /// opened (an unplugged disk, say) stays shared and listed.
     pub shares: Vec<ShareConfig>,
     /// The Spaces this device hosts or that name it, as last listed.
     pub spaces: Vec<SpaceView>,
@@ -303,7 +304,7 @@ impl DeviceController {
                 .map(str::to_owned),
             sharing_enabled: self.sharing.is_some(),
             sharing_config: self.shares().into_iter().next(),
-            shares: self.shares(),
+            shares: self.vault.saved_shares().to_vec(),
             spaces: self.vault.spaces().to_vec(),
             paired_device: self.vault.paired().cloned(),
             devices: self.vault.peers().to_vec(),

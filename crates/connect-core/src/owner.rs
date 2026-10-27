@@ -54,6 +54,23 @@ pub struct Space {
     pub valid_until: String,
 }
 
+/// The Spaces `host` still has in the registry but no longer shares: saved
+/// shares count, running or not, so a folder that could not be opened is
+/// never mistaken for a stopped one.
+pub fn orphaned(
+    spaces: &[Space],
+    host: &str,
+    saved: &[crate::session::sharing::ShareConfig],
+) -> Vec<String> {
+    spaces
+        .iter()
+        .filter(|space| {
+            space.host == host && !saved.iter().any(|s| s.collection_id == space.collection)
+        })
+        .map(|space| space.collection.clone())
+        .collect()
+}
+
 /// What the network computer's authority bridge asks of the owner runtime on
 /// a device's behalf. The host is always the authenticated device.
 #[derive(Debug)]
@@ -399,5 +416,42 @@ impl Drop for OwnerRuntime {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_spaces_the_host_no_longer_saves_are_orphaned() {
+        let space = |collection: &str, host: &str| Space {
+            collection: collection.into(),
+            name: "Photos".into(),
+            host: host.into(),
+            subject: "connect-device-test".into(),
+            recipients: vec!["phone".into()],
+            created_at: "2026-10-27T00:00:00+00:00".into(),
+            policy_id: format!("connect-{collection}"),
+            policy_version: 1,
+            attestation_id: "a".into(),
+            valid_until: "2027-01-25T00:00:00+00:00".into(),
+        };
+        let saved = |collection: &str| crate::session::sharing::ShareConfig {
+            collection_id: collection.into(),
+            ..Default::default()
+        };
+        let spaces = [
+            space("kept", "computer"),
+            space("stopped", "computer"),
+            space("theirs", "laptop"),
+        ];
+        assert_eq!(
+            orphaned(&spaces, "computer", &[saved("kept")]),
+            ["stopped"],
+            "A saved share stays even when it could not be opened"
+        );
+        assert!(orphaned(&spaces, "computer", &[saved("kept"), saved("stopped")]).is_empty());
+        assert_eq!(orphaned(&spaces, "laptop", &[]), ["theirs"]);
     }
 }

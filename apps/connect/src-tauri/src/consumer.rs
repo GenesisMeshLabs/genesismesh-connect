@@ -468,6 +468,10 @@ pub async fn share_folder(
                 let config = connect_core::device::DeviceController::space_config(view, directory)
                     .map_err(error)?;
                 device.set_space(config).await.map_err(error)?;
+                // Devices see the new Space at once.
+                if let Ok(spaces) = runtime.space_list() {
+                    device.publish_spaces(spaces);
+                }
             }
             None => {
                 drop(owner);
@@ -512,6 +516,9 @@ pub async fn stop_sharing(
                 device.drop_space(&id).await.map_err(error)?;
                 // If this fails, the next pass over the Spaces removes it.
                 confirmed &= runtime.space_remove(&status.node_public_key, &id).is_ok();
+                if let Ok(spaces) = runtime.space_list() {
+                    device.publish_spaces(spaces);
+                }
             }
             None => confirmed &= device.unshare_space(&id).await.map_err(error)?,
         }

@@ -235,7 +235,9 @@ class Owner:
         response = self.session.get(self.origin+path,headers=headers,timeout=5,allow_redirects=False)
         if response.status_code == 400 and response.json().get("error", {}).get("code") == "boundary_policy_not_found":
             return []
-        if response.status_code != 200 or len(response.content) > 512*1024:
+        # Every change and renewal adds a version with its full policy, so the
+        # history grows over the years; allow it room.
+        if response.status_code != 200 or len(response.content) > 16*1024*1024:
             raise Refused(f"The network authority refused this operation ({response.status_code}).")
         return response.json()["versions"]
 
