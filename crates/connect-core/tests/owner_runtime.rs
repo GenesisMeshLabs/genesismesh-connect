@@ -101,4 +101,114 @@ mod desktop {
         drop(owner);
         Ok(())
     }
+
+    #[tokio::test]
+    #[ignore = "Requires the packaged, standalone owner runtime"]
+    async fn a_recovery_file_brings_the_same_network_computer_back_elsewhere() -> Result<()> {
+        use connect_core::recovery;
+        let directory = tempfile::tempdir()?;
+        let first = directory.path().join("first");
+        let mut owner = OwnerRuntime::start(&binary()?, &first.join("network-owner"))?;
+        let info = owner.create("Moving home")?;
+        let mut computer =
+            DeviceController::prepare(&first.join("device"), info.url.clone(), info.pin.clone())?;
+        computer.enable_managed_connectivity()?;
+        let node = computer.status()?.node_public_key;
+        let invite = owner.invite(&node, true)?;
+        computer.enroll_host(&invite).await?;
+        let certificate = computer.status()?.certificate_id;
+        let mut phone = DeviceController::prepare(
+            &directory.path().join("phone"),
+            info.url.clone(),
+            info.pin.clone(),
+        )?;
+        let phone_node = phone.status()?.node_public_key;
+        let invite = owner.invite(&phone_node, false)?;
+        phone.enroll(&invite).await?;
+        assert!(
+            phone.recovery_identity().is_err(),
+            "Only the network computer writes recovery files"
+        );
+
+        let file = directory.path().join("Home.gmrecovery");
+        let key = recovery::create(
+            &mut owner,
+            info.pin.clone(),
+            computer.recovery_identity()?,
+            &file,
+        )?;
+        let bytes = std::fs::read(&file)?;
+        assert!(!bytes.windows(node.len()).any(|w| w == node.as_bytes()));
+        drop(computer);
+        drop(owner);
+
+        let second = directory.path().join("second");
+        let start = |dir: &std::path::Path| OwnerRuntime::start(&binary()?, dir);
+        assert!(
+            recovery::restore(
+                &file,
+                &recovery::new_key()?,
+                &second.join("network-owner"),
+                &second.join("device"),
+                start
+            )
+            .is_err()
+        );
+        let mut changed = bytes.clone();
+        let last = changed.len() - 1;
+        changed[last] ^= 1;
+        std::fs::write(directory.path().join("changed.gmrecovery"), &changed)?;
+        assert!(
+            recovery::restore(
+                &directory.path().join("changed.gmrecovery"),
+                &key,
+                &second.join("network-owner"),
+                &second.join("device"),
+                start
+            )
+            .is_err()
+        );
+        assert!(
+            !second.join("network-owner").exists() && !second.join("device").exists(),
+            "A refused restore leaves nothing behind"
+        );
+
+        let mut restored = recovery::restore(
+            &file,
+            &key,
+            &second.join("network-owner"),
+            &second.join("device"),
+            start,
+        )?;
+        assert_eq!(restored.info.pin, info.pin);
+        let status = restored.device.status()?;
+        assert_eq!(status.node_public_key, node, "The same computer identity");
+        assert_eq!(status.certificate_id, certificate);
+        assert!(status.connectivity.network_computer);
+        restored.device.refresh().await?;
+        let newcomer = DeviceController::prepare(
+            &directory.path().join("newcomer"),
+            restored.info.url.clone(),
+            restored.info.pin.clone(),
+        )?;
+        let newcomer_node = newcomer.status()?.node_public_key;
+        assert!(!restored.owner.invite(&newcomer_node, false)?.is_empty());
+        // Devices enrolled before the move stay valid on the restored network.
+        phone.rebind_owned_authority(restored.info.url.clone(), &restored.info.pin)?;
+        phone.refresh().await?;
+        assert!(
+            recovery::restore(
+                &file,
+                &key,
+                &second.join("network-owner"),
+                &second.join("device"),
+                start
+            )
+            .is_err(),
+            "A restore never replaces an existing network"
+        );
+        drop(phone);
+        drop(restored);
+        Ok(())
+    }
 }

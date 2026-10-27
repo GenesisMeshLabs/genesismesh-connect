@@ -100,6 +100,8 @@ pub fn run() {
             workflow::network_status,
             workflow::network_create,
             workflow::network_attach,
+            workflow::recovery_create,
+            workflow::recovery_restore,
             consumer::pair_cancel,
             consumer::home_status,
             consumer::pair_begin,

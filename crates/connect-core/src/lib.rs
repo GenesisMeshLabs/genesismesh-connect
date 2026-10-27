@@ -8,6 +8,7 @@ pub mod connectivity;
 pub mod device;
 pub mod owner;
 mod probe;
+pub mod recovery;
 pub mod session;
 
 pub use connectivity::Connectivity;

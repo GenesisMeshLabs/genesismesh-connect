@@ -9,6 +9,8 @@ import contextlib
 import io
 import json
 import os
+import shutil
+import sqlite3
 import tempfile
 import threading
 import tomllib
@@ -20,6 +22,7 @@ from urllib.parse import urlsplit
 import nacl.signing
 import requests
 from werkzeug.serving import make_server, WSGIRequestHandler
+from genesis_mesh.cli.config import save_config
 from genesis_mesh.cli.init_ops import init as initialize_network
 from genesis_mesh.crypto import load_private_key
 from genesis_mesh.crypto.admin_auth import sign_admin_request
@@ -70,6 +73,13 @@ def atomic(path, data, *, create=False):
             os.replace(pending, path)
     finally:
         pending.unlink(missing_ok=True)
+
+
+def relative(value):
+    path = Path(value)
+    if not isinstance(value, str) or not value or path.is_absolute() or ".." in path.parts or len(value) > 512:
+        raise Refused("The recovery file names an invalid location.")
+    return path
 
 
 def key(path, *, managed):
@@ -170,7 +180,8 @@ class Owner:
             if parsed.scheme != "http" or parsed.hostname not in ("127.0.0.1", "::1") or not parsed.port or parsed.username or parsed.query or parsed.fragment or parsed.path not in ("", "/"):
                 raise Refused("Use settings for the authority on this computer.")
         self.genesis, self.operator, self.na_key, self.origin = genesis, operator, na_key, origin.rstrip("/")
-        self.config = config
+        self.config, self.config_path = config, path
+        self.database = location("db")
 
     def info(self):
         return {"url":self.origin,"pin":{"root_public_key":self.genesis.root_public_key,"network_name":self.genesis.network_name},"managed":self.server is not None}
@@ -214,11 +225,96 @@ class Owner:
         attestation=self.admin("/admin/attestations",{"subject_id":subject,"subject_public_key":host_node,"roles":["role:client"],"validity_hours":720,"claims":{"capabilities":["connect.collection.read","connect.collection.list"]}})
         return {"collection_id":collection_id,"policy_id":policy_id,"attestation_id":attestation["attestation_id"]}
 
-    def close(self):
+    def backup(self):
+        """Stage the network for a recovery file: a consistent database
+        snapshot and the public files on disk, inside this private directory;
+        the owner keys only in the reply, never as plaintext files."""
+        if not self.config or not self.server:
+            raise Refused("Recovery files cover networks Connect created on this computer.")
+        root = self.directory
+        for value in self.config["paths"].values():
+            path = Path(value) if Path(value).is_absolute() else self.config_path.parent / value
+            if root not in path.resolve().parents:
+                raise Refused("This network keeps files outside Connect's folder.")
+        database = self.database.resolve()
+        live = {database, database.with_name(database.name + "-wal"), database.with_name(database.name + "-shm"), self.marker}
+        staging = Path(tempfile.mkdtemp(prefix=".recovery-", dir=root))
+        try:
+            keys = {}
+            for path in sorted(root.rglob("*")):
+                if not path.is_file() or path.resolve() in live or path.name.startswith(".recovery-") or any(p.name.startswith(".recovery-") for p in path.relative_to(root).parents if p.name):
+                    continue
+                name = path.relative_to(root).as_posix()
+                if path.suffix == ".key":
+                    with path.open("rb") as stream:
+                        keys[name] = base64.b64encode(unprotect(stream.read(16 * 1024 + 1))).decode("ascii")
+                    continue
+                target = staging / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, target)
+            target = staging / database.relative_to(root).as_posix()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # SQLite's online backup is consistent while the authority keeps serving.
+            source, copy = sqlite3.connect(str(database)), sqlite3.connect(str(target))
+            try:
+                source.backup(copy)
+            finally:
+                copy.close(); source.close()
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        return {"staging": str(staging), "root": root.as_posix(), "config": self.config_path.resolve().relative_to(root).as_posix(), "keys": keys}
+
+    def restore(self, staging, old_root, config_name, keys):
+        """Install a network from a decrypted recovery file staged next to this
+        directory. Owner keys are protected again for this computer, and
+        settings are moved to this location. Never replaces an existing network."""
+        if self.marker.exists() or self.config:
+            raise Refused("A network is already configured on this computer.")
+        if self.directory.exists() and any(self.directory.iterdir()):
+            raise Refused("Existing network state needs attention before restoring another network.")
+        ready()
+        staging = Path(staging).resolve(strict=True)
+        if not staging.is_dir() or staging.parent != self.directory.parent:
+            raise Refused("The recovery file was not staged for this computer.")
+        if not isinstance(old_root, str) or not old_root or len(old_root) > 1024 or not isinstance(keys, dict) or not keys or len(keys) > 16:
+            raise Refused("The recovery file is incomplete.")
+        config_name = relative(config_name)
+        for name, data in keys.items():
+            if relative(name).suffix != ".key" or not isinstance(data, str) or len(data) > 32 * 1024:
+                raise Refused("The recovery file is incomplete.")
+        config = tomllib.loads((staging / config_name).read_text(encoding="utf-8"))
+        new_root = self.directory.as_posix()
+        for field, value in config.get("paths", {}).items():
+            if not isinstance(value, str) or not (value == old_root or value.startswith(old_root + "/")):
+                raise Refused("The recovery file's settings name files outside its network.")
+            config["paths"][field] = new_root + value[len(old_root):]
+        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            shutil.copytree(staging, self.directory, dirs_exist_ok=True)
+            for name, data in keys.items():
+                target = self.directory / relative(name)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                atomic(target, protect(base64.b64decode(data, validate=True)))
+            save_config(config, str(self.directory / config_name))
+            atomic(self.marker, json.dumps({"version": 1, "managed": True, "config": str(self.directory / config_name)}).encode(), create=True)
+            return self.open()
+        except BaseException:
+            # This directory was empty, so remove everything written here:
+            # nothing half-restored may later open as a network.
+            self._stop()
+            self.config = None
+            shutil.rmtree(self.directory, ignore_errors=True)
+            raise
+
+    def _stop(self):
         if self.server:
             self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=5)
             self.server=None
         if self.service:
             self.service.db.close()
             self.service=None
+
+    def close(self):
+        self._stop()
         self.session.close()

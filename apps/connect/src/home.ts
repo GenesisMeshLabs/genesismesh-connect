@@ -58,6 +58,7 @@ function show(next: string) {
     "welcome",
     "create-screen",
     "join-screen",
+    "restore-screen",
     "joining-screen",
     "workspace",
   ])
@@ -95,7 +96,7 @@ function render(status: HomeStatus) {
   const oldDevice = current?.selected_device;
   current = status;
   const next = primaryScreen(status);
-  if (next !== "welcome" || !["create-screen", "join-screen"].includes(screen))
+  if (next !== "welcome" || !["create-screen", "join-screen", "restore-screen"].includes(screen))
     show(next === "joining" ? "joining-screen" : next);
   if (status.joining) text("joining-progress", status.joining);
   text("home-network", status.network || "Your private network");
@@ -114,6 +115,7 @@ function render(status: HomeStatus) {
       : "Managed by your network computer",
   );
   renderConnection(status);
+  visible("recovery-card", status.owner && status.configured);
   visible("add-device-button", status.owner && status.devices.length < 32);
   visible("share-button", status.owner && !!status.peer);
   visible("browse-button", !!status.peer);
@@ -259,6 +261,37 @@ async function refresh() {
 }
 el("choose-create").addEventListener("click", () => show("create-screen"));
 el("choose-join").addEventListener("click", () => show("join-screen"));
+el("choose-restore").addEventListener("click", () => show("restore-screen"));
+el("restore-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  void run(
+    el<HTMLButtonElement>("restore-form").querySelector("button[type=submit]")!,
+    async () => {
+      if (await invoke<boolean>("recovery_restore", { key: input("restore-key").value })) {
+        input("restore-key").value = "";
+        message(
+          "Your network is back. Your devices reconnect when they next check in. Share your folders again on this computer.",
+        );
+        selectView("devices");
+      }
+    },
+  );
+});
+el("create-recovery").addEventListener(
+  "click",
+  () =>
+    void run(el<HTMLButtonElement>("create-recovery"), async () => {
+      const key = await invoke<string | null>("recovery_create");
+      if (!key) return;
+      text("recovery-key", key);
+      visible("recovery-key-panel", true);
+    }),
+);
+el("recovery-done").addEventListener("click", () => {
+  text("recovery-key", "");
+  visible("recovery-key-panel", false);
+  message("Keep the recovery file and its key in separate places.");
+});
 el("choose-existing").addEventListener(
   "click",
   () =>
@@ -607,6 +640,7 @@ if (isTauri()) {
         !status.runtime_available;
       visible("create-unavailable", !status.runtime_available);
       visible("choose-existing", status.runtime_available);
+      visible("choose-restore", status.runtime_available);
     },
   );
   void refresh();

@@ -19,6 +19,24 @@ pub struct OwnerInfo {
     pub managed: bool,
 }
 
+/// A staged network: the owner keys (plaintext, held only in memory) and the
+/// staging directory holding the database snapshot and public files.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBackup {
+    pub staging: std::path::PathBuf,
+    pub root: String,
+    pub config: String,
+    pub keys: std::collections::BTreeMap<String, String>,
+}
+impl Drop for OwnerBackup {
+    fn drop(&mut self) {
+        for value in self.keys.values_mut() {
+            zeroize::Zeroize::zeroize(value);
+        }
+    }
+}
+
 pub struct OwnerRuntime {
     child: Child,
     input: Option<ChildStdin>,
@@ -174,6 +192,28 @@ impl OwnerRuntime {
         Ok(serde_json::from_value(
             self.request(json!({"op":"attach","config":config}))?,
         )?)
+    }
+    /// Stage the network for a recovery file: files inside the owner's private
+    /// directory, the owner keys only in this reply.
+    pub fn backup(&mut self) -> Result<OwnerBackup> {
+        let backup: OwnerBackup = serde_json::from_value(self.request(json!({"op":"backup"}))?)?;
+        ensure!(
+            backup.staging.is_absolute() && !backup.keys.is_empty() && backup.keys.len() <= 16,
+            "Invalid network recovery staging"
+        );
+        Ok(backup)
+    }
+    /// Install a network from files staged beside the owner directory.
+    pub fn restore(
+        &mut self,
+        staging: &Path,
+        root: &str,
+        config: &str,
+        keys: &std::collections::BTreeMap<String, String>,
+    ) -> Result<OwnerInfo> {
+        Ok(serde_json::from_value(self.request(json!({
+            "op":"restore","staging":staging,"root":root,"config":config,"keys":keys
+        }))?)?)
     }
     pub fn invite(&mut self, node: &str, host: bool) -> Result<String> {
         self.request(json!({"op":"invite","node":node,"host":host}))?["invite"]
