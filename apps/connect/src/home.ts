@@ -719,18 +719,49 @@ el("save-name").addEventListener("click", () => {
   text("this-device-name", name);
   message("Name saved on this device.");
 });
+// The advanced tools are one step from the everyday screens: the back bar,
+// the logo and a phone's back gesture all return.
+let advancedEntry = false;
+function showAdvanced(open: boolean) {
+  if (open === !el("advanced-shell").hidden) return;
+  visible("everyday", !open);
+  visible("advanced-shell", open);
+  window.scrollTo(0, 0);
+  el(open ? "close-advanced" : "open-advanced").focus({ preventScroll: true });
+  if (!open) void refresh();
+}
+// Closed at once; the history entry follows, so a second tap does nothing.
+function leaveAdvanced() {
+  const entry = advancedEntry;
+  advancedEntry = false;
+  showAdvanced(false);
+  if (entry) history.back();
+}
 el("open-advanced").addEventListener("click", () => {
-  visible("everyday", false);
-  visible("advanced-shell", true);
+  showAdvanced(true);
+  history.pushState({ advanced: true }, "");
+  advancedEntry = true;
 });
-el("close-advanced").addEventListener("click", () => {
-  visible("advanced-shell", false);
-  visible("everyday", true);
-  void refresh();
+el("close-advanced").addEventListener("click", leaveAdvanced);
+document
+  .querySelector<HTMLAnchorElement>("#advanced-shell .brand")
+  ?.addEventListener("click", (event) => {
+    event.preventDefault();
+    leaveAdvanced();
+  });
+// The history entry decides, also after a reload or going forward again.
+window.addEventListener("popstate", (event) => {
+  advancedEntry = !!event.state?.advanced;
+  showAdvanced(advancedEntry);
 });
+if (history.state?.advanced) {
+  advancedEntry = true;
+  showAdvanced(true);
+}
 async function acceptLink(urls: string[] | null) {
   const link = urls?.find((url) => url.startsWith("genesismesh://join/"));
   if (!link) return;
+  leaveAdvanced();
   input("join-link").value = link;
   show("join-screen");
   message("Invitation received. Name this device and ask to join.");

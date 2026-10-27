@@ -2,6 +2,8 @@
 
 These are the technical controls retained under Settings → Advanced tools.
 For ordinary setup and browsing, use the [everyday workflow](everyday-workflow.md).
+To return to the everyday screens, use **← Back to Connect** at the top, the
+Connect logo, or the phone's back gesture.
 
 The app is a device workspace. Rust owns device keys, certificate validation,
 trust refresh and authority decisions. The interface displays these results.
