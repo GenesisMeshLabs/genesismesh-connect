@@ -3,7 +3,7 @@
 //! never paths or bytes.
 use anyhow::{Context, Result, ensure};
 use connect_core::session::sharing::send::{
-    MAX_FILE_BYTES, MAX_WINDOW_BYTES, MIN_WINDOW_BYTES, Request,
+    MAX_FILE_BYTES, MAX_WINDOW_BYTES, MIN_WINDOW_BYTES, Outcome, Request,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -133,6 +133,7 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                 .await??;
                 update(&jobs, &task_id, |job| job.progress.state = "sending".into());
                 let (mut token, mut offset, mut length) = (None, 0u64, MIN_WINDOW_BYTES);
+                let mut started_over = false;
                 loop {
                     let now = file.metadata()?;
                     ensure!(
@@ -157,7 +158,7 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                             .send_window_to(&peer.node, &peer.ticket, request.clone(), &mut file)
                             .await
                         {
-                            Ok(window) => break window,
+                            Ok(outcome) => break outcome,
                             Err(error)
                                 if waits < 30
                                     && error.to_string().contains("receiving other files") =>
@@ -166,6 +167,25 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                             }
                             Err(error) => return Err(error),
+                        }
+                    };
+                    let window = match window {
+                        Outcome::Sent(window) => window,
+                        // The other device holds the file up to here.
+                        Outcome::ContinueAt(received) => {
+                            offset = received;
+                            update(&jobs, &task_id, |job| job.progress.sent = offset);
+                            continue;
+                        }
+                        // It no longer has the transfer: once, from the start.
+                        Outcome::StartOver => {
+                            ensure!(
+                                !started_over,
+                                "The other device lost this file. Send it again."
+                            );
+                            started_over = true;
+                            (token, offset) = (None, 0);
+                            continue;
                         }
                     };
                     offset += window.bytes as u64;

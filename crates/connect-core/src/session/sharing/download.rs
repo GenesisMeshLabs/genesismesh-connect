@@ -138,10 +138,9 @@ impl State {
                     },
                 ));
             }
-            ensure!(
-                request.offset == 0,
-                "Start a new download from the beginning"
-            );
+            // A download continued later, its snapshot gone, starts a fresh
+            // snapshot of the same version at its offset: the version names
+            // the file's exact revision, and each window is decided anew.
             entries.retain(|_, entry| !entry.finished);
             ensure!(
                 entries.len() < 2,

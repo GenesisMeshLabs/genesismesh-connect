@@ -699,7 +699,7 @@ impl SessionEndpoint {
         ticket: &str,
         request: sharing::send::Request,
         input: &mut std::fs::File,
-    ) -> Result<sharing::send::Window> {
+    ) -> Result<sharing::send::Outcome> {
         let ticket: SessionTicket = wire::decode(ticket.as_bytes())?;
         ensure!(
             ticket.version == 1

@@ -206,8 +206,12 @@ Tap a folder to open it; use the breadcrumbs to return to its parent or the
 shared root. Search filters the current folder. Each directory component is
 opened through a capability-relative no-follow handle. Directory segments are
 bound to the signed browse intent and nested-download token, and the authority
-receives the relative file path for any path-based read gates. Durable resume,
-uploads and mobile folder sharing remain pending.
+receives the relative file path for any path-based read gates. A download
+can continue from where it stopped: when the sharing device no longer has its
+snapshot (after 15 minutes, or a restart), it takes a fresh one of the same
+version and serves from the offset, and each window is still decided for the
+whole file; a file that changed in between is refused. The app does not yet
+keep unfinished downloads across its own restarts. Mobile folder sharing remains pending.
 
 Existing 64-KiB permissions stay unchanged. **Share a folder again** and select
 the folder to issue a new larger-file permission. Both apps need the new build
@@ -278,10 +282,19 @@ a minute. The network computer's own Spaces ask its authority directly,
 within that per-device limit. The apps size windows to the connection, up to
 32 MiB, so ordinary transfers stay well within it. An authority attached
 from an existing configuration keeps core's default limits, which allow
-about 120 windows a minute for the whole network. A file interrupted
-part way is sent again from the start; resuming is next. Sending from phones,
-and phones receiving files, need the phone builds' file pickers and are not
-available yet.
+about 120 windows a minute for the whole network.
+
+An interrupted send continues where it stopped. The receiving device keeps an
+unfinished file's bytes and a small record (sender, file, digest, how much has
+arrived) in its private staging, so the file survives a restart of either
+device for an hour. A window sent at the wrong place, for example after a
+lost confirmation, is answered with where the file stands, and only its own
+sender is told; a transfer the device no longer has is answered with "start
+again". After a restart the whole-file hash is worked out once more from the
+staged bytes before the file is saved. The app retries a busy window; keeping
+unfinished sends across the app's own restarts comes next. Sending from
+phones, and phones receiving files, need the phone builds' file pickers and
+are not available yet.
 
 ## Verification boundary
 
