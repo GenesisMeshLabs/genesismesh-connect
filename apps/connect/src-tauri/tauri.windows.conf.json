@@ -1,0 +1,6 @@
+{
+  "plugins": { "deep-link": { "desktop": { "schemes": ["genesismesh"] } } },
+  "bundle": {
+    "externalBin": ["binaries/genesismesh-authority"]
+  }
+}

@@ -5,16 +5,23 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/icons.mjs && node scripts/prepare-authority.mjs",
     "build": "tsc && vite build",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
     "preview": "vite preview",
     "icons": "node scripts/icons.mjs",
+    "ios:init": "node scripts/ios-init.mjs",
+    "android:init": "node scripts/android-init.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.12.4"
+    "@tauri-apps/api": "2.12.4",
+    "@tauri-apps/plugin-deep-link": "2.6.2",
+    "qrcode": "1.5.4"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4",
+    "@types/qrcode": "1.5.6",
     "typescript": "6.0.3",
     "vite": "8.3.5"
   }

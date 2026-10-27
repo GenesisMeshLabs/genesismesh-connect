@@ -1,0 +1,106 @@
+# Cross-platform Connect
+
+Connect is one Tauri application with a shared Rust core. A device's ability to
+connect is separate from its ability to run the network authority, grant access,
+or use an OS document provider. The implementation plan and running evidence
+are under the ignored `temp/` directory.
+
+## Implemented foundation
+
+- Device identities use Windows DPAPI, Apple Keychain, Android Keystore-backed
+  storage, or Linux Secret Service. A locked, missing or substituted credential
+  fails without silently replacing the device or network root. Windows and iOS
+  keep their existing protected-record/reference formats.
+- Up to 32 saved devices, selected by name in Devices. The old single-device
+  record migrates without changing keys. Selection does not erase another peer.
+  Removing a peer cancels local sessions; it does not revoke network membership
+  or policies on other devices. The authority route cannot be forgotten until
+  another route is configured.
+- One session endpoint accepts only the explicit approved identities. Outbound
+  operations pin the selected node independently of its address. Each proof
+  still binds the certificate, network/root, role, ALPN, challenges and TLS
+  connection. Membership changes interrupt active operations.
+- Desktop authority packaging supports native Windows, Linux and macOS hosts.
+  Windows keeps DPAPI; Unix desktop helpers use a bounded inherited-pipe protocol
+  to store owner keys through the Rust host's native credential store. Only
+  opaque references persist in managed key files. A native target's sidecar is
+  built on that OS/architecture, never relabeled from another platform.
+- New sharing hosts get separate sovereign identities and executor namespaces.
+  Existing `connect-host` profiles remain usable. Collection policy selectors
+  match the collection so unrelated folders do not veto one another.
+- The authority bridge supports remote host enrollment with executor proof,
+  renewal, public signed trust, and authenticated collection attestation/decision
+  requests. It exposes fixed routes and read/list capabilities, with strict
+  fields, audience, node/certificate binding, signatures and budgets. Remote
+  sharing uses the same verified decisions and receipts as local sharing.
+
+Normal pairing still starts on the network computer. It can add multiple peers.
+New peers receive a host-capable enrollment, which alone grants no file access.
+The ordinary folder picker and permission-creation workflow currently run on the
+authority computer. Remote hosting is implemented and integration-tested in the
+Rust core; its guided approval/import workflow is the next application stage.
+
+## Current platform evidence
+
+| Platform | Implemented | Validation boundary |
+| --- | --- | --- |
+| Windows | Native app, DPAPI, bundled owner, device picker, sharing | Builds and native startup checked. Some newly compiled test harnesses are blocked by Application Control 4551. The complete Windows gate is not green. |
+| Linux | Native app, Secret Service, bundled owner, desktop pickers | Native compilation/build, real keyring, owner restart and integration tests run in Ubuntu 24.04 WSL. A general desktop distribution/installer and physical cross-device matrix remain pending. |
+| macOS | Keychain adapter, native authority packaging and desktop picker paths | Earlier source built a native app/authority and passed 36 core tests. Bundle-signature verification and interactive Keychain checks remain pending. SSH is currently unavailable for the latest UX/download update. |
+| Android | Keystore adapter, initialization script, join scheme, official icons, backup exclusion | Native Mac Rust/Gradle build passed. Debug APK signature/manifest verified, installed and launched on Samsung SM-A176B (API 36) through Windows USB. Android enrollment, persistence and file-workflow acceptance remain pending. Earlier Windows Android compilation was blocked by Application Control 4551; its policy was not changed. |
+| iOS | Existing Tauri shell and device-only Keychain format retained | Build 6 with subfolder navigation and nested downloads is signed, installed and launched. Signature, profile and 18 icon sizes verified. User confirmed the retained network and build 6 folders appearing/opening on the physical iPhone. Nested download/export acceptance remains pending. |
+
+## Build hosts
+
+Desktop prerequisites include Rust, Node, the platform's Tauri prerequisites,
+Python with `venv`, and the sibling Genesis Mesh 1.8.1 source. Native desktop
+`npm run tauri -- build --debug --no-bundle --ci` generates official icons,
+packages the real authority into an isolated build environment, builds the UI,
+and builds the app. Installed users do not need the build Python or checkout.
+Use `CONNECT_CORE_SOURCE` for a different core source location and
+`CONNECT_NA_PYTHON` for an explicit build/development Python. Build fingerprints
+and dependency reports are under `temp/authority-build/<native-target>/`.
+
+On Linux, install WebKitGTK 4.1, the AppIndicator development package and a
+working Secret Service provider. Headless NAS use needs an intentionally
+configured, unlocked credential service; there is no plaintext fallback.
+For an isolated real-keyring test, run `bash scripts/verify-linux-store.sh`.
+It starts a private D-Bus session and disposable keyring rather than unlocking
+the account's login keyring. Extra arguments replace the default Cargo test.
+
+For Android, set `JAVA_HOME`, `ANDROID_HOME` and `NDK_HOME`, then run:
+
+```sh
+cd apps/connect
+npm ci
+npm run android:init -- --ci
+npm run tauri -- android build --debug --apk --target aarch64 --ci
+```
+
+The initializer pins compile/target SDK 36 (minimum 24), disables application
+backup because the Keystore key cannot move to another device, and applies the
+official artwork. Install SDK 36, build tools 36.0.0, platform tools and NDK
+27.2.12479018 on the build host. Use `--target x86_64` for a matching emulator.
+After regenerating Android files, rerun
+`npm run android:init -- --patch-existing`. Generated Android/Xcode projects stay
+ignored. On macOS use the existing `npm run ios:init` workflow; preserve the
+selected signing team and handle account/keychain/device prompts locally.
+
+## Remaining product work
+
+Full feature parity is not complete. The next stages are peer-to-peer contact
+approval between two enrolled clients, guided remote sharing approval, native
+Android/iOS document providers for hosting, multiple shared collections,
+send/receive, durable resume, and installers. Latest source adds disk-backed
+downloads, progress/cancel and native view/save actions; mobile build/device
+acceptance for this update remains pending.
+Every device should eventually offer both sides of that workflow. Mobile
+foreground/background rules remain platform constraints; no always-on iPhone
+service, transparent VPN, or authority-on-every-phone claim is made.
+
+The consumer browser serves the selected folder and its subfolders, to depth 16,
+with files up to 1 GiB, 32 entries per page and at most 512 scanned entries per
+folder. Every path component rejects links/junctions. Nested downloads bind their
+directory to the signed request and token. Legacy 64-KiB list/read
+remains compatible. Re-share explicitly to issue a larger-file permission. No upload/write
+permission is implied by pairing, enrollment or read access.

@@ -9,11 +9,15 @@
 
 # Generated build output
 /target/
+/apps/connect/src-tauri/binaries/
+**/__pycache__/
+/vendor/*/target/
 **/node_modules/
 /dist/
 **/dist/
 **/gen/schemas/
 **/gen/apple/
+**/gen/android/
 **/gen/apple/build/
 
 # Local tooling and editor output
