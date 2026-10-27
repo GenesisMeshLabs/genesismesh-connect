@@ -199,6 +199,16 @@ impl DeviceController {
         Self::open(path)
     }
 
+    /// Remove a profile this process just created, after a failed restore,
+    /// including its secret in a native credential store.
+    pub fn discard(self) -> Result<()> {
+        let path = self.state_directory.clone();
+        let Self { vault, .. } = self;
+        vault.discard()?;
+        std::fs::remove_dir_all(path)?;
+        Ok(())
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         let vault = Vault::open(&path.join("device.bin"))?;
         let trust = TrustStore::open(&path.join("trust.json"), vault.pin())?;

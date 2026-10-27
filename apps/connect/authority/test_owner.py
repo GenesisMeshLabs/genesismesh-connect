@@ -132,8 +132,17 @@ class OwnerTests(unittest.TestCase):
             target=Path(directory)/"target"/"owner"; target.parent.mkdir()
             moved=target.parent/".restore-test"
             shutil.copytree(staged["staging"],moved)
-            escaping={"../outside.key":next(iter(staged["keys"].values()))}
-            with self.assertRaises(Refused): Owner(target).restore(str(moved),staged["root"],staged["config"],escaping)
+            secret=next(iter(staged["keys"].values()))
+            # Rooted, drive-relative and backslash names would escape on Windows.
+            for name in ("../outside.key","/Windows/Temp/x.key","D:x.key","network\\keys\\na.key","network/./na.key"):
+                with self.assertRaises(Refused,msg=name): Owner(target).restore(str(moved),staged["root"],staged["config"],{name:secret})
+            with self.assertRaises(Refused): Owner(target).restore(str(moved),staged["root"],"\\Users\\v\\settings.toml",staged["keys"])
+            climbing=moved/staged["config"]
+            original=climbing.read_text()
+            climbing.write_text(original.replace(staged["root"]+"/network/na.db",staged["root"]+"/../../escaped.db"))
+            with self.assertRaises(Refused): Owner(target).restore(str(moved),staged["root"],staged["config"],staged["keys"])
+            self.assertFalse((target.parent.parent/"escaped.db").exists())
+            climbing.write_text(original)
             with self.assertRaises(Refused): Owner(target).restore(str(moved),staged["root"],"../settings.toml",staged["keys"])
             with self.assertRaises(Refused): Owner(target).restore(str(moved),"/elsewhere",staged["config"],staged["keys"])
             self.assertFalse((target/"owner.json").exists())

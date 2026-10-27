@@ -29,6 +29,11 @@ fn account(bytes: &[u8], store: &impl Store) -> Result<String> {
     );
     Ok(id.to_owned())
 }
+/// Remove the native credential a reference names, after a failed restore.
+pub(super) fn forget(reference: &[u8], store: &impl Store) -> Result<()> {
+    open(reference, store)?;
+    store.delete(&account(reference, store)?)
+}
 pub(super) fn open(reference: &[u8], store: &impl Store) -> Result<Zeroizing<Vec<u8>>> {
     let id = account(reference, store)?;
     let bytes=store.get(&id)?.context("The saved device identity is unavailable. Unlock its system credential store; the identity has not been replaced.")?;

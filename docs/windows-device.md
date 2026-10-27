@@ -74,8 +74,11 @@ rollback through ordinary refresh. Both files are atomically replaced.
 
 DPAPI protects stored data for the Windows account; it does not protect against
 malicious software already running as that user. Private buffers are zeroized
-where owned by the vault. There is no plaintext key export, fallback, migration
-or backup/recovery workflow. Do not copy a Windows vault to a phone.
+where owned by the vault. There is no plaintext key export or fallback. The
+only export is a guided network computer's identity inside an encrypted
+[recovery file](everyday-workflow.md#keep-a-recovery-file), restored on another
+computer under that computer's own protection. Do not copy a Windows vault to a
+phone.
 [Microsoft's DPAPI documentation](https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata).
 
 Missing or corrupt existing state fails closed. A pending enrollment after an

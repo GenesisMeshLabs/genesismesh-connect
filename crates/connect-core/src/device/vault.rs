@@ -133,6 +133,25 @@ impl Vault {
             record,
         })
     }
+    /// Remove a vault this process just created (a failed restore), including
+    /// its secret in a native credential store. Windows keeps it in the file.
+    pub fn discard(self) -> Result<()> {
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "android"
+        ))]
+        {
+            let mut reference = Vec::new();
+            File::open(&self.path)?
+                .take(256)
+                .read_to_end(&mut reference)?;
+            credential::forget(&reference, &platform_store()?)?;
+        }
+        std::fs::remove_file(&self.path)?;
+        Ok(())
+    }
     /// The whole private record, for an encrypted recovery file only.
     pub fn export(&self) -> Result<Zeroizing<Vec<u8>>> {
         Ok(Zeroizing::new(serde_json::to_vec(&self.record)?))

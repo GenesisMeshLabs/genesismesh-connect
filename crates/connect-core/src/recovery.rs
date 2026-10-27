@@ -242,6 +242,10 @@ pub fn create(
     };
     let key = new_key()?;
     let sealed = seal(&contents, &key)?;
+    ensure!(
+        sealed.len() as u64 <= MAX_FILE,
+        "This network is too large for a recovery file; back up its database with the authority's own tools"
+    );
     let directory = output
         .parent()
         .context("Choose where to save the recovery file")?;
@@ -259,9 +263,20 @@ pub struct Restored {
     pub device: DeviceController,
 }
 
+/// A temporary sibling of `path`, removed by the caller.
+fn beside(path: &Path, prefix: &str) -> Result<PathBuf> {
+    let parent = path.parent().context("Missing application directory")?;
+    std::fs::create_dir_all(parent)?;
+    Ok(tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir_in(parent)?
+        .keep())
+}
+
 /// Bring a network back on this computer: the authority into `owner_dir`
 /// (started with `start`), the network computer's identity into `profile`.
-/// Refuses to replace anything that already exists.
+/// Refuses to replace anything that already exists. Any failure removes
+/// everything this restore wrote, including credential-store entries.
 pub fn restore(
     file: &Path,
     key: &str,
@@ -269,8 +284,11 @@ pub fn restore(
     profile: &Path,
     start: impl FnOnce(&Path) -> Result<OwnerRuntime>,
 ) -> Result<Restored> {
+    let empty = |path: &Path| -> Result<bool> {
+        Ok(!path.exists() || std::fs::read_dir(path)?.next().is_none())
+    };
     ensure!(
-        !owner_dir.join("owner.json").exists() && !profile.exists(),
+        empty(owner_dir)? && !profile.exists(),
         "This computer already has a network. It has been preserved."
     );
     let mut bytes = Vec::new();
@@ -282,62 +300,94 @@ pub fn restore(
         "This recovery file is too large"
     );
     let contents = open(&bytes, key)?;
-    // The identity first: if the authority cannot be restored, the identity is
-    // removed again and nothing is left half-installed.
+    // Every name is checked before anything is written.
+    for name in contents
+        .owner
+        .files
+        .keys()
+        .chain(contents.owner.keys.keys())
+        .chain([&contents.owner.config])
+    {
+        inside(name)?;
+    }
     let identity = DeviceIdentity {
         vault: Zeroizing::new(STANDARD.decode(&contents.device.vault)?),
         trust: STANDARD.decode(&contents.device.trust)?,
     };
-    let mut device = DeviceController::restore_identity(
-        profile,
+    // The identity is restored beside its final place and moved there last.
+    let holder = beside(profile, ".restore-device-")?;
+    let staged = holder.join("device");
+    let device = match DeviceController::restore_identity(
+        &staged,
         &identity,
         "http://127.0.0.1:1".into(),
         contents.pin.clone(),
-    )?;
-    let parent = owner_dir
-        .parent()
-        .context("Missing application directory")?;
-    std::fs::create_dir_all(parent)?;
-    let staging: PathBuf = tempfile::Builder::new()
-        .prefix(".restore-")
-        .tempdir_in(parent)?
-        .keep();
-    let installed = (|| {
-        for (name, data) in &contents.owner.files {
-            let target = staging.join(inside(name)?);
-            std::fs::create_dir_all(target.parent().context("Invalid recovery location")?)?;
-            std::fs::write(target, STANDARD.decode(data)?)?;
+    ) {
+        Ok(device) => device,
+        Err(error) => {
+            std::fs::remove_dir_all(&holder).ok();
+            return Err(error);
         }
-        let mut owner = start(owner_dir)?;
-        let info = owner.restore(
-            &staging,
-            &contents.owner.root,
-            &contents.owner.config,
-            &contents.owner.keys,
-        )?;
-        Ok::<_, anyhow::Error>((owner, info))
-    })();
-    std::fs::remove_dir_all(&staging).ok();
-    let (owner, info) = match installed.and_then(|(owner, info)| {
+    };
+    let mut owner = None;
+    let outcome = (|| {
+        let staging = beside(owner_dir, ".restore-")?;
+        let written = (|| {
+            for (name, data) in &contents.owner.files {
+                let target = staging.join(inside(name)?);
+                std::fs::create_dir_all(target.parent().context("Invalid recovery location")?)?;
+                std::fs::write(target, STANDARD.decode(data)?)?;
+            }
+            Ok::<_, anyhow::Error>(())
+        })();
+        let info = written.and_then(|()| {
+            let runtime = owner.insert(start(owner_dir)?);
+            runtime.restore(
+                &staging,
+                &contents.owner.root,
+                &contents.owner.config,
+                &contents.owner.keys,
+            )
+        });
+        std::fs::remove_dir_all(&staging).ok();
+        let info = info?;
         ensure!(
             info.pin == contents.pin,
             "The restored network does not match its recovery file"
         );
-        Ok((owner, info))
-    }) {
-        Ok(installed) => installed,
-        Err(error) => {
-            drop(device);
-            std::fs::remove_dir_all(profile).ok();
-            return Err(error);
+        drop(device);
+        std::fs::rename(&staged, profile)?;
+        let mut device = DeviceController::open(profile)?;
+        device.rebind_owned_authority(info.url.clone(), &info.pin)?;
+        Ok(Restored {
+            owner: owner.take().context("Missing restored network")?,
+            info,
+            device,
+        })
+    })();
+    match outcome {
+        Ok(restored) => {
+            std::fs::remove_dir_all(&holder).ok();
+            Ok(restored)
         }
-    };
-    device.rebind_owned_authority(info.url.clone(), &info.pin)?;
-    Ok(Restored {
-        owner,
-        info,
-        device,
-    })
+        Err(error) => {
+            // Stop the runtime before removing what it wrote, so no file is
+            // still open; then remove the network directory this restore
+            // filled and the identity with its credential-store entry.
+            drop(owner);
+            if let Ok(device) =
+                DeviceController::open(if profile.exists() { profile } else { &staged })
+            {
+                device.discard().ok();
+            }
+            std::fs::remove_dir_all(profile).ok();
+            std::fs::remove_dir_all(&holder).ok();
+            if owner_dir.exists() {
+                std::fs::remove_dir_all(owner_dir).ok();
+            }
+            Err(error)
+        }
+    }
 }
 
 #[cfg(test)]

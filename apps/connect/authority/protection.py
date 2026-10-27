@@ -25,8 +25,9 @@ def native(operation, data=None):
     response = json.loads(line)
     if "error" in response:
         raise RuntimeError("Unlock the system credential store to use the network owner keys")
-    if operation == "ready":
-        if response != {"ok": {"ready": True}}:
+    if operation in ("ready", "delete"):
+        expected = {"ready": {"ready": True}, "delete": {"deleted": True}}[operation]
+        if response != {"ok": expected}:
             raise RuntimeError("Invalid credential store response")
         return None
     result = base64.b64decode(response["ok"]["data"], validate=True)
@@ -78,6 +79,13 @@ def protect(data: bytes) -> bytes:
     if os.name != "nt":
         return native("seal", data)
     return MAGIC + transform(data, True)
+
+
+def discard(data: bytes) -> None:
+    """Remove a protected owner key's native credential, after a failed
+    restore. Windows keeps the protected key in its file only."""
+    if os.name != "nt":
+        native("delete", data)
 
 
 def unprotect(data: bytes) -> bytes:

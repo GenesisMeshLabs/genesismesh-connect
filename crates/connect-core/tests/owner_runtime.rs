@@ -172,6 +172,25 @@ mod desktop {
             !second.join("network-owner").exists() && !second.join("device").exists(),
             "A refused restore leaves nothing behind"
         );
+        // A failure after the identity was staged removes it again, with any
+        // staging directories beside it.
+        let failing = |_: &std::path::Path| -> Result<OwnerRuntime> {
+            anyhow::bail!("The authority could not start")
+        };
+        assert!(
+            recovery::restore(
+                &file,
+                &key,
+                &second.join("network-owner"),
+                &second.join("device"),
+                failing
+            )
+            .is_err()
+        );
+        assert!(
+            std::fs::read_dir(&second)?.next().is_none(),
+            "A failed restore leaves no identity, network or staging behind"
+        );
 
         let mut restored = recovery::restore(
             &file,

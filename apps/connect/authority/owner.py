@@ -29,7 +29,7 @@ from genesis_mesh.crypto.admin_auth import sign_admin_request
 from genesis_mesh.models.genesis import GenesisBlock
 from genesis_mesh.na_service.server import NetworkAuthorityService
 
-from protection import protect, unprotect, ready
+from protection import discard, protect, unprotect, ready
 
 
 class Refused(Exception):
@@ -76,10 +76,21 @@ def atomic(path, data, *, create=False):
 
 
 def relative(value):
-    path = Path(value)
-    if not isinstance(value, str) or not value or path.is_absolute() or ".." in path.parts or len(value) > 512:
+    """A forward-slash relative name from a recovery file. Drive letters,
+    roots and backslashes are refused on every platform."""
+    if (not isinstance(value, str) or not value or len(value) > 512 or value.startswith("/")
+            or "\\" in value or ":" in value
+            or any(part in ("", ".", "..") for part in value.split("/"))):
         raise Refused("The recovery file names an invalid location.")
-    return path
+    return Path(*value.split("/"))
+
+
+def within(root, path):
+    """Refuse any target that resolves outside the network directory."""
+    resolved = Path(path).resolve()
+    if resolved != root and root not in resolved.parents:
+        raise Refused("The recovery file names a location outside its network.")
+    return resolved
 
 
 def key(path, *, managed):
@@ -238,6 +249,9 @@ class Owner:
                 raise Refused("This network keeps files outside Connect's folder.")
         database = self.database.resolve()
         live = {database, database.with_name(database.name + "-wal"), database.with_name(database.name + "-shm"), self.marker}
+        # An earlier backup that did not finish leaves no staging behind.
+        for stale in root.glob(".recovery-*"):
+            shutil.rmtree(stale, ignore_errors=True)
         staging = Path(tempfile.mkdtemp(prefix=".recovery-", dir=root))
         try:
             keys = {}
@@ -279,31 +293,40 @@ class Owner:
             raise Refused("The recovery file was not staged for this computer.")
         if not isinstance(old_root, str) or not old_root or len(old_root) > 1024 or not isinstance(keys, dict) or not keys or len(keys) > 16:
             raise Refused("The recovery file is incomplete.")
-        config_name = relative(config_name)
+        root = self.directory.resolve()
+        config_path = within(root, root / relative(config_name))
+        targets = {}
         for name, data in keys.items():
             if relative(name).suffix != ".key" or not isinstance(data, str) or len(data) > 32 * 1024:
                 raise Refused("The recovery file is incomplete.")
-        config = tomllib.loads((staging / config_name).read_text(encoding="utf-8"))
-        new_root = self.directory.as_posix()
+            targets[within(root, root / relative(name))] = data
+        config = tomllib.loads((staging / relative(config_name)).read_text(encoding="utf-8"))
         for field, value in config.get("paths", {}).items():
             if not isinstance(value, str) or not (value == old_root or value.startswith(old_root + "/")):
                 raise Refused("The recovery file's settings name files outside its network.")
-            config["paths"][field] = new_root + value[len(old_root):]
+            suffix = value[len(old_root) + 1:]
+            config["paths"][field] = (within(root, root / relative(suffix)) if suffix else root).as_posix()
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        sealed = []
         try:
             shutil.copytree(staging, self.directory, dirs_exist_ok=True)
-            for name, data in keys.items():
-                target = self.directory / relative(name)
+            for target, data in targets.items():
                 target.parent.mkdir(parents=True, exist_ok=True)
-                atomic(target, protect(base64.b64decode(data, validate=True)))
-            save_config(config, str(self.directory / config_name))
-            atomic(self.marker, json.dumps({"version": 1, "managed": True, "config": str(self.directory / config_name)}).encode(), create=True)
+                protected = protect(base64.b64decode(data, validate=True))
+                sealed.append(protected)
+                atomic(target, protected)
+            save_config(config, str(config_path))
+            atomic(self.marker, json.dumps({"version": 1, "managed": True, "config": str(config_path)}).encode(), create=True)
             return self.open()
         except BaseException:
-            # This directory was empty, so remove everything written here:
-            # nothing half-restored may later open as a network.
+            # This directory was empty, so remove everything written here and
+            # every key sealed into the credential store: nothing half-restored
+            # may later open as a network.
             self._stop()
             self.config = None
+            for protected in sealed:
+                with contextlib.suppress(Exception):
+                    discard(protected)
             shutil.rmtree(self.directory, ignore_errors=True)
             raise
 
