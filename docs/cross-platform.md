@@ -16,6 +16,10 @@ are under the ignored `temp/` directory.
   Removing a peer cancels local sessions; it does not revoke network membership
   or policies on other devices. The authority route cannot be forgotten until
   another route is configured.
+- Devices learn the network's other devices (name, node key, current address)
+  from the network computer over the authority bridge and accept authenticated
+  connections from them; together with paired devices, at most 32. The list
+  never grants file access and follows the network computer's saved devices.
 - One session endpoint accepts only the explicit approved identities. Outbound
   operations pin the selected node independently of its address. Each proof
   still binds the certificate, network/root, role, ALPN, challenges and TLS

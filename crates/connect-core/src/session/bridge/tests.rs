@@ -474,6 +474,86 @@ async fn enrollment_checks_the_host_and_selected_node_before_forwarding_an_invit
 }
 
 #[tokio::test]
+async fn members_see_the_others_and_report_only_their_own_endpoint() -> Result<()> {
+    let f = Fixture::new();
+    let http = authority(&f).await?;
+    let bridge = host(&f, &http).await?;
+    let client = BridgeAuthority::new(route(&bridge, &f))?;
+    let ticket = |id: iroh::EndpointId, port: u16| {
+        serde_json::to_string(&json!({
+            "version": 1,
+            "endpoint": EndpointAddr::new(id).with_ip_addr(([192, 0, 2, 9], port).into()),
+        }))
+        .unwrap()
+    };
+    let (own, other) = (
+        iroh::SecretKey::generate().public(),
+        iroh::SecretKey::generate().public(),
+    );
+    let device = |name: &str, node: String, ticket: String| crate::device::PairedDevice {
+        name: name.into(),
+        node,
+        ticket,
+    };
+    let me = device("Phone", public(&f.client), ticket(own, 7000));
+    let tablet = device("Tablet", public(&support::key()), ticket(other, 7001));
+    let huge = device(
+        "Huge",
+        public(&support::key()),
+        serde_json::to_string(&json!({
+            "version": 1,
+            "endpoint": (0..120u16).fold(
+                EndpointAddr::new(iroh::SecretKey::generate().public()),
+                |addr, port| addr.with_ip_addr(([192, 0, 2, 10], port + 1).into()),
+            ),
+        }))?,
+    );
+    assert!(huge.ticket.len() > MAX_MEMBER_TICKET);
+    bridge.publish_members(vec![me.clone(), tablet.clone(), huge]);
+    let members = client
+        .members(identity(&f), f.trust()?, Some(ticket(own, 7100)))
+        .await?;
+    assert_eq!(
+        members,
+        vec![tablet.clone()],
+        "A device sees the others, never itself or an oversized address"
+    );
+    assert_eq!(
+        bridge.take_reported(),
+        std::collections::BTreeMap::from([(public(&f.client), ticket(own, 7100))]),
+        "A fresh address for the device's own endpoint is kept"
+    );
+    assert!(bridge.take_reported().is_empty());
+    client
+        .members(identity(&f), f.trust()?, Some(ticket(other, 7200)))
+        .await?;
+    client
+        .members(identity(&f), f.trust()?, Some(me.ticket.clone()))
+        .await?;
+    assert!(
+        bridge.take_reported().is_empty(),
+        "Another endpoint's address, or an unchanged one, is not kept"
+    );
+    assert!(
+        client
+            .members(identity(&f), f.trust()?, Some("not a ticket".into()))
+            .await
+            .is_err()
+    );
+    let wrong_identity = SessionIdentity::new(f.server.clone(), f.server_cert.clone())?;
+    assert!(
+        client
+            .members(wrong_identity, f.trust()?, None)
+            .await
+            .is_err(),
+        "Only an approved device receives the member list"
+    );
+    assert!(http.requests.lock().unwrap().is_empty());
+    bridge.close().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn settings_come_only_from_the_authenticated_host_and_name_its_endpoints() -> Result<()> {
     let f = Fixture::new();
     let http = authority(&f).await?;

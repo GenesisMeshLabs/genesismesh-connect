@@ -24,6 +24,7 @@ by a strict versioned request. There is no URL, method, path or header parameter
 | `trust` | GET `/na/key-history`, then GET `/crl` | Explicit desktop reachability ticket; signed documents must verify against the client's independently pinned root/network and persisted checkpoints |
 | `renew` | POST `/renew` | Mutual node authentication plus a valid node-signed body naming the exact certificate authenticated in that connection |
 | `settings` | None | Mutual node authentication with a currently valid certificate and an empty body; returns the network's connection setting and the computer's current bridge and session tickets, which the device accepts only for the endpoints it already trusts |
+| `members` | None | Mutual node authentication with a currently valid certificate and a body holding only the device's own current session ticket (or none); returns the computer's other saved devices (name, node key, session ticket of at most 2 KiB), never the caller. The computer keeps the reported ticket only for the endpoint that device paired with |
 
 Trust documents are public and can be fetched before node authentication. This
 allows a client resuming after several minutes to obtain current trust before
@@ -74,9 +75,11 @@ overlap remain relevant when a reply or durable write is lost.
 ## Bounds and lifecycle
 
 - At most four admitted host connections; at most two concurrent client calls.
-- Host admission: 24 arrivals per fixed 60-second window, shared by public trust
-  and renewal. Authenticated renewal: eight forwarded calls per fixed 60-second
-  window for the single selected peer. Rejected admissions do not contact the NA.
+- Host admission: 1,024 arrivals per fixed 60-second window, shared by every
+  operation. Per fixed 60-second window: eight forwarded renewals, 480 collection
+  decisions and attestation reads, three enrollments, and 120 each of settings
+  and member lists (each device asks once per 30-second refresh). Rejected
+  admissions do not contact the NA.
 - Fifteen-second transport acceptance and operation deadlines on the host;
   fifteen-second connection-plus-exchange deadlines on the client. Each upstream
   HTTP call retains its five-second deadline, no redirects and no proxy routing.

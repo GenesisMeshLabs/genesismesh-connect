@@ -14,10 +14,15 @@ pub struct AuthorityBridge {
     task: Mutex<Option<JoinHandle<()>>>,
 }
 
-/// The connection setting and session address devices receive from `Settings`.
+/// The connection setting and session address devices receive from `Settings`,
+/// and the saved devices they receive from `Members`.
 struct Published {
     connectivity: crate::Connectivity,
     session_ticket: Mutex<Option<String>>,
+    members: Mutex<Vec<crate::device::PairedDevice>>,
+    /// Session addresses members reported for their own paired endpoint, until
+    /// the network computer saves them.
+    reported: Mutex<std::collections::BTreeMap<String, String>>,
 }
 
 impl AuthorityBridge {
@@ -91,6 +96,8 @@ impl AuthorityBridge {
         let published = Arc::new(Published {
             connectivity,
             session_ticket: Mutex::new(None),
+            members: Mutex::new(Vec::new()),
+            reported: Mutex::new(Default::default()),
         });
         let task = tokio::spawn(accept(
             endpoint.clone(),
@@ -121,6 +128,24 @@ impl AuthorityBridge {
             .lock()
             .expect("bridge publication mutex poisoned") = ticket;
         Ok(())
+    }
+    /// The saved devices members receive. Each sees the others, never itself.
+    pub fn publish_members(&self, members: Vec<crate::device::PairedDevice>) {
+        *self
+            .published
+            .members
+            .lock()
+            .expect("bridge publication mutex poisoned") = members;
+    }
+    /// Session addresses members reported since the last call, by node.
+    pub fn take_reported(&self) -> std::collections::BTreeMap<String, String> {
+        std::mem::take(
+            &mut *self
+                .published
+                .reported
+                .lock()
+                .expect("bridge publication mutex poisoned"),
+        )
     }
     pub fn ticket(&self) -> Result<String> {
         Ok(serde_json::to_string(&Ticket {
@@ -274,6 +299,7 @@ struct Budgets {
     collections: Mutex<Budget>,
     enrollments: Mutex<Budget>,
     settings: Mutex<Budget>,
+    members: Mutex<Budget>,
 }
 async fn exchange(
     connection: &Connection,
@@ -314,7 +340,11 @@ async fn exchange(
                 .await
                 .and_then(|docs| Ok(serde_json::to_value(docs)?))
         }
-        Operation::Renew | Operation::Evaluate | Operation::Attestation | Operation::Settings => {
+        Operation::Renew
+        | Operation::Evaluate
+        | Operation::Attestation
+        | Operation::Settings
+        | Operation::Members => {
             let peer = authenticate_for(
                 connection,
                 local_id,
@@ -342,6 +372,7 @@ async fn exchange(
                 (match request.operation {
                     Operation::Renew => &budgets.renewals,
                     Operation::Settings => &budgets.settings,
+                    Operation::Members => &budgets.members,
                     _ => &budgets.collections,
                 })
                 .lock()
@@ -401,6 +432,12 @@ async fn exchange(
                         session_ticket,
                     })?)
                 }
+                Operation::Members => {
+                    credentials
+                        .trust
+                        .certificate(&peer, &credentials.expected_node, Utc::now())?;
+                    members(signed, &credentials.expected_node, published)
+                }
                 Operation::Trust => unreachable!(),
             }
         }
@@ -409,6 +446,40 @@ async fn exchange(
     respond(&mut send, result).await?;
     connection.closed().await;
     Ok(())
+}
+
+/// Answer one authenticated member with the other saved devices, and keep the
+/// session address it reported if it names the endpoint it paired with.
+fn members(request: Value, node: &str, published: &Published) -> Result<Value> {
+    let request: MembersRequest = serde_json::from_value(request)?;
+    let members = published
+        .members
+        .lock()
+        .expect("bridge publication mutex poisoned")
+        .clone();
+    if let Some(ticket) = request.session_ticket {
+        ensure!(
+            ticket.len() <= MAX_MEMBER_TICKET,
+            "Session address too long"
+        );
+        let endpoint = crate::session::ticket_endpoint(&ticket)?;
+        let paired = members.iter().find(|m| m.node == node);
+        if paired.is_some_and(|m| {
+            m.ticket != ticket && crate::session::ticket_endpoint(&m.ticket).ok() == Some(endpoint)
+        }) {
+            published
+                .reported
+                .lock()
+                .expect("bridge publication mutex poisoned")
+                .insert(node.to_owned(), ticket);
+        }
+    }
+    Ok(serde_json::to_value(MembersAnswer {
+        members: members
+            .into_iter()
+            .filter(|m| m.node != node && m.ticket.len() <= MAX_MEMBER_TICKET)
+            .collect(),
+    })?)
 }
 
 pub(super) fn check_collection_decision(
@@ -526,6 +597,7 @@ async fn accept(
         enrollments: Mutex::new(Budget::new(3)),
         // Each device asks once per trust refresh (every 30 seconds).
         settings: Mutex::new(Budget::new(120)),
+        members: Mutex::new(Budget::new(120)),
     });
     loop {
         tokio::select! {

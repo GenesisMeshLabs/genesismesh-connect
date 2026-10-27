@@ -1881,3 +1881,230 @@ async fn guided_pairing_works_on_the_local_network_and_survives_a_computer_resta
     process.child.wait()?;
     Ok(())
 }
+
+/// Pair a new guided device with `computer` the way the app does: invitation,
+/// owner approval, enrollment through the bridge and proof in both directions.
+async fn join_computer(
+    computer: &mut connect_core::device::DeviceController,
+    process: &mut AuthorityProcess,
+    path: &std::path::Path,
+    name: &str,
+) -> Result<connect_core::device::DeviceController> {
+    use connect_core::{
+        device::{DeviceController, PairedDevice},
+        session::{
+            bridge::BridgeRoute,
+            pairing::{PairCard, PairGrant},
+        },
+    };
+    let pair = computer.create_pairing("Home computer".into()).await?;
+    let card = PairCard::parse(&pair.card().link()?)?;
+    let mut device = DeviceController::prepare_remote(path, card.pin.clone())?;
+    let mut joining = device.request_pairing(card.clone(), name.into()).await?;
+    let request = pair.pending().context("No pending approval")?;
+    let invitation =
+        process.command(json!({"op":"invite","node_public_key":request.node.clone()}))?;
+    computer.start(&request.node).await?;
+    let host = computer.status()?;
+    let completion = pair.approve(
+        &request.id,
+        PairGrant {
+            invitation: invitation["invite"].as_str().unwrap().into(),
+            route: BridgeRoute {
+                host_node: host.node_public_key.clone(),
+                ticket: host.bridge_ticket.context("Missing authority connection")?,
+            },
+            session_ticket: host.ticket.context("Missing device connection")?,
+        },
+    )?;
+    let grant = joining.grant().await?;
+    device.use_bridge(grant.route).await?;
+    device.enroll(&grant.invitation).await?;
+    device.start(&card.host_node).await?;
+    device
+        .send(&grant.session_ticket, "Device verifies computer")
+        .await?;
+    let ticket = device
+        .status()?
+        .ticket
+        .context("Missing device connection")?;
+    device.remember_pairing(PairedDevice {
+        name: card.host_name.clone(),
+        node: card.host_node.clone(),
+        ticket: grant.session_ticket,
+    })?;
+    let finish = joining.finish(ticket);
+    let owner = async {
+        let joined = completion.await?;
+        computer
+            .send(&joined.ticket, "Computer verifies device")
+            .await?;
+        computer.remember_pairing(PairedDevice {
+            name: request.name.clone(),
+            node: request.node.clone(),
+            ticket: joined.ticket,
+        })?;
+        joined
+            .confirm
+            .send(true)
+            .map_err(|_| anyhow::anyhow!("Device disconnected"))?;
+        Ok::<_, anyhow::Error>(())
+    };
+    let (a, b) = tokio::join!(finish, owner);
+    a?;
+    b?;
+    joining.close().await;
+    pair.close().await;
+    Ok(device)
+}
+
+#[tokio::test]
+#[ignore = "Requires CONNECT_NA_PYTHON; devices learn each other from the network computer and connect directly"]
+async fn members_learn_each_other_from_the_network_computer_and_connect() -> Result<()> {
+    use connect_core::{Connectivity, device::DeviceController};
+    let (mut process, info) = AuthorityProcess::start()?;
+    let pin: TrustPin = serde_json::from_value(info["pin"].clone())?;
+    let dir = tempfile::tempdir()?;
+    let mut computer = DeviceController::prepare(
+        &dir.path().join("computer"),
+        info["url"].as_str().unwrap().into(),
+        pin,
+    )?;
+    computer.enable_managed_connectivity()?;
+    let computer_node = computer.status()?.node_public_key;
+    let invitation = process.command(json!({"op":"invite","node_public_key":computer_node}))?;
+    computer
+        .enroll(invitation["invite"].as_str().unwrap())
+        .await?;
+    computer
+        .set_network_connectivity(Connectivity::LocalNetwork)
+        .await?;
+    let mut phone = join_computer(
+        &mut computer,
+        &mut process,
+        &dir.path().join("phone"),
+        "My phone",
+    )
+    .await?;
+    let mut tablet = join_computer(
+        &mut computer,
+        &mut process,
+        &dir.path().join("tablet"),
+        "Family tablet",
+    )
+    .await?;
+    let phone_node = phone.status()?.node_public_key;
+    let tablet_node = tablet.status()?.node_public_key;
+
+    phone.check_network().await?;
+    tablet.check_network().await?;
+    let names = |device: &DeviceController| -> Result<Vec<String>> {
+        Ok(device
+            .status()?
+            .members
+            .iter()
+            .map(|m| m.name.clone())
+            .collect())
+    };
+    assert_eq!(names(&phone)?, ["Family tablet"]);
+    assert_eq!(names(&tablet)?, ["My phone"]);
+    assert!(
+        computer.status()?.members.is_empty(),
+        "The network computer pairs devices; it lists none"
+    );
+    let devices = phone.status()?.devices;
+    assert_eq!(
+        devices.len(),
+        1,
+        "The member list stays apart from pairings"
+    );
+    assert_eq!(devices[0].node, computer_node);
+
+    // Members connect to each other directly, both ways.
+    let ticket_of = |device: &DeviceController, node: &str| -> Result<String> {
+        Ok(device
+            .status()?
+            .members
+            .into_iter()
+            .find(|m| m.node == node)
+            .context("Missing member")?
+            .ticket)
+    };
+    let tablet_ticket = ticket_of(&phone, &tablet_node)?;
+    let report = phone
+        .session()?
+        .round_trip_to(
+            Some(&tablet_node),
+            &tablet_ticket,
+            "Phone reaches the tablet",
+        )
+        .await?;
+    assert!(report.genesis_mesh_authenticated);
+    assert_eq!(report.peer_node, tablet_node);
+    tablet
+        .session()?
+        .round_trip_to(
+            Some(&phone_node),
+            &ticket_of(&tablet, &phone_node)?,
+            "Tablet reaches the phone",
+        )
+        .await?;
+
+    // Connecting grants nothing: a member that shares no folder serves none.
+    let nothing = phone
+        .session()?
+        .browse_from(&tablet_node, &tablet_ticket, None, Vec::new())
+        .await;
+    assert!(
+        nothing
+            .err()
+            .is_some_and(|e| e.to_string().contains("support any known protocol"))
+    );
+
+    // A member can be chosen but not forgotten locally.
+    phone.select_device(&tablet_node).await?;
+    assert_eq!(
+        phone.status()?.peer_node.as_deref(),
+        Some(tablet_node.as_str())
+    );
+    assert!(phone.forget_device(&tablet_node).await.is_err());
+
+    // The tablet leaves the network computer's list: every device drops it,
+    // and a device that had chosen it goes back to the network computer.
+    computer.forget_device(&tablet_node).await?;
+    phone.check_network().await?;
+    assert!(phone.status()?.members.is_empty());
+    assert_eq!(
+        phone.status()?.peer_node.as_deref(),
+        Some(computer_node.as_str())
+    );
+    let refused = phone
+        .session()?
+        .round_trip_to(
+            Some(&tablet_node),
+            &tablet_ticket,
+            "Phone reaches a removed tablet",
+        )
+        .await;
+    assert!(
+        refused
+            .err()
+            .is_some_and(|e| e.to_string().contains("not been approved")),
+        "A removed member is no longer approved"
+    );
+
+    // Reopened, the phone keeps its pairing and an empty member list.
+    phone.stop().await;
+    drop(phone);
+    let mut phone = DeviceController::open(&dir.path().join("phone"))?;
+    phone.reconnect_saved().await?;
+    assert!(phone.status()?.members.is_empty());
+    assert_eq!(phone.status()?.devices.len(), 1);
+
+    phone.stop().await;
+    tablet.stop().await;
+    computer.stop().await;
+    process.command(json!({"op":"stop"}))?;
+    process.child.wait()?;
+    Ok(())
+}

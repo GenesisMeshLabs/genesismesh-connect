@@ -215,7 +215,11 @@ function renderDevices(status: HomeStatus) {
     const name = document.createElement("h2");
     name.textContent = device.name;
     const detail = document.createElement("p");
-    detail.textContent = device.authority_connection ? "Network computer" : "Your device";
+    detail.textContent = device.authority_connection
+      ? "Network computer"
+      : device.member
+        ? "On your network"
+        : "Your device";
     details.append(name, detail);
     const choose = document.createElement("button");
     choose.textContent = "Open files";
@@ -228,7 +232,8 @@ function renderDevices(status: HomeStatus) {
       message("");
     }));
     row.append(details, choose);
-    if (!device.authority_connection) {
+    // Members come from the network computer, which decides who belongs.
+    if (!device.authority_connection && !device.member) {
       const forget = document.createElement("button");
       forget.textContent = "Forget";
       forget.className = "secondary";

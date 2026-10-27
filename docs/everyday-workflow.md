@@ -94,6 +94,17 @@ the first; forgetting a device stops its local connections without revoking its
 membership throughout the network. Existing single-device profiles migrate
 without replacing their keys. See [platform evidence and limits](cross-platform.md).
 
+Every device also learns the network's other devices from the network
+computer: with each trust refresh it asks, over the authenticated authority
+bridge, for the computer's saved devices and reports its own current address.
+They appear in Devices as **On your network**, and devices connect to each
+other directly, without going through the network computer. Being listed
+grants nothing: every file operation still needs the authority's decision,
+and a device that shares nothing with you says so. The network computer
+decides who belongs, so a listed device cannot be forgotten on another device;
+when the network computer forgets a device, the others drop it at their next
+refresh.
+
 ## Choose how devices connect
 
 **Settings → Connection** on the network computer chooses for every device:

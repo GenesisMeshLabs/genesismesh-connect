@@ -3,7 +3,13 @@ export interface HomeStatus {
   configured: boolean;
   network: string | null;
   peer: string | null;
-  devices: { id: string; name: string; selected: boolean; authority_connection: boolean }[];
+  devices: {
+    id: string;
+    name: string;
+    selected: boolean;
+    authority_connection: boolean;
+    member: boolean;
+  }[];
   selected_device: string | null;
   ready: boolean;
   sharing: string | null;
@@ -65,6 +71,8 @@ export function formatBytes(bytes: number) {
 }
 export function friendlyProblem(value: string) {
   if (/Share the folder again|larger files/i.test(value)) return "Share this folder again on your computer to allow larger files.";
+  // A device that shares no folder offers no file protocols at all.
+  if (/support any known protocol/i.test(value)) return "This device isn’t sharing anything with you yet.";
   if (/authority unavailable|connection is suspended/i.test(value)) return "Your network computer isn’t ready. Keep Connect open there and try again.";
   if (/timed out|timeout|connection lost|closed by peer|did not respond/i.test(value))
     return "Couldn’t reach your other device. Keep Connect open on both devices and try again.";
