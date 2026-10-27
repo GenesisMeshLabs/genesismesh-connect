@@ -22,8 +22,11 @@ use tokio::sync::watch;
 
 /// The record beside an unfinished download's bytes.
 const RECORD: &str = "download.json";
-/// Unfinished downloads nobody continues are dropped after a week; at most
-/// this many are kept, the newest first.
+/// The folder that holds a download's bytes, apart from its record, so no
+/// file's name can be the record's.
+const BYTES: &str = "file";
+/// Unfinished downloads nobody continues are dropped after a week, and at
+/// most this many are kept, the newest: both when the app starts.
 const KEPT_FOR: Duration = Duration::from_secs(7 * 24 * 3600);
 const MAX_UNFINISHED: usize = 8;
 
@@ -191,10 +194,12 @@ fn load(directory: &Path) -> Result<BTreeMap<String, Record>> {
             ensure!(age < KEPT_FOR, "Expired");
             let record: Record = serde_json::from_slice(&std::fs::read(path.join(RECORD))?)?;
             record.check()?;
-            let bytes = path.join(&record.name);
+            let bytes = path.join(BYTES).join(&record.name);
             ensure!(
-                std::fs::symlink_metadata(&bytes)?.is_file()
-                    && std::fs::read_dir(&path)?.count() == 2,
+                std::fs::symlink_metadata(path.join(BYTES))?.is_dir()
+                    && std::fs::symlink_metadata(&bytes)?.is_file()
+                    && std::fs::read_dir(&path)?.count() == 2
+                    && std::fs::read_dir(path.join(BYTES))?.count() == 1,
                 "Unexpected download folder"
             );
             let data = File::options().write(true).open(&bytes)?;
@@ -251,20 +256,52 @@ fn cache_usage(directory: &Path, except: &str) -> Result<u64> {
         if entry.file_name() == except {
             continue;
         }
-        for (index, file) in std::fs::read_dir(entry.path())?.enumerate() {
-            ensure!(index < 3, "Unexpected download cache contents");
-            let file = file?;
-            let metadata = std::fs::symlink_metadata(file.path())?;
+        bytes = bytes
+            .checked_add(folder_size(&entry.path(), true)?)
+            .context("Download cache is full")?;
+    }
+    Ok(bytes)
+}
+/// A download folder's size: its record and, one level down, its bytes.
+fn folder_size(path: &Path, outer: bool) -> Result<u64> {
+    let mut bytes = 0u64;
+    for (index, file) in std::fs::read_dir(path)?.enumerate() {
+        ensure!(index < 3, "Unexpected download cache contents");
+        let file = file?;
+        let metadata = std::fs::symlink_metadata(file.path())?;
+        let size = if outer
+            && file.file_name() == BYTES
+            && metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+        {
+            folder_size(&file.path(), false)?
+        } else {
             ensure!(
                 metadata.is_file() && !metadata.file_type().is_symlink(),
                 "Unexpected download cache file"
             );
-            bytes = bytes
-                .checked_add(metadata.len())
-                .context("Download cache is full")?;
-        }
+            metadata.len()
+        };
+        bytes = bytes.checked_add(size).context("Download cache is full")?;
     }
     Ok(bytes)
+}
+/// A download's bytes, cut back to what was verified. Bytes missing, for
+/// example after the system cleared its cache, mean starting again.
+fn open_bytes(folder: &Path, record: &mut Record) -> Result<File> {
+    std::fs::create_dir_all(folder.join(BYTES))?;
+    let output = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(folder.join(BYTES).join(&record.name))?;
+    if output.metadata()?.len() < record.received {
+        record.received = 0;
+        record.sha256 = None;
+    }
+    output.set_len(record.received)?;
+    Ok(output)
 }
 fn viewable(name: &str) -> bool {
     matches!(
@@ -435,32 +472,31 @@ async fn start(
         let size = record.size;
         // Once the bytes are being checked, the folder goes with the job.
         let mut checking = false;
+        // A final refusal, or a file that keeps changing: nothing to continue.
+        let mut refused = false;
+        // Held until what stopped is listed again, or by the final check.
+        let mut permit = Some(permit);
+        let (stop, relist) = (canceled.clone(), unfinished.clone());
         let transfer = async {
+            std::fs::create_dir_all(&cache)?;
             ensure!(
                 cache_usage(&cache, &folder_id)?.saturating_add(size) <= 2 * MAX_FILE_BYTES,
                 "Download cache is full. Discard an unfinished download before trying again."
             );
-            let continuing = folder_path.exists();
             std::fs::create_dir_all(&folder_path)?;
             let folder = Folder {
                 path: folder_path.clone(),
                 keep: true,
             };
-            let path = folder_path.join(&record.name);
-            let opened = File::options()
-                .read(true)
-                .write(true)
-                .create(!continuing)
-                .truncate(false)
-                .open(&path);
-            let Ok(mut output) = opened else {
-                discard(&folder_path);
-                anyhow::bail!("This download is no longer available. Start it again.");
-            };
-            // A window that broke off may have left bytes past what was
-            // verified.
-            output.set_len(record.received)?;
+            // Recorded first, so a download that fails from here is listed.
             store(&folder_path.join(RECORD), &record)?;
+            let mut output = open_bytes(&folder_path, &mut record)?;
+            store(&folder_path.join(RECORD), &record)?;
+            update(&jobs, &task_id, |job| {
+                job.progress.received = record.received
+            });
+            let path = folder_path.join(BYTES).join(&record.name);
+            let mut restarted = false;
             let mut token = None;
             let mut digest = record.sha256.clone();
             let mut offset = record.received;
@@ -528,14 +564,29 @@ async fn start(
                                 request.request_id = uuid::Uuid::new_v4().to_string();
                             }
                         }
-                        Err(error) => return Err(error),
+                        Err(error) => {
+                            refused = request.token.is_none()
+                                && error.to_string().contains("isn't available");
+                            return Err(error);
+                        }
                     }
                 };
-                // Any fresh snapshot must be of the very same file.
-                ensure!(
-                    digest.as_ref().is_none_or(|d| d == &window.sha256),
-                    "File digest changed during download"
-                );
+                // Any fresh snapshot must be of the very same file. One that
+                // changed without a new version starts again, once.
+                if digest.as_ref().is_some_and(|d| d != &window.sha256) {
+                    if restarted {
+                        refused = true;
+                        anyhow::bail!("File digest changed during download");
+                    }
+                    restarted = true;
+                    output.set_len(0)?;
+                    (token, digest, offset) = (Some(window.token), None, 0);
+                    record.received = 0;
+                    record.sha256 = None;
+                    store(&folder_path.join(RECORD), &record)?;
+                    update(&jobs, &task_id, |job| job.progress.received = 0);
+                    continue;
+                }
                 token = Some(window.token);
                 digest = Some(window.sha256);
                 offset += window.bytes as u64;
@@ -555,55 +606,75 @@ async fn start(
             update(&jobs, &task_id, |job| {
                 job.progress.state = "verifying".into()
             });
-            checking = true;
             output.sync_all()?;
+            checking = true;
             let expected = digest.context("Missing file digest")?;
             let text_name = record.name.clone();
             let recorded = folder_path.join(RECORD);
+            let (held, kept_id, kept) = (permit.take(), folder_id.clone(), record.clone());
             let verified =
                 tokio::task::spawn_blocking(move || -> Result<(Saved, Option<String>)> {
-                    let _permit = permit;
-                    // From here the folder goes with the job: bytes that do
-                    // not verify are not kept to continue.
+                    let _permit = held;
                     let mut folder = folder;
-                    folder.keep = false;
-                    let saved = Saved {
-                        _folder: folder,
-                        path,
-                    };
-                    // Drop the open handle before its owning folder on errors,
-                    // including cancellation while this blocking hash finishes.
+                    // Drop the open handle before its owning folder, also
+                    // after a stop while this blocking check finishes.
                     let mut output = output;
-                    output.seek(SeekFrom::Start(0))?;
-                    let mut hash = Sha256::new();
-                    let mut buffer = [0u8; 65536];
-                    loop {
-                        let count = output.read(&mut buffer)?;
-                        if count == 0 {
-                            break;
-                        }
-                        hash.update(&buffer[..count]);
-                    }
-                    let digest: String =
-                        hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-                    ensure!(
-                        digest == expected && output.metadata()?.len() == size,
-                        "Downloaded file could not be verified"
-                    );
-                    // Finished: nothing is left to continue.
-                    std::fs::remove_file(&recorded)?;
-                    if size <= 65536
-                        && matches!(
-                            extension(&text_name).as_str(),
-                            "txt" | "md" | "json" | "csv" | "log"
-                        )
-                    {
+                    let checked = (|| -> Result<Option<String>> {
                         output.seek(SeekFrom::Start(0))?;
-                        let mut bytes = Vec::new();
-                        output.take(65537).read_to_end(&mut bytes)?;
-                        Ok((saved, String::from_utf8(bytes).ok()))
-                    } else {
-                        Ok((saved, None))
+                        let mut hash = Sha256::new();
+                        let mut buffer = [0u8; 65536];
+                        loop {
+                            let count = output.read(&mut buffer)?;
+                            if count == 0 {
+                                break;
+                            }
+                            hash.update(&buffer[..count]);
+                        }
+                        let digest: String =
+                            hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+                        ensure!(
+                            digest == expected && output.metadata()?.len() == size,
+                            "Downloaded file could not be verified"
+                        );
+                        if size <= 65536
+                            && matches!(
+                                extension(&text_name).as_str(),
+                                "txt" | "md" | "json" | "csv" | "log"
+                            )
+                        {
+                            output.seek(SeekFrom::Start(0))?;
+                            let mut bytes = Vec::new();
+                            (&mut output).take(65537).read_to_end(&mut bytes)?;
+                            Ok(String::from_utf8(bytes).ok())
+                        } else {
+                            Ok(None)
+                        }
+                    })();
+                    match checked {
+                        // Going back while every byte was here: listed
+                        // again, and checked when it continues.
+                        Ok(_) if *stop.borrow() == Stop::Keep => {
+                            relist.lock().expect("download state").insert(kept_id, kept);
+                            anyhow::bail!("Download stopped")
+                        }
+                        Ok(text) => {
+                            // Finished: the folder goes with the job, and
+                            // nothing is left to continue.
+                            folder.keep = false;
+                            std::fs::remove_file(&recorded)?;
+                            Ok((
+                                Saved {
+                                    _folder: folder,
+                                    path,
+                                },
+                                text,
+                            ))
+                        }
+                        // Bytes that do not verify are not kept.
+                        Err(error) => {
+                            folder.keep = false;
+                            Err(error)
+                        }
                     }
                 })
                 .await??;
@@ -615,7 +686,7 @@ async fn start(
         };
         let stopped = *canceled.borrow();
         if outcome.is_err() {
-            if stopped == Stop::Discard {
+            if stopped == Stop::Discard || refused {
                 discard(&folder_path);
             } else if !checking && folder_path.join(RECORD).is_file() {
                 // Stopped unfinished: listed to continue later.
@@ -625,6 +696,8 @@ async fn start(
                     .insert(folder_id, record);
             }
         }
+        // Another download may start only now, and finds this one listed.
+        drop(permit);
         update(&jobs, &task_id, |job| match outcome {
             Ok((saved, text)) => {
                 job.saved = Some(Arc::new(saved));
@@ -762,9 +835,9 @@ mod tests {
     fn unfinished(cache: &Path, record: &Record, extra: u64) -> Result<String> {
         let id = uuid::Uuid::new_v4().to_string();
         let folder = cache.join(&id);
-        std::fs::create_dir(&folder)?;
+        std::fs::create_dir_all(folder.join(BYTES))?;
         std::fs::write(
-            folder.join(&record.name),
+            folder.join(BYTES).join(&record.name),
             vec![7u8; (record.received + extra) as usize],
         )?;
         store(&folder.join(RECORD), record)?;
@@ -792,7 +865,10 @@ mod tests {
         std::fs::write(cache.path().join(&crowded_id).join("other"), b"x")?;
         let short = record("b.bin", 10);
         let short_id = unfinished(cache.path(), &short, 0)?;
-        std::fs::write(cache.path().join(&short_id).join("b.bin"), b"123")?;
+        std::fs::write(
+            cache.path().join(&short_id).join(BYTES).join("b.bin"),
+            b"123",
+        )?;
         std::fs::create_dir(cache.path().join("not-a-download"))?;
         std::fs::write(cache.path().join("stray.bin"), b"x")?;
         // An interrupted record write.
@@ -805,7 +881,7 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded.get(&kept_id), Some(&kept));
         assert_eq!(
-            std::fs::metadata(cache.path().join(&kept_id).join("movie.mp4"))?.len(),
+            std::fs::metadata(cache.path().join(&kept_id).join(BYTES).join("movie.mp4"))?.len(),
             600,
             "Bytes past what was verified are cut off"
         );
@@ -819,6 +895,46 @@ mod tests {
             600 + std::fs::metadata(cache.path().join(&kept_id).join(RECORD))?.len()
         );
         assert_eq!(cache_usage(cache.path(), &kept_id)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn a_file_can_have_the_records_name() -> Result<()> {
+        let cache = tempfile::tempdir()?;
+        let named = record(RECORD, 300);
+        let id = unfinished(cache.path(), &named, 0)?;
+        let loaded = load(cache.path())?;
+        assert_eq!(loaded.get(&id), Some(&named));
+        let mut again = named.clone();
+        let output = open_bytes(&cache.path().join(&id), &mut again)?;
+        assert_eq!((output.metadata()?.len(), again.received), (300, 300));
+        // The record is still the record.
+        let written: Record =
+            serde_json::from_slice(&std::fs::read(cache.path().join(&id).join(RECORD))?)?;
+        assert_eq!(written, named);
+        Ok(())
+    }
+
+    #[test]
+    fn bytes_are_cut_back_to_what_was_verified_or_started_again() -> Result<()> {
+        let cache = tempfile::tempdir()?;
+        // More bytes than recorded: a window broke off.
+        let mut longer = record("a.bin", 400);
+        let id = unfinished(cache.path(), &longer, 50)?;
+        let output = open_bytes(&cache.path().join(&id), &mut longer)?;
+        assert_eq!((output.metadata()?.len(), longer.received), (400, 400));
+        assert!(longer.sha256.is_some());
+        // Fewer than recorded, or none: the bytes went, so it starts again,
+        // never filled in.
+        let mut shorter = record("b.bin", 400);
+        let id = unfinished(cache.path(), &shorter, 0)?;
+        std::fs::write(cache.path().join(&id).join(BYTES).join("b.bin"), b"12")?;
+        let output = open_bytes(&cache.path().join(&id), &mut shorter)?;
+        assert_eq!((output.metadata()?.len(), shorter.received), (0, 0));
+        assert!(shorter.sha256.is_none());
+        let mut gone = record("c.bin", 400);
+        let output = open_bytes(&cache.path().join("cleared"), &mut gone)?;
+        assert_eq!((output.metadata()?.len(), gone.received), (0, 0));
         Ok(())
     }
 

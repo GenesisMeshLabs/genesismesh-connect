@@ -27,6 +27,8 @@ let invitation = "",
   expiresAt = 0,
   approval = "";
 let downloadId = "";
+// Going back before a download has its ID stops it as soon as it has one.
+let leaveDownload = false;
 // A connection choice being made is not replaced by the next status poll.
 let connectionDirty = false;
 let folderPath: string[] = [];
@@ -652,10 +654,16 @@ function renderUnfinished(status: HomeStatus) {
     const drop = document.createElement("button");
     drop.textContent = "Discard";
     drop.className = "secondary";
-    drop.addEventListener("click", () => void run(drop, async () => {
-      await invoke("discard_download", { id: item.id });
-      message(`${item.name} discarded.`);
-    }));
+    drop.addEventListener("click", () => {
+      if (busy) {
+        message("Wait for the current download or action to finish.");
+        return;
+      }
+      void run(drop, async () => {
+        await invoke("discard_download", { id: item.id });
+        message(`${item.name} discarded.`);
+      });
+    });
     row.append(details, resume, drop);
     list.append(row);
   }
@@ -672,7 +680,13 @@ async function open(file: FileEntry, button: HTMLButtonElement) {
   );
 }
 async function download(fileName: string, button: HTMLButtonElement, begin: () => Promise<string>) {
+  if (busy) {
+    message("Wait for the current download or action to finish.");
+    return;
+  }
   await run(button, async () => {
+    downloadId = "";
+    leaveDownload = false;
     text("preview-name", fileName);
     text("preview-detail", "Preparing download…");
     text("preview-content", "");
@@ -684,6 +698,10 @@ async function download(fileName: string, button: HTMLButtonElement, begin: () =
     visible("file-preview", true);
     visible("remote-folder", false);
     downloadId = await begin();
+    if (leaveDownload) {
+      await invoke("cancel_download", { id: downloadId, keep: true });
+      return;
+    }
     try {
       while (true) {
         const progress = await invoke<DownloadProgress>("download_status", { id: downloadId });
@@ -719,6 +737,7 @@ el("save-download").addEventListener("click", () => void run(el<HTMLButtonElemen
 // Going back keeps what arrived, to continue later; Cancel discards it.
 el("close-preview").addEventListener("click", () => {
   if (busy && downloadId) void invoke("cancel_download", { id: downloadId, keep: true }).catch(() => {});
+  else if (busy) leaveDownload = true;
   visible("file-preview", false);
   visible("remote-folder", !!page);
 });
