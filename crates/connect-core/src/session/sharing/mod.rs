@@ -33,7 +33,7 @@ pub enum SpaceKind {
     Inbox,
 }
 impl SpaceKind {
-    fn is_folder(&self) -> bool {
+    pub(crate) fn is_folder(&self) -> bool {
         *self == Self::Folder
     }
 }
@@ -66,7 +66,7 @@ pub struct Share {
     released_names: AtomicU64,
     budget: Arc<tokio::sync::Semaphore>,
     downloads: download::State,
-    incoming: send::Incoming,
+    incoming: Arc<send::Incoming>,
     requests: Mutex<(std::time::Instant, u32)>,
     browse_requests: Mutex<(std::time::Instant, u32)>,
 }
@@ -465,6 +465,11 @@ mod tests {
     }
 
     fn share(root: &Path, name: &str, recipients: &[&str]) -> Result<Arc<Share>> {
+        let kind = if name == "Inbox" {
+            SpaceKind::Inbox
+        } else {
+            SpaceKind::Folder
+        };
         let folder = root.join(format!("{name}-folder"));
         std::fs::create_dir_all(&folder)?;
         let pin = TrustPin {
@@ -482,7 +487,7 @@ mod tests {
                 policy_id: "connect-test".into(),
                 name: name.into(),
                 recipients: recipients.iter().map(|r| (*r).to_owned()).collect(),
-                kind: SpaceKind::Folder,
+                kind,
             },
             crate::authority::LocalAuthority::new("http://127.0.0.1:9")?,
             pin,
@@ -518,6 +523,21 @@ mod tests {
         );
         assert_eq!(id(shares.find(None, &key(3))), None);
         assert!(Shares::new(vec![photos.clone(), photos.clone()]).is_err());
+        // An inbox is only written to, a folder only read from.
+        let inbox = share(root.path(), "Inbox", &[&phone])?;
+        let mixed = Shares::new(vec![photos.clone(), inbox.clone()])?;
+        assert!(mixed.get(inbox.collection_id()).is_none());
+        assert!(mixed.inbox(photos.collection_id()).is_none());
+        assert_eq!(
+            id(mixed.inbox(inbox.collection_id())),
+            Some(inbox.collection_id().to_owned())
+        );
+        assert!(mixed.receives() && !shares.receives());
+        assert_eq!(
+            id(mixed.find(None, &phone)),
+            Some(photos.collection_id().to_owned()),
+            "An app without Spaces never lands in an inbox"
+        );
         // A renewed attestation is used from then on, and saved with the Space.
         let renewed = uuid::Uuid::new_v4().to_string();
         photos.renew(&renewed)?;

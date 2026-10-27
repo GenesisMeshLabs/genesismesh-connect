@@ -83,7 +83,10 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-        let size = file.metadata().map_err(|e| e.to_string())?.len();
+        let metadata = file.metadata().map_err(|e| e.to_string())?;
+        let size = metadata.len();
+        // The file is read again for each window: a change shows here.
+        let modified = metadata.modified().ok();
         if size > MAX_FILE_BYTES {
             return Err("Choose a file up to 1 GB.".into());
         }
@@ -131,6 +134,11 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                 update(&jobs, &task_id, |job| job.progress.state = "sending".into());
                 let (mut token, mut offset, mut length) = (None, 0u64, MIN_WINDOW_BYTES);
                 loop {
+                    let now = file.metadata()?;
+                    ensure!(
+                        now.len() == size && now.modified().ok() == modified,
+                        "The file changed while it was being sent. Send it again."
+                    );
                     let started = Instant::now();
                     let request = Request {
                         request_id: uuid::Uuid::new_v4().to_string(),

@@ -109,9 +109,9 @@ impl Collection {
         Ok((files, next))
     }
     /// Save a verified incoming file under `file_name`, or "name (2).ext" and
-    /// so on when that exists: an existing file is never replaced. The bytes
-    /// go to a hidden file first and take the reserved name only when
-    /// complete. Returns the name used.
+    /// so on when that exists: an existing file is never replaced. The name is
+    /// taken exclusively and written through that handle only. Returns the
+    /// name used.
     pub fn commit(&self, file_name: &str, source: &mut std::fs::File) -> Result<String> {
         use std::io::{Seek, SeekFrom};
         name(file_name)?;
@@ -124,43 +124,42 @@ impl Collection {
             .write(true)
             .create_new(true)
             .follow(FollowSymlinks::No);
-        let mut reserved = None;
         for index in 1..=99 {
-            let candidate = match (index, extension) {
-                (1, _) => file_name.to_owned(),
-                (_, Some(extension)) => format!("{stem} ({index}).{extension}"),
-                (_, None) => format!("{stem} ({index})"),
+            let candidate = if index == 1 {
+                file_name.to_owned()
+            } else {
+                // Long names give up characters for the number, never the
+                // extension.
+                let suffix = match extension {
+                    Some(extension) => format!(" ({index}).{extension}"),
+                    None => format!(" ({index})"),
+                };
+                let mut stem = stem.to_owned();
+                while stem.len() + suffix.len() > 128 && stem.pop().is_some() {}
+                format!("{}{suffix}", stem.trim_end())
             };
             if name(&candidate).is_err() {
                 continue;
             }
-            match self.directory.open_with(&candidate, &create) {
-                Ok(_) => {
-                    reserved = Some(candidate);
-                    break;
-                }
+            let mut target = match self.directory.open_with(&candidate, &create) {
+                Ok(target) => target.into_std(),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(error) => return Err(error.into()),
+            };
+            let written = (|| {
+                source.seek(SeekFrom::Start(0))?;
+                std::io::copy(source, &mut target)?;
+                target.sync_all()?;
+                Ok::<_, anyhow::Error>(())
+            })();
+            if let Err(error) = written {
+                drop(target);
+                let _ = self.directory.remove_file(&candidate);
+                return Err(error);
             }
+            return Ok(candidate);
         }
-        let reserved = reserved.context("This folder already has 99 files with that name")?;
-        let hidden = format!(".connect-incoming-{}", uuid::Uuid::new_v4());
-        let written = (|| {
-            let mut target = self.directory.open_with(&hidden, &create)?.into_std();
-            source.seek(SeekFrom::Start(0))?;
-            std::io::copy(source, &mut target)?;
-            target.sync_all()?;
-            drop(target);
-            // Replaces only the empty file reserved above.
-            self.directory.rename(&hidden, &self.directory, &reserved)?;
-            Ok::<_, anyhow::Error>(())
-        })();
-        if let Err(error) = written {
-            let _ = self.directory.remove_file(&hidden);
-            let _ = self.directory.remove_file(&reserved);
-            return Err(error);
-        }
-        Ok(reserved)
+        anyhow::bail!("This folder already has 99 files with that name")
     }
     pub fn open(path: &Path) -> Result<Self> {
         ensure!(path.is_absolute(), "Collection root must be absolute");
@@ -263,11 +262,32 @@ mod tests {
                 "{unsafe_name}"
             );
         }
-        let left: Vec<_> = std::fs::read_dir(root.path())?
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|name| name.starts_with(".connect-incoming"))
-            .collect();
-        assert!(left.is_empty(), "No hidden staging file stays behind");
+        // A long name gives up characters for the number, never the extension.
+        let long = format!("{}.txt", "n".repeat(124));
+        assert_eq!(directory.commit(&long, &mut source)?, long);
+        let second = directory.commit(&long, &mut source)?;
+        assert!(
+            second.len() <= 128 && second.ends_with(" (2).txt"),
+            "{second}"
+        );
+        // A link at a candidate name is never followed or replaced.
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir()?;
+            std::fs::write(outside.path().join("target.txt"), b"outside")?;
+            std::os::unix::fs::symlink(
+                outside.path().join("target.txt"),
+                root.path().join("linked.txt"),
+            )?;
+            assert_eq!(
+                directory.commit("linked.txt", &mut source)?,
+                "linked (2).txt"
+            );
+            assert_eq!(
+                std::fs::read(outside.path().join("target.txt"))?,
+                b"outside"
+            );
+        }
         Ok(())
     }
 }

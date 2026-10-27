@@ -81,7 +81,11 @@ pub struct SpaceView {
     pub collection: String,
     pub name: String,
     pub host: String,
-    #[serde(default)]
+    /// Absent for a folder, so apps from before inboxes read the list.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::session::sharing::SpaceKind::is_folder"
+    )]
     pub kind: crate::session::sharing::SpaceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<SpaceGrant>,
@@ -148,7 +152,10 @@ struct ShareSpaceRequest {
     collection: String,
     name: String,
     recipients: Vec<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::session::sharing::SpaceKind::is_folder"
+    )]
     kind: crate::session::sharing::SpaceKind,
 }
 #[derive(Deserialize, Serialize)]

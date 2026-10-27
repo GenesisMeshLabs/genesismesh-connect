@@ -250,12 +250,22 @@ The receiving device decides every step:
   by the sender over its hash, and the receiving device signs a receipt for it.
 - The file is saved only when its whole SHA-256 matches what the sender
   declared, under its own name or "name (2).ext" and so on: an existing file
-  is never replaced. Both sides keep the signed receipts, the last one naming
-  the saved file.
+  is never replaced. The receiving device keeps the signed receipts, its last
+  one confirming the whole file; the sender verifies each receipt and is told
+  the name the file was saved under. A file that changes on the sending
+  device while it is sent stops at the next window.
 
 Current bounds: files up to 1 GiB, windows of 64 KiB to 32 MiB sized to the
 connection, up to four unfinished incoming files and 2 GiB of staging per
-inbox, and an hour before an abandoned file is dropped. A file interrupted
+inbox, and ten minutes before an abandoned file is dropped. Windows from
+several senders take turns; one that waits more than ten seconds, or finds
+the inbox full, is told the device is busy rather than refused. Staging is
+claimed only after the authority allows the file, and each sender has its
+own rate limit. Every window of a download or a send asks the authority anew
+through the network computer, which answers a limited number of such
+requests a minute for the whole network (about 40 windows); the apps size
+windows to the connection, up to 32 MiB, so ordinary transfers stay well
+within it. A file interrupted
 part way is sent again from the start; resuming is next. Sending from phones,
 and phones receiving files, need the phone builds' file pickers and are not
 available yet.

@@ -521,12 +521,25 @@ fn send_file(
     bytes: &[u8],
     declared: Option<String>,
 ) -> Result<Option<String>> {
+    let session = device.session()?;
+    send_with(runtime, &session, host, inbox, name, bytes, declared)
+}
+
+/// The same, from a running session, so several devices can send at once.
+fn send_with(
+    runtime: &tokio::runtime::Runtime,
+    session: &connect_core::session::SessionEndpoint,
+    host: &connect_core::device::PairedDevice,
+    inbox: &str,
+    name: &str,
+    bytes: &[u8],
+    declared: Option<String>,
+) -> Result<Option<String>> {
     use connect_core::session::sharing::send::{MIN_WINDOW_BYTES, Request};
     use std::io::Write as _;
     let mut file = tempfile::tempfile()?;
     file.write_all(bytes)?;
     let digest = declared.unwrap_or_else(|| sha256(bytes));
-    let session = device.session()?;
     let (mut token, mut offset) = (None, 0u64);
     loop {
         let window = runtime.block_on(session.send_window_to(
@@ -540,7 +553,13 @@ fn send_file(
                 sha256: digest.clone(),
                 token: token.clone(),
                 offset,
-                length: MIN_WINDOW_BYTES,
+                // Larger files take larger windows, as the app's do: every
+                // window costs authority requests, which are rate limited.
+                length: if bytes.len() > 1_000_000 {
+                    8 * MIN_WINDOW_BYTES
+                } else {
+                    MIN_WINDOW_BYTES
+                },
             },
             &mut file,
         ))?;
@@ -714,17 +733,22 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
             vec![phone_node.clone()],
             SpaceKind::Folder,
         ))?;
+        // Both refusals reach the PC and come back as denials, not as a
+        // connection failure.
+        let into_folder = send_file(
+            &runtime,
+            &phone,
+            &pc_from(&phone)?,
+            &folder.collection_id,
+            "into-folder.txt",
+            b"no",
+            None,
+        );
         assert!(
-            send_file(
-                &runtime,
-                &phone,
-                &pc_from(&phone)?,
-                &folder.collection_id,
-                "into-folder.txt",
-                b"no",
-                None
-            )
-            .is_err()
+            into_folder
+                .err()
+                .is_some_and(|e| e.to_string().contains("isn't accepting files")),
+            "A folder accepts no files"
         );
         assert!(!photos.join("into-folder.txt").exists());
         // And an inbox is never browsed.
@@ -739,8 +763,56 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
                     Vec::new(),
                     Some(inbox.collection_id.clone())
                 ))
-                .is_err()
+                .err()
+                .is_some_and(|e| e.to_string().contains("access was not allowed")),
+            "An inbox is never browsed"
         );
+        // Two trusted devices sending into one inbox at once take turns, and
+        // both files arrive whole.
+        let shared = directory.path().join("shared-inbox");
+        std::fs::create_dir(&shared)?;
+        let both = runtime.block_on(pc.share_space(
+            None,
+            shared.clone(),
+            "Family inbox".into(),
+            vec![phone_node.clone(), tablet.status()?.node_public_key],
+            SpaceKind::Inbox,
+        ))?;
+        for device in [&mut phone, &mut tablet] {
+            runtime.block_on(device.check_network())?;
+        }
+        let large: Vec<u8> = (0..1_500_000u32).map(|i| (i % 241) as u8).collect();
+        let (from_phone, from_tablet) = (phone.session()?, tablet.session()?);
+        let (phone_host, tablet_host) = (pc_from(&phone)?, pc_from(&tablet)?);
+        let (a, b) = std::thread::scope(|scope| {
+            let a = scope.spawn(|| {
+                send_with(
+                    &runtime,
+                    &from_phone,
+                    &phone_host,
+                    &both.collection_id,
+                    "a.bin",
+                    &large,
+                    None,
+                )
+            });
+            let b = scope.spawn(|| {
+                send_with(
+                    &runtime,
+                    &from_tablet,
+                    &tablet_host,
+                    &both.collection_id,
+                    "b.bin",
+                    &large,
+                    None,
+                )
+            });
+            (a.join().expect("phone"), b.join().expect("tablet"))
+        });
+        assert_eq!(a?.as_deref(), Some("a.bin"));
+        assert_eq!(b?.as_deref(), Some("b.bin"));
+        assert_eq!(std::fs::read(shared.join("a.bin"))?, large);
+        assert_eq!(std::fs::read(shared.join("b.bin"))?, large);
         let names: Vec<String> = std::fs::read_dir(&received)?
             .map(|e| e.map(|e| e.file_name().to_string_lossy().into_owned()))
             .collect::<std::io::Result<_>>()?;

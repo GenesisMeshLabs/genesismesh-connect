@@ -486,17 +486,27 @@ interface SendProgress {
   state: "checking" | "sending" | "complete" | "failed" | "canceled";
   sent: number; total: number; problem: string | null; saved_as: string | null; name: string;
 }
+let sendId = "";
 async function sendTo(space: HomeSpace) {
   const id = await invoke<string | null>("send_file", { space: space.id });
   if (!id) return;
-  while (true) {
-    const progress = await invoke<SendProgress>("send_status", { id });
-    message(`${progress.name} to ${space.host}: ${sendSummary(progress)}`);
-    if (progress.state === "complete" || progress.state === "canceled") return;
-    if (progress.state === "failed") throw new Error(progress.problem || "Sending failed. Please try again.");
-    await new Promise((resolve) => setTimeout(resolve, 300));
+  sendId = id;
+  visible("cancel-send", true);
+  try {
+    while (true) {
+      const progress = await invoke<SendProgress>("send_status", { id });
+      message(`${progress.name} to ${space.host}: ${sendSummary(progress)}`);
+      if (progress.state === "complete" || progress.state === "canceled") return;
+      if (progress.state === "failed") throw new Error(progress.problem || "Sending failed. Please try again.");
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  } finally {
+    visible("cancel-send", false);
   }
 }
+el("cancel-send").addEventListener("click", () => {
+  if (sendId) void invoke("cancel_send", { id: sendId }).catch((error) => problem(String(error)));
+});
 el("receive-button").addEventListener(
   "click",
   () =>
