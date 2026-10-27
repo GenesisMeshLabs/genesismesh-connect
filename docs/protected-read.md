@@ -108,8 +108,11 @@ read; no cached allow decision or offline grant substitutes for it.
 The authority-signed `context_id` is `connect-read:<canonical intent digest>`.
 The intent includes the full request, both node keys, a host nonce, snapshot
 SHA-256, size and required policy ID. Connect requires that exact commitment,
-an authorized decision less than five seconds old, a currently valid
-host-bound attestation, and the configured policy in a resolved policy binding.
+an authorized decision still within its validity and made less than five
+seconds ago (give or take the five minutes a device's clock may differ from the
+network computer's; the host nonce, not this window, stops replay), a currently
+valid host-bound attestation, and the configured policy in a resolved policy
+binding.
 The authority computes its own ContextRecord digest; Connect does not reconstruct
 that record or claim to recompute its `context_digest`.
 

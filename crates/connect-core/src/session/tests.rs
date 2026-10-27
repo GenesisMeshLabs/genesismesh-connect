@@ -24,6 +24,10 @@ fn renewed_device_policy_accepts_daily_crls_but_requires_recent_certificates() -
     };
     let trust = snapshot(f.crl.clone())?;
     trust.certificate(&f.client_cert, &public(&f.client), f.now)?;
+    // A certificate just renewed by a network computer whose clock runs ahead.
+    let mut renewed = f.client_cert.clone();
+    renewed["issued_at"] = json!(python_timestamp(f.now + chrono::Duration::seconds(2)));
+    trust.certificate(&signed(renewed, &[&f.authority]), &public(&f.client), f.now)?;
     let mut older = f.client_cert.clone();
     older["issued_at"] = json!(python_timestamp(f.now - chrono::Duration::seconds(300)));
     older = signed(older, &[&f.authority]);
@@ -39,9 +43,16 @@ fn renewed_device_policy_accepts_daily_crls_but_requires_recent_certificates() -
             .check_fresh(f.now + chrono::Duration::seconds(60))
             .is_err()
     );
+    // A network computer whose clock runs ahead of this device's.
+    let mut ahead = f.crl.clone();
+    ahead["issued_at"] = json!(python_timestamp(f.now + chrono::Duration::seconds(2)));
+    snapshot(signed(ahead, &[&f.authority]))?;
     for (field, value) in [
         ("issued_at", f.now - chrono::Duration::hours(25)),
-        ("issued_at", f.now + chrono::Duration::seconds(1)),
+        (
+            "issued_at",
+            f.now + trust::CLOCK_SKEW + chrono::Duration::seconds(10),
+        ),
         ("next_update", f.now),
         ("next_update", f.now + chrono::Duration::hours(15)),
     ] {
@@ -305,12 +316,21 @@ fn certificates_refuse_tampering_wrong_node_network_time_and_revocation() -> Res
             "{field}"
         );
     }
+    // Issued a moment ago by an authority whose clock runs ahead of this one.
+    let mut ahead = f.client_cert.clone();
+    ahead["issued_at"] = json!(python_timestamp(f.now + chrono::Duration::seconds(2)));
+    trust.certificate(&signed(ahead, &[&f.authority]), &public(&f.client), f.now)?;
+    let mut edge = f.client_cert.clone();
+    edge["issued_at"] = json!(python_timestamp(f.now + trust::CLOCK_SKEW));
+    trust.certificate(&signed(edge, &[&f.authority]), &public(&f.client), f.now)?;
     for (field, value) in [
         ("network_name", json!("other-network")),
         ("expires_at", json!(python_timestamp(f.now))),
         (
             "issued_at",
-            json!(python_timestamp(f.now + chrono::Duration::seconds(1))),
+            json!(python_timestamp(
+                f.now + trust::CLOCK_SKEW + chrono::Duration::seconds(1)
+            )),
         ),
     ] {
         let mut cert = f.client_cert.clone();
@@ -354,7 +374,7 @@ fn trust_refuses_wrong_root_network_signature_staleness_and_rollbacks() -> Resul
         ),
         (
             "issued_at",
-            json!(python_timestamp(f.now + chrono::Duration::minutes(1))),
+            json!(python_timestamp(f.now + chrono::Duration::minutes(6))),
         ),
         ("next_update", json!(python_timestamp(f.now))),
         ("revoked_certificates", json!([{}])),

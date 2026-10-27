@@ -39,9 +39,13 @@ impl PairCard {
         Ok(card)
     }
     fn validate(&self) -> Result<()> {
+        // The network computer dated the link by its own clock, which may run
+        // ahead of this device's.
         let remaining = self.expires_at - Utc::now().timestamp();
         ensure!(
-            self.version == 1 && remaining > 0 && remaining <= 300,
+            self.version == 1
+                && remaining > 0
+                && remaining <= 300 + super::trust::CLOCK_SKEW.num_seconds(),
             "This join link has expired. Create a new one on your computer."
         );
         ensure!(
@@ -614,9 +618,16 @@ mod tests {
             expires_at: Utc::now().timestamp() + 299,
         };
         assert_eq!(PairCard::parse(&card.link()?)?.host_node, card.host_node);
+        // Made by a computer whose clock runs a minute ahead of this one.
+        let mut ahead = card.clone();
+        ahead.expires_at = Utc::now().timestamp() + 360;
+        PairCard::parse(&ahead.link()?)?;
         let mut expired = card.clone();
         expired.expires_at = Utc::now().timestamp();
         assert!(PairCard::parse(&expired.link()?).is_err());
+        let mut too_far = card.clone();
+        too_far.expires_at = Utc::now().timestamp() + 300 + 310;
+        assert!(PairCard::parse(&too_far.link()?).is_err());
         let mut changed = serde_json::to_value(&card)?;
         changed["admin_key"] = serde_json::json!("unexpected");
         assert!(
