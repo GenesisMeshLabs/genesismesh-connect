@@ -173,6 +173,18 @@ Activity. A failure after data
 release can leave only a prepared receipt and return an unconfirmed read. It
 does not mean that no bytes reached the client.
 
+## Sending into an inbox
+
+Sending reverses the read: the receiving device is the host that asks for a
+decision, and the sender is the peer. The capability is
+`connect.inbox.write`, evaluated for the whole file (collection, file name,
+sender, declared SHA-256 and size) on every window, with the context domain
+`connect-send` and its own ALPN, proof domain and TLS exporter label
+(`genesismesh-connect/send/1`). The receiving device verifies the sender's
+signature over each window's hash before recording it, checks the whole
+file's SHA-256 before saving, and never replaces an existing file. The
+authority bridge forwards only these exact parameters for this capability.
+
 ## Verification
 
 Run `scripts/verify.ps1` from the repository root. It includes the real-authority

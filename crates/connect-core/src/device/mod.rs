@@ -586,6 +586,7 @@ impl DeviceController {
         directory: std::path::PathBuf,
         name: String,
         recipients: Vec<String>,
+        kind: crate::session::sharing::SpaceKind,
     ) -> Result<ShareConfig> {
         let client = self
             .bridge_client
@@ -599,7 +600,7 @@ impl DeviceController {
         let trust = client.refresh(&mut self.trust).await?;
         let collection = collection.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let view = client
-            .share_space(identity, trust, collection, name, recipients)
+            .share_space(identity, trust, collection, name, recipients, kind)
             .await?;
         let config = Self::space_config(view, directory)?;
         self.set_space(config.clone()).await?;
@@ -615,6 +616,7 @@ impl DeviceController {
             policy_id: grant.policy_id,
             name: view.name,
             recipients: grant.recipients,
+            kind: view.kind,
         })
     }
     /// Stop one of this device's Spaces here, then ask the network computer
@@ -1439,6 +1441,7 @@ mod tests {
             policy_id: format!("connect-{kept}"),
             name: "Photos".into(),
             recipients: vec![phone.clone()],
+            ..Default::default()
         };
         device.vault.save_shares(vec![config.clone()])?;
         let grant = |collection: &str, attestation: String| SpaceGrant {
@@ -1453,18 +1456,21 @@ mod tests {
                 collection: kept.clone(),
                 name: "Photos".into(),
                 host: own.clone(),
+                kind: Default::default(),
                 grant: Some(grant(&kept, renewed.clone())),
             },
             SpaceView {
                 collection: stopped.clone(),
                 name: "Old folder".into(),
                 host: own.clone(),
+                kind: Default::default(),
                 grant: Some(grant(&stopped, uuid::Uuid::new_v4().to_string())),
             },
             SpaceView {
                 collection: theirs.clone(),
                 name: "Recipes".into(),
                 host: phone.clone(),
+                kind: Default::default(),
                 grant: None,
             },
         ];

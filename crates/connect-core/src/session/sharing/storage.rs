@@ -108,6 +108,60 @@ impl Collection {
         }
         Ok((files, next))
     }
+    /// Save a verified incoming file under `file_name`, or "name (2).ext" and
+    /// so on when that exists: an existing file is never replaced. The bytes
+    /// go to a hidden file first and take the reserved name only when
+    /// complete. Returns the name used.
+    pub fn commit(&self, file_name: &str, source: &mut std::fs::File) -> Result<String> {
+        use std::io::{Seek, SeekFrom};
+        name(file_name)?;
+        let (stem, extension) = match file_name.rsplit_once('.') {
+            Some((stem, extension)) if !stem.is_empty() => (stem, Some(extension)),
+            _ => (file_name, None),
+        };
+        let mut create = OpenOptions::new();
+        create
+            .write(true)
+            .create_new(true)
+            .follow(FollowSymlinks::No);
+        let mut reserved = None;
+        for index in 1..=99 {
+            let candidate = match (index, extension) {
+                (1, _) => file_name.to_owned(),
+                (_, Some(extension)) => format!("{stem} ({index}).{extension}"),
+                (_, None) => format!("{stem} ({index})"),
+            };
+            if name(&candidate).is_err() {
+                continue;
+            }
+            match self.directory.open_with(&candidate, &create) {
+                Ok(_) => {
+                    reserved = Some(candidate);
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let reserved = reserved.context("This folder already has 99 files with that name")?;
+        let hidden = format!(".connect-incoming-{}", uuid::Uuid::new_v4());
+        let written = (|| {
+            let mut target = self.directory.open_with(&hidden, &create)?.into_std();
+            source.seek(SeekFrom::Start(0))?;
+            std::io::copy(source, &mut target)?;
+            target.sync_all()?;
+            drop(target);
+            // Replaces only the empty file reserved above.
+            self.directory.rename(&hidden, &self.directory, &reserved)?;
+            Ok::<_, anyhow::Error>(())
+        })();
+        if let Err(error) = written {
+            let _ = self.directory.remove_file(&hidden);
+            let _ = self.directory.remove_file(&reserved);
+            return Err(error);
+        }
+        Ok(reserved)
+    }
     pub fn open(path: &Path) -> Result<Self> {
         ensure!(path.is_absolute(), "Collection root must be absolute");
         Ok(Self {
@@ -184,6 +238,36 @@ mod tests {
         assert!(directory.snapshot("large.txt").is_err());
         std::fs::create_dir(root.path().join("dir"))?;
         assert!(directory.snapshot("dir").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn incoming_files_never_replace_existing_ones() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        std::fs::write(root.path().join("photo.jpg"), b"original")?;
+        let directory = Collection::open(root.path())?;
+        let mut source = tempfile::tempfile()?;
+        std::io::Write::write_all(&mut source, b"incoming")?;
+        assert_eq!(directory.commit("photo.jpg", &mut source)?, "photo (2).jpg");
+        assert_eq!(directory.commit("photo.jpg", &mut source)?, "photo (3).jpg");
+        assert_eq!(directory.commit("notes", &mut source)?, "notes");
+        assert_eq!(directory.commit("notes", &mut source)?, "notes (2)");
+        assert_eq!(std::fs::read(root.path().join("photo.jpg"))?, b"original");
+        assert_eq!(
+            std::fs::read(root.path().join("photo (3).jpg"))?,
+            b"incoming"
+        );
+        for unsafe_name in ["../escape.txt", "a/b", "CON", ""] {
+            assert!(
+                directory.commit(unsafe_name, &mut source).is_err(),
+                "{unsafe_name}"
+            );
+        }
+        let left: Vec<_> = std::fs::read_dir(root.path())?
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".connect-incoming"))
+            .collect();
+        assert!(left.is_empty(), "No hidden staging file stays behind");
         Ok(())
     }
 }

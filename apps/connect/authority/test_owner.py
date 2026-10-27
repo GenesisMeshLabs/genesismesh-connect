@@ -118,9 +118,9 @@ class OwnerTests(unittest.TestCase):
                     space["valid_until"]=(datetime.now(timezone.utc)+timedelta(days=2)).isoformat()
                 owner._save_spaces(spaces)
                 grant=owner._grant
-                def failing(host_node,subject,collection_id,recipients):
+                def failing(host_node,subject,collection_id,*rest):
                     if collection_id==broken["collection"]: raise Refused("Simulated authority failure")
-                    return grant(host_node,subject,collection_id,recipients)
+                    return grant(host_node,subject,collection_id,*rest)
                 owner._grant=failing
                 try: self.assertEqual(owner.space_renew(),[collection])
                 finally: owner._grant=grant
@@ -142,6 +142,35 @@ class OwnerTests(unittest.TestCase):
                 # A device shares up to 16 folders.
                 for index in range(16): owner.space_share(host,str(uuid.uuid4()),f"Folder {index}",[phone])
                 with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"One more",[phone])
+            finally: owner.close()
+
+    def test_an_inbox_lets_its_devices_write_and_nothing_else(self):
+        import uuid
+        with tempfile.TemporaryDirectory() as directory:
+            owner=Owner(Path(directory)/"owner")
+            try:
+                owner.create("Inboxes")
+                host,phone=(generate_keypair().public_key_b64 for _ in range(2))
+                collection=str(uuid.uuid4())
+                inbox=owner.space_share(host,collection,"Inbox",[phone],kind="inbox")
+                self.assertEqual(inbox["kind"],"inbox")
+                policy=[p for p in owner.service.db.load_active_boundary_policies().policies if p.policy_id==inbox["policy_id"]][0]
+                self.assertEqual(list(policy.selector.capabilities),["connect.inbox.write"])
+                attestation=owner.service.db.get_membership_attestation(inbox["attestation_id"])["attestation"]
+                self.assertEqual(attestation.claims["capabilities"],["connect.inbox.write"])
+                # A Space keeps its kind, and an unknown kind is refused.
+                with self.assertRaises(Refused): owner.space_share(host,collection,"Inbox",[phone])
+                with self.assertRaises(Refused): owner.space_share(host,str(uuid.uuid4()),"Odd",[phone],kind="anything")
+                folder=owner.space_share(host,str(uuid.uuid4()),"Photos",[phone])
+                self.assertEqual(folder["kind"],"folder")
+                # Renewal keeps an inbox an inbox.
+                spaces=owner.space_list()
+                for space in spaces: space["valid_until"]="2026-01-01T00:00:00+00:00"
+                owner._save_spaces(spaces)
+                owner.space_renew()
+                renewed=next(s for s in owner.space_list() if s["collection"]==collection)
+                active=[p for p in owner.service.db.load_active_boundary_policies().policies if p.policy_id==renewed["policy_id"]][0]
+                self.assertEqual((renewed["kind"],list(active.selector.capabilities)),("inbox",["connect.inbox.write"]))
             finally: owner.close()
 
     def test_nonempty_or_incomplete_network_is_never_reinitialized(self):

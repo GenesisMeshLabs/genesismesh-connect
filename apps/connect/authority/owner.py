@@ -37,6 +37,10 @@ class Refused(Exception):
     pass
 
 
+# What each kind of Space lets its devices do: read a shared folder, or
+# write into the host's inbox.
+KINDS = {"folder": ["connect.collection.read", "connect.collection.list"],
+         "inbox": ["connect.inbox.write"]}
 SPACE_DAYS = 90
 RENEW_DAYS = 30
 MAX_SPACES = 64
@@ -294,15 +298,16 @@ class Owner:
     def _save_spaces(self, spaces):
         atomic(self.directory / "spaces.json", json.dumps({"version": 1, "spaces": spaces}).encode())
 
-    def _grant(self, host_node, subject, collection_id, recipients):
+    def _grant(self, host_node, subject, collection_id, recipients, kind="folder"):
         """Publish and activate the Space's policy for exactly these devices,
         and attest the host for it. Returns the registry fields."""
+        capabilities = KINDS[kind]
         policy_id = "connect-" + collection_id
         now = datetime.now(timezone.utc)
         valid_until = now + timedelta(days=SPACE_DAYS)
         result = self.admin("/admin/boundary-policies", {"policy_id": policy_id,
             "valid_from": now.isoformat(), "valid_until": valid_until.isoformat(),
-            "selector": {"capabilities": ["connect.collection.read", "connect.collection.list"],
+            "selector": {"capabilities": capabilities,
                 "parameter_equals": {"request_parameters.collection_id": [collection_id]}},
             "gates": [{"gate_id": "collection", "gate_type": "allowlist.v1", "order": 0, "config": {"path": "request_parameters.collection_id", "values": [collection_id]}},
                 {"gate_id": "peer", "gate_type": "allowlist.v1", "order": 1, "config": {"path": "request_parameters.peer_node", "values": sorted(recipients)}},
@@ -310,15 +315,18 @@ class Owner:
         self.admin(f"/admin/boundary-policies/{policy_id}/activate", {"version": result["version"]})
         attestation = self.admin("/admin/attestations", {"subject_id": subject, "subject_public_key": host_node,
             "roles": ["role:client"], "validity_hours": SPACE_DAYS * 24,
-            "claims": {"capabilities": ["connect.collection.read", "connect.collection.list"]}})
+            "claims": {"capabilities": capabilities}})
         return {"policy_id": policy_id, "policy_version": result["version"],
             "attestation_id": attestation["attestation_id"], "valid_until": valid_until.isoformat()}
 
-    def space_share(self, host_node, collection_id, space, recipients, subject=None, adopt=False):
+    def space_share(self, host_node, collection_id, space, recipients, subject=None, adopt=False, kind="folder"):
         """Create a Space, or change its name and devices. Only its host may
         change it; the policy names exactly the chosen devices. A new Space
         never takes over an existing policy: only this computer, moving a
-        folder it shared before Spaces (`adopt`), may give one a registry entry."""
+        folder it shared before Spaces (`adopt`), may give one a registry entry.
+        An inbox Space lets its devices send files into the host's folder."""
+        if kind not in KINDS:
+            raise Refused("Choose a shared folder or an inbox.")
         host_node = node(host_node)
         expected = self.subject(host_node)
         subject = expected if subject is None else subject
@@ -335,6 +343,8 @@ class Owner:
         existing = next((s for s in spaces if s["collection"] == collection_id), None)
         if existing is not None and existing["host"] != host_node:
             raise Refused("This shared folder belongs to another device.")
+        if existing is not None and existing.get("kind", "folder") != kind:
+            raise Refused("A shared folder and an inbox stay what they are.")
         if existing is None:
             if self.policy_versions("connect-" + collection_id) and not adopt:
                 raise Refused("This folder already has a permission on this network.")
@@ -342,10 +352,10 @@ class Owner:
                 raise Refused("A device can share up to 16 folders.")
             if len(spaces) >= MAX_SPACES:
                 raise Refused("This network shares up to 64 folders.")
-        entry = {"collection": collection_id, "name": space, "host": host_node,
+        entry = {"collection": collection_id, "name": space, "host": host_node, "kind": kind,
             "subject": subject, "recipients": recipients,
             "created_at": existing["created_at"] if existing else datetime.now(timezone.utc).isoformat()}
-        entry.update(self._grant(host_node, subject, collection_id, recipients))
+        entry.update(self._grant(host_node, subject, collection_id, recipients, kind))
         spaces = [s for s in spaces if s["collection"] != collection_id] + [entry]
         self._save_spaces(spaces)
         return entry
@@ -385,7 +395,7 @@ class Owner:
                 # One failure leaves that Space for the next pass; every
                 # renewal is saved as it is made.
                 try:
-                    entry.update(self._grant(entry["host"], entry["subject"], entry["collection"], entry["recipients"]))
+                    entry.update(self._grant(entry["host"], entry["subject"], entry["collection"], entry["recipients"], entry.get("kind", "folder")))
                 except Exception:
                     continue
                 self._save_spaces(spaces)

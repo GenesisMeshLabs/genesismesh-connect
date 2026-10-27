@@ -229,6 +229,37 @@ Space shared with it. Saved sharing is restored only for the guided consumer
 flow, after its authority is rebound; older advanced profiles still reopen
 unshared.
 
+## Send files
+
+A device can receive files into an **inbox**: on a Windows, macOS or Linux
+device, choose **Files → Receive files** and pick the folder files should land
+in. The inbox is a Space of its own kind: the network computer issues a
+policy that lets the chosen devices (for now, every other device) write into
+it, and nothing else. An inbox is never browsed, and a shared folder never
+accepts files. **Stop receiving** works like stopping any Space.
+
+Other devices see **Send files to Home PC** in Files; **Send a file** opens
+the native picker and shows progress, then the name the file was saved under.
+The receiving device decides every step:
+
+- The sender declares the file's name, size and SHA-256. For each window of
+  bytes the receiving device asks the authority whether that sender may write
+  the **whole file** into this inbox, with a fresh decision, before it accepts
+  a byte; splitting a file into windows never passes a size gate.
+- Bytes go to private staging on the receiving device. Each window is signed
+  by the sender over its hash, and the receiving device signs a receipt for it.
+- The file is saved only when its whole SHA-256 matches what the sender
+  declared, under its own name or "name (2).ext" and so on: an existing file
+  is never replaced. Both sides keep the signed receipts, the last one naming
+  the saved file.
+
+Current bounds: files up to 1 GiB, windows of 64 KiB to 32 MiB sized to the
+connection, up to four unfinished incoming files and 2 GiB of staging per
+inbox, and an hour before an abandoned file is dropped. A file interrupted
+part way is sent again from the start; resuming is next. Sending from phones,
+and phones receiving files, need the phone builds' file pickers and are not
+available yet.
+
 ## Verification boundary
 
 The real-authority integration suite verifies pairing and final mutual session

@@ -4,6 +4,7 @@ use tokio::sync::Mutex;
 mod consumer;
 mod desktop;
 mod downloads;
+mod sends;
 mod workflow;
 
 #[derive(Default)]
@@ -90,6 +91,7 @@ pub fn run() {
             desktop::setup(app)?;
             workflow::setup(app)?;
             downloads::setup(app)?;
+            sends::setup(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -109,6 +111,10 @@ pub fn run() {
             consumer::pair_reject,
             consumer::pair_join,
             consumer::share_folder,
+            consumer::receive_files,
+            sends::send_file,
+            sends::send_status,
+            sends::cancel_send,
             consumer::stop_sharing,
             consumer::browse_files,
             consumer::open_file,

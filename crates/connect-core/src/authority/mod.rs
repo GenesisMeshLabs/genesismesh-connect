@@ -158,7 +158,12 @@ impl LocalAuthority {
         capability: &str,
     ) -> Result<Value> {
         ensure!(
-            ["connect.collection.read", "connect.collection.list"].contains(&capability),
+            [
+                "connect.collection.read",
+                "connect.collection.list",
+                "connect.inbox.write"
+            ]
+            .contains(&capability),
             "Unsupported collection action"
         );
         let body = request(

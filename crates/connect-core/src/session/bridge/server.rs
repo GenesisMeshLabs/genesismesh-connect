@@ -619,6 +619,7 @@ async fn spaces(
                         collection: request.collection,
                         name: request.name,
                         recipients: request.recipients,
+                        kind: request.kind,
                     },
                 )
                 .await?,
@@ -726,6 +727,9 @@ pub(super) fn check_collection_decision(
             "directory",
         ],
         Some("connect.collection.list") => &["collection_id", "peer_node", "size", "page_digest"],
+        Some("connect.inbox.write") if id.starts_with("connect-send:") => {
+            &["collection_id", "file_name", "peer_node", "sha256", "size"]
+        }
         _ => anyhow::bail!("Unsupported collection action"),
     };
     ensure!(
@@ -749,7 +753,7 @@ pub(super) fn check_collection_decision(
                 .as_str()
                 .is_some_and(|s| STANDARD.decode(s).is_ok_and(|k| k.len() == 32))
             && parameters["size"].as_u64().is_some_and(|n| n
-                <= if id.starts_with("connect-download:") {
+                <= if id.starts_with("connect-download:") || id.starts_with("connect-send:") {
                     crate::session::sharing::download::MAX_FILE_BYTES
                 } else {
                     65536

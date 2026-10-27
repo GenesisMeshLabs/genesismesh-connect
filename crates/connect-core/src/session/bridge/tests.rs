@@ -28,6 +28,53 @@ fn collection_forwarding_only_accepts_bound_read_or_list_requests() -> Result<()
         }),
     )?;
     server::check_collection_decision(&body, &f.client_cert, &f.trust()?)?;
+    // An inbox write is forwarded only with its own context and parameters.
+    let write = |context: &str, parameters: Value| {
+        crate::authority::request(
+            &f.client,
+            json!({
+                "cert_id":f.client_cert["cert_id"],"node_public_key":public(&f.client),
+                "purpose":"node_boundary_evaluate","audience":f.trust().unwrap().audience().unwrap(),
+                "attestation_id":uuid::Uuid::new_v4().to_string(),"requested_capability":"connect.inbox.write",
+                "context":{"context_id":context,"request_parameters":parameters}
+            }),
+        )
+    };
+    let parameters = json!({"collection_id":"inbox","file_name":"photo.jpg","peer_node":public(&f.server),"sha256":"0".repeat(64),"size":1_000_000});
+    server::check_collection_decision(
+        &write("connect-send:test", parameters.clone())?,
+        &f.client_cert,
+        &f.trust()?,
+    )?;
+    assert!(
+        server::check_collection_decision(
+            &write("connect-read:test", parameters.clone())?,
+            &f.client_cert,
+            &f.trust()?
+        )
+        .is_err(),
+        "A write needs the send context"
+    );
+    let mut extra = parameters.clone();
+    extra["directory"] = json!("a/b");
+    assert!(
+        server::check_collection_decision(
+            &write("connect-send:test", extra)?,
+            &f.client_cert,
+            &f.trust()?
+        )
+        .is_err()
+    );
+    let mut huge = parameters;
+    huge["size"] = json!(crate::session::sharing::download::MAX_FILE_BYTES + 1);
+    assert!(
+        server::check_collection_decision(
+            &write("connect-send:test", huge)?,
+            &f.client_cert,
+            &f.trust()?
+        )
+        .is_err()
+    );
     for (field, value) in [
         ("node_public_key", json!(public(&f.server))),
         ("cert_id", json!("another-cert")),
@@ -706,6 +753,7 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
         collection: collection.into(),
         name: "Photos".into(),
         host: host.into(),
+        kind: Default::default(),
         subject: "connect-device-test".into(),
         recipients,
         created_at: "2026-10-27T00:00:00+00:00".into(),
@@ -775,6 +823,7 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
             collection.clone(),
             "Photos".into(),
             vec![tablet.clone(), computer.clone()],
+            crate::session::sharing::SpaceKind::Folder,
         )
         .await?;
     assert_eq!(shared.host, me);
@@ -796,6 +845,7 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
                     uuid::Uuid::new_v4().to_string(),
                     "Photos".into(),
                     recipients,
+                    crate::session::sharing::SpaceKind::Folder,
                 )
                 .await
                 .is_err()

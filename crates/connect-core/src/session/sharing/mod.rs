@@ -4,6 +4,7 @@ pub mod browse;
 pub mod catalog;
 pub mod download;
 pub mod listing;
+pub mod send;
 mod storage;
 mod transfer;
 use super::*;
@@ -22,6 +23,21 @@ const MAX_RECEIPT_BYTES: u64 = 32 * 1024 * 1024;
 const ROTATE_RECEIPTS: usize = 1792;
 const ROTATE_RECEIPT_BYTES: u64 = 24 * 1024 * 1024;
 
+/// What a Space lets its devices do: read a shared folder, or send files into
+/// the host's inbox folder.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SpaceKind {
+    #[default]
+    Folder,
+    Inbox,
+}
+impl SpaceKind {
+    fn is_folder(&self) -> bool {
+        *self == Self::Folder
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ShareConfig {
@@ -35,6 +51,8 @@ pub struct ShareConfig {
     /// The devices it is shared with; empty for a folder shared before Spaces.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recipients: Vec<String>,
+    #[serde(default, skip_serializing_if = "SpaceKind::is_folder")]
+    pub kind: SpaceKind,
 }
 pub struct Share {
     config: ShareConfig,
@@ -48,6 +66,7 @@ pub struct Share {
     released_names: AtomicU64,
     budget: Arc<tokio::sync::Semaphore>,
     downloads: download::State,
+    incoming: send::Incoming,
     requests: Mutex<(std::time::Instant, u32)>,
     browse_requests: Mutex<(std::time::Instant, u32)>,
 }
@@ -85,6 +104,7 @@ impl Share {
         let receipts = state.join("receipts");
         std::fs::create_dir_all(&receipts)?;
         let downloads = download::State::open(state)?;
+        let incoming = send::Incoming::open(state)?;
         Ok(Self {
             attestation: std::sync::RwLock::new(config.attestation_id.clone()),
             config,
@@ -96,6 +116,7 @@ impl Share {
             released_names: AtomicU64::new(0),
             budget: Arc::new(tokio::sync::Semaphore::new(1)),
             downloads,
+            incoming,
             requests: Mutex::new((std::time::Instant::now(), 0)),
             browse_requests: Mutex::new((std::time::Instant::now(), 0)),
         })
@@ -311,14 +332,28 @@ impl Shares {
     pub fn iter(&self) -> impl Iterator<Item = &Arc<Share>> {
         self.shares.iter()
     }
-    pub(super) fn get(&self, collection: &str) -> Option<&Share> {
+    fn of_kind(&self, collection: &str, kind: SpaceKind) -> Option<&Share> {
         self.shares
             .iter()
-            .find(|share| share.config.collection_id == collection)
+            .find(|share| share.config.collection_id == collection && share.config.kind == kind)
             .map(|share| &**share)
     }
-    /// The Space a request names, or for one that names none, the first Space
-    /// shared with `peer` (a folder shared before Spaces names everyone).
+    /// A shared folder, to read and list. An inbox is never read from.
+    pub(super) fn get(&self, collection: &str) -> Option<&Share> {
+        self.of_kind(collection, SpaceKind::Folder)
+    }
+    /// An inbox, to send into. A shared folder is never written to.
+    pub(super) fn inbox(&self, collection: &str) -> Option<&Share> {
+        self.of_kind(collection, SpaceKind::Inbox)
+    }
+    /// Whether any Space here is an inbox, so the send protocol is offered.
+    pub(super) fn receives(&self) -> bool {
+        self.shares
+            .iter()
+            .any(|share| share.config.kind == SpaceKind::Inbox)
+    }
+    /// The folder a request names, or for one that names none, the first
+    /// folder shared with `peer` (a folder shared before Spaces names everyone).
     pub(super) fn find(&self, collection: Option<&str>, peer: &str) -> Option<&Share> {
         match collection {
             Some(collection) => self.get(collection),
@@ -326,8 +361,9 @@ impl Shares {
                 .shares
                 .iter()
                 .find(|share| {
-                    share.config.recipients.is_empty()
-                        || share.config.recipients.iter().any(|node| node == peer)
+                    share.config.kind == SpaceKind::Folder
+                        && (share.config.recipients.is_empty()
+                            || share.config.recipients.iter().any(|node| node == peer))
                 })
                 .map(|share| &**share),
         }
@@ -446,6 +482,7 @@ mod tests {
                 policy_id: "connect-test".into(),
                 name: name.into(),
                 recipients: recipients.iter().map(|r| (*r).to_owned()).collect(),
+                kind: SpaceKind::Folder,
             },
             crate::authority::LocalAuthority::new("http://127.0.0.1:9")?,
             pin,

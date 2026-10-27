@@ -29,6 +29,7 @@ pub(super) enum Protocol {
     Download,
     Browse,
     NestedDownload,
+    Send,
 }
 impl Protocol {
     pub fn alpn(self) -> &'static [u8] {
@@ -43,6 +44,7 @@ impl Protocol {
             Self::Download => b"genesismesh-connect/download/1",
             Self::Browse => b"genesismesh-connect/browse/1",
             Self::NestedDownload => b"genesismesh-connect/download/2",
+            Self::Send => b"genesismesh-connect/send/1",
         }
     }
     pub(super) fn domain(self) -> &'static str {
@@ -57,6 +59,7 @@ impl Protocol {
             Self::Download => "genesismesh-connect/download-proof",
             Self::Browse => "genesismesh-connect/browse-proof",
             Self::NestedDownload => "genesismesh-connect/download-proof/v2",
+            Self::Send => "genesismesh-connect/send-proof",
         }
     }
     fn certificate(self, trust: &TrustSnapshot, cert: &Value, node: &str) -> Result<()> {
@@ -68,6 +71,7 @@ impl Protocol {
             | Self::Catalog
             | Self::Browse
             | Self::NestedDownload
+            | Self::Send
             | Self::Download => trust.certificate(cert, node, Utc::now()),
             Self::Authority | Self::Enrollment => {
                 trust.renewable_certificate(cert, node, Utc::now())
@@ -226,6 +230,7 @@ pub(super) fn exporter_for(connection: &Connection, protocol: Protocol) -> Resul
                 Protocol::Download => b"EXPORTER-GenesisMesh-Connect-download-v1",
                 Protocol::Browse => b"EXPORTER-GenesisMesh-Connect-browse-v1",
                 Protocol::NestedDownload => b"EXPORTER-GenesisMesh-Connect-download-v2",
+                Protocol::Send => b"EXPORTER-GenesisMesh-Connect-send-v1",
             },
             protocol.alpn(),
         )

@@ -81,6 +81,8 @@ pub struct SpaceView {
     pub collection: String,
     pub name: String,
     pub host: String,
+    #[serde(default)]
+    pub kind: crate::session::sharing::SpaceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<SpaceGrant>,
 }
@@ -110,6 +112,7 @@ impl SpaceView {
             collection: space.collection,
             name: space.name,
             host: space.host,
+            kind: space.kind,
         })
     }
     pub(crate) fn check(&self) -> Result<()> {
@@ -145,6 +148,8 @@ struct ShareSpaceRequest {
     collection: String,
     name: String,
     recipients: Vec<String>,
+    #[serde(default)]
+    kind: crate::session::sharing::SpaceKind,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

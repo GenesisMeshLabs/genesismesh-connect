@@ -171,6 +171,7 @@ impl BridgeAuthority {
         collection: String,
         name: String,
         recipients: Vec<String>,
+        kind: crate::session::sharing::SpaceKind,
     ) -> Result<super::SpaceView> {
         let node = identity.public_key();
         let value = self
@@ -182,13 +183,17 @@ impl BridgeAuthority {
                     collection: collection.clone(),
                     name,
                     recipients,
+                    kind,
                 })?,
             )
             .await?;
         let space: super::SpaceView = serde_json::from_value(value)?;
         space.check()?;
         ensure!(
-            space.collection == collection && space.host == node && space.grant.is_some(),
+            space.collection == collection
+                && space.host == node
+                && space.kind == kind
+                && space.grant.is_some(),
             "The network computer answered for another folder"
         );
         Ok(space)
@@ -296,7 +301,12 @@ impl BridgeAuthority {
         capability: &str,
     ) -> Result<Value> {
         ensure!(
-            ["connect.collection.read", "connect.collection.list"].contains(&capability),
+            [
+                "connect.collection.read",
+                "connect.collection.list",
+                "connect.inbox.write"
+            ]
+            .contains(&capability),
             "Unsupported collection action"
         );
         let signed = crate::authority::request(

@@ -6,7 +6,7 @@ use connect_core::{
     device::{ConnectivityStatus, DeviceController, PairedDevice},
     session::{
         pairing::{PairCard, PairGrant, PairRequest},
-        sharing::{ReadReport, ReadRequest, browse::Page},
+        sharing::{ReadReport, ReadRequest, SpaceKind, browse::Page},
     },
 };
 use serde::Serialize;
@@ -34,6 +34,8 @@ pub struct HomeSpace {
     host_id: String,
     /// Shared from this device.
     own: bool,
+    /// A folder to browse, or an inbox to send files into.
+    kind: SpaceKind,
 }
 #[derive(Serialize)]
 pub struct HomeStatus {
@@ -145,6 +147,7 @@ fn home_spaces(status: &connect_core::device::DeviceStatus) -> Vec<HomeSpace> {
             host: "This device".into(),
             host_id: status.node_public_key.clone(),
             own: true,
+            kind: share.kind,
         })
         .collect();
     spaces.extend(
@@ -158,6 +161,7 @@ fn home_spaces(status: &connect_core::device::DeviceStatus) -> Vec<HomeSpace> {
                 host: name_of(&space.host),
                 host_id: space.host.clone(),
                 own: false,
+                kind: space.kind,
             }),
     );
     spaces
@@ -401,11 +405,27 @@ pub async fn share_folder(
     state: tauri::State<'_, WorkflowState>,
     desktop: tauri::State<'_, DesktopState>,
 ) -> Result<bool, String> {
+    create_space(SpaceKind::Folder, &state, &desktop).await
+}
+/// Receive files from every other device of the network into a folder chosen
+/// with the native picker: an inbox Space. Returns false when canceled.
+#[tauri::command]
+pub async fn receive_files(
+    state: tauri::State<'_, WorkflowState>,
+    desktop: tauri::State<'_, DesktopState>,
+) -> Result<bool, String> {
+    create_space(SpaceKind::Inbox, &state, &desktop).await
+}
+async fn create_space(
+    kind: SpaceKind,
+    state: &WorkflowState,
+    desktop: &DesktopState,
+) -> Result<bool, String> {
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
-        let _ = (state, desktop);
+        let _ = (kind, state, desktop);
         Err(
-            "Sharing mobile documents is being added. Choose a folder on a computer for now."
+            "Sharing and receiving on phones is being added. Choose a folder on a computer for now."
                 .into(),
         )
     }
@@ -413,14 +433,20 @@ pub async fn share_folder(
     {
         // Picker is native and cannot be controlled by a peer-supplied path.
         let Some(folder) = rfd::AsyncFileDialog::new()
-            .set_title("Choose a folder to share read-only")
+            .set_title(match kind {
+                SpaceKind::Folder => "Choose a folder to share read-only",
+                SpaceKind::Inbox => "Choose a folder for files your devices send",
+            })
             .pick_folder()
             .await
         else {
             return Ok(false);
         };
         let directory = folder.path().to_owned();
-        let name = crate::workflow::folder_name(&directory);
+        let name = match kind {
+            SpaceKind::Folder => crate::workflow::folder_name(&directory),
+            SpaceKind::Inbox => "Inbox".into(),
+        };
         let mut owner = state.slot.lock().await;
         let mut slot = desktop.slot.lock().await;
         let device = slot
@@ -460,6 +486,7 @@ pub async fn share_folder(
                         &name,
                         &recipients,
                         Some(&subject),
+                        kind,
                     )
                     .map_err(error)?;
                 let view =
@@ -476,7 +503,7 @@ pub async fn share_folder(
             None => {
                 drop(owner);
                 device
-                    .share_space(None, directory, name, recipients)
+                    .share_space(None, directory, name, recipients, kind)
                     .await
                     .map_err(error)?;
             }

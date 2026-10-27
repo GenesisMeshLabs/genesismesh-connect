@@ -238,6 +238,9 @@ impl SessionEndpoint {
             protocols.push(wire::Protocol::Browse.alpn().to_vec());
             protocols.push(wire::Protocol::NestedDownload.alpn().to_vec());
         }
+        if share.as_ref().is_some_and(|shares| shares.receives()) {
+            protocols.push(wire::Protocol::Send.alpn().to_vec());
+        }
         // Only a guided device's saved transport is announced and port-mapped.
         let role = if transport.is_some() {
             crate::connectivity::Role::Host
@@ -687,6 +690,46 @@ impl SessionEndpoint {
     }
 }
 
+impl SessionEndpoint {
+    /// Send one window of the file in `input` into `node`'s inbox. Each window
+    /// is decided by the receiving device for the whole file.
+    pub async fn send_window_to(
+        &self,
+        node: &str,
+        ticket: &str,
+        request: sharing::send::Request,
+        input: &mut std::fs::File,
+    ) -> Result<sharing::send::Window> {
+        let ticket: SessionTicket = wire::decode(ticket.as_bytes())?;
+        ensure!(
+            ticket.version == 1
+                && !ticket.endpoint.is_empty()
+                && ticket.endpoint.id != self.endpoint.id(),
+            "Invalid destination"
+        );
+        let _permit = self
+            .outgoing
+            .try_acquire()
+            .context("Another operation is running")?;
+        let mut changes = self.credentials.subscribe();
+        let credentials = self.selected_credentials(Some(node), &mut changes)?;
+        let connection = timeout(
+            DEADLINE,
+            self.endpoint
+                .connect(ticket.endpoint, wire::Protocol::Send.alpn()),
+        )
+        .await
+        .context("The other device did not respond")??;
+        limit_streams(&connection);
+        let result = tokio::select! { biased;
+            _=changes.changed()=>Err(anyhow::anyhow!("Trust changed while sending")),
+            result=timeout(Duration::from_secs(120),sharing::send::transmit(&connection,self.endpoint.id(),&credentials,&request,input))=>result.context("Sending timed out").and_then(|r|r),
+        };
+        connection.close(0u32.into(), b"send window complete");
+        result
+    }
+}
+
 impl Drop for SessionEndpoint {
     fn drop(&mut self) {
         if let Some(task) = self
@@ -725,7 +768,7 @@ async fn accept_sessions(
                 tasks.spawn(async move {
                     let Ok(Ok(connection)) = timeout(DEADLINE, incoming).await else { return };
                     limit_streams(&connection);
-                    let deadline=if connection.alpn()==wire::Protocol::Download.alpn() || connection.alpn()==wire::Protocol::NestedDownload.alpn(){Duration::from_secs(120)}else if connection.alpn()==wire::Protocol::Read.alpn(){Duration::from_secs(20)}else{DEADLINE};
+                    let deadline=if connection.alpn()==wire::Protocol::Download.alpn() || connection.alpn()==wire::Protocol::NestedDownload.alpn() || connection.alpn()==wire::Protocol::Send.alpn(){Duration::from_secs(120)}else if connection.alpn()==wire::Protocol::Read.alpn(){Duration::from_secs(20)}else{DEADLINE};
                     let exchange = timeout(deadline, async {
                         if connection.alpn()==wire::Protocol::Read.alpn(){
                             return sharing::serve(&connection,local_id,&credentials,share.as_deref().context("Sharing disabled")?).await;
@@ -734,6 +777,7 @@ async fn accept_sessions(
                         if connection.alpn()==wire::Protocol::Browse.alpn(){return sharing::listing::serve_for(&connection,local_id,&credentials,share.as_deref().context("Sharing disabled")?,wire::Protocol::Browse).await;}
                         if connection.alpn()==wire::Protocol::Catalog.alpn(){return sharing::listing::serve_for(&connection,local_id,&credentials,share.as_deref().context("Sharing disabled")?,wire::Protocol::Catalog).await;}
                         if connection.alpn()==wire::Protocol::Download.alpn() || connection.alpn()==wire::Protocol::NestedDownload.alpn(){return sharing::download::serve(&connection,local_id,&credentials,share.as_deref().context("Sharing disabled")?).await;}
+                        if connection.alpn()==wire::Protocol::Send.alpn(){return sharing::send::serve(&connection,local_id,&credentials,share.as_deref().context("Receiving disabled")?).await;}
                         let (mut send, mut recv) = connection.accept_bi().await?;
                         let peer_certificate = authenticate(&connection, local_id, Role::Server, &credentials, &mut send, &mut recv).await?;
                         let credentials = credentials.for_authenticated(&peer_certificate)?;
