@@ -253,6 +253,16 @@ fn lock(path: &Path) -> Result<File> {
         .create(true)
         .truncate(false)
         .open(path.with_extension("lock"))?;
+    // A child process this program is starting holds copies of its open files
+    // until it runs its own program, so a lock just released can still read
+    // as held for a moment. Another process really using the checkpoint
+    // keeps it for longer than this.
+    for _ in 0..20 {
+        if lock.try_lock().is_ok() {
+            return Ok(lock);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     lock.try_lock()
         .context("Trust checkpoint already in use or cannot be locked")?;
     Ok(lock)
