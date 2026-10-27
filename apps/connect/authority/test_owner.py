@@ -177,9 +177,13 @@ class OwnerTests(unittest.TestCase):
                 owner.space_share(computer,only,"Phone only",[phone_node])
                 owner.space_share(phone_node,photos,"Phone photos",[computer])
                 owner.space_share(tablet,tablets,"Tablet",[computer])
+                # A folder shared with it before Spaces, and one with another device.
+                legacy,other=(str(uuid.uuid4()) for _ in range(2))
+                owner.share(computer,phone_node,legacy,owner.subject(computer))
+                owner.share(computer,tablet,other,owner.subject(computer))
                 removal=owner.remove_device(phone_node)
                 self.assertEqual(removal["revoked"],1)
-                self.assertEqual(sorted(removal["stopped"]),sorted([only,photos]))
+                self.assertEqual(sorted(removal["stopped"]),sorted([only,photos,legacy]))
                 self.assertEqual(removal["changed"],[home])
                 # Its certificate is revoked and it cannot renew.
                 self.assertIn(cert_id,[c.certificate_id for c in owner.service.db.get_active_crl().revoked_certificates])
@@ -193,7 +197,12 @@ class OwnerTests(unittest.TestCase):
                 for policy in active:
                     for gate in policy.gates:
                         if gate.gate_id=="peer": self.assertNotIn(phone_node,gate.config["values"])
-                self.assertFalse([p for p in active if p.policy_id in ("connect-"+only,"connect-"+photos)])
+                self.assertFalse([p for p in active if p.policy_id in ("connect-"+only,"connect-"+photos,"connect-"+legacy)])
+                self.assertTrue([p for p in active if p.policy_id=="connect-"+other])
+                # Its key never joins again, not even with a plain invitation.
+                again=dict(join,invite_token=owner.invite(phone_node)["invite"],nonce=str(uuid.uuid4()))
+                rejoined=client.post("/join",json=sign_node_request(sign_executor_proof(again,executor),phone))
+                self.assertGreaterEqual(rejoined.status_code,400)
                 # Asking again changes nothing; a key that never joined has nothing to revoke.
                 self.assertEqual(owner.remove_device(phone_node),{"revoked":0,"stopped":[],"changed":[]})
                 self.assertEqual(owner.remove_device(generate_keypair().public_key_b64)["revoked"],0)

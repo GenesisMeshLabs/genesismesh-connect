@@ -699,24 +699,35 @@ pub async fn remove_device(
     let outcome = tokio::task::spawn_blocking(move || {
         let removed = runtime
             .remove_device(&node)
-            .and_then(|_| runtime.space_list());
+            .and_then(|removal| Ok((removal, runtime.space_list()?)));
         (runtime, removed)
     })
     .await
     .map_err(|_| "Could not remove the device")?;
     owner.runtime = Some(outcome.0);
-    let spaces = outcome.1.map_err(error)?;
+    let (removal, spaces) = outcome.1.map_err(error)?;
     let mut slot = desktop.slot.lock().await;
     let device = slot.controller.as_mut().ok_or("Device is unavailable")?;
     device.forget_device(&id).await.map_err(error)?;
-    let own = device.status().map_err(error)?.node_public_key;
-    device.publish_spaces(spaces.clone());
-    let views = spaces
-        .into_iter()
-        .filter_map(|space| connect_core::session::bridge::SpaceView::of(space, &own))
-        .collect();
-    for collection in device.apply_spaces(views).map_err(error)?.ended {
-        device.drop_space(&collection).await.map_err(error)?;
+    // The device is off the network now; what follows only tidies this
+    // computer, and its next pass over the Spaces finishes what fails here.
+    let tidied = async {
+        device.publish_spaces(spaces);
+        let own: Vec<String> = device
+            .status()?
+            .shares
+            .into_iter()
+            .map(|share| share.collection_id)
+            .filter(|collection| removal.stopped.contains(collection))
+            .collect();
+        for collection in own {
+            device.drop_space(&collection).await?;
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if let Err(problem) = tidied {
+        slot.problem = Some(problem.to_string());
     }
     Ok(())
 }

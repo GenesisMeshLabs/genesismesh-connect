@@ -6,7 +6,7 @@ mod server;
 mod tests;
 
 pub(crate) use client::endpoint_of;
-pub use client::{BridgeAuthority, BridgeRoute};
+pub use client::{BridgeAuthority, BridgeRoute, Listing};
 pub use server::AuthorityBridge;
 
 use super::{Credentials, SessionIdentity, TrustSnapshot, limit_streams, wire};

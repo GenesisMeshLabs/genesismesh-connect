@@ -244,7 +244,7 @@ function renderDevices(status: HomeStatus) {
       if (status.owner) {
         forget.textContent = "Remove from network";
         forget.addEventListener("click", () => void run(forget, async () => {
-          if (!window.confirm(`Remove ${device.name} from your network? It loses access at once: the folders it shares stop, and the others no longer include it. To join again, it needs a fresh setup of Connect.`)) return;
+          if (!window.confirm(`Remove ${device.name} from your network? Within a minute it loses access everywhere: the folders it shares stop, and the others no longer include it. To join again, it needs a fresh setup of Connect.`)) return;
           await invoke("remove_device", { id: device.id });
           message(`${device.name} was removed from your network.`);
         }));

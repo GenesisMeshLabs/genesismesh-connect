@@ -108,23 +108,26 @@ the next refresh.
 
 On the network computer, open **Devices**, then **More → Remove from network**
 beside the device. On a server node, run
-`sudo genesismesh-connect remove "Device name"` (`status` lists the names).
-Removal:
+`sudo genesismesh-connect remove "Device name"` (`status` lists the names; two
+devices with the same name are told apart by their keys). Removal:
 
 - revokes every certificate of the device's key at the authority, in one
-  revocation list, so no device and no decision accepts it again;
+  revocation list, as a compromised key: the authority never enrolls that key
+  again;
 - stops the Spaces the device shares, and the Spaces only it could see;
 - takes it off every other Space, whose policy then names only the devices
-  still there;
-- drops it from the network computer's devices; the others drop it at their
-  next refresh, along with the Spaces that stopped.
+  still there, and turns off a folder permission from before Spaces that
+  names it;
+- drops it from the network computer's devices. The others drop it at their
+  next refresh; a Space of theirs that stopped stops there once two listings
+  in a row leave it out.
 
-The removed device cannot renew its certificate or use the authority bridge,
-and other devices refuse it as soon as they see the revocation. Bytes of a
-window already being sent may still arrive. To join again, it needs a fresh
-setup of Connect: the authority does not enroll the same device key twice.
-Asking again finishes a removal that failed part way. On other devices, Forget
-removes only a device this device saved itself and does not revoke anything.
+The removed device cannot renew its certificate or use the authority bridge.
+Other devices refuse it once they see the revocation, within about a minute
+(at most five, when a certificate ages out), and a window already being sent
+may still finish. To join again, it needs a fresh setup of Connect, with a new
+key. Asking again finishes a removal that failed part way. On other devices,
+Forget removes only a device this device saved itself and revokes nothing.
 
 ## Choose how devices connect
 

@@ -521,6 +521,7 @@ fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
             vec![pc_node.clone()],
             SpaceKind::Folder,
         ))?;
+        let revocations = pc.status()?.trust_checkpoint.crl_sequence;
         let removed = server.command(&["remove", "Phone"])?.output()?;
         ensure!(
             removed.status.success(),
@@ -546,9 +547,17 @@ fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
                 .is_err_and(|e| e.to_string().contains("No device is called")),
             "A removed device is no longer listed"
         );
-        // The PC learns it at its next refresh: the phone is no longer a
-        // member, the Space only it could see stops, and "Both" names only
-        // the server.
+        // The PC learns it at its next refreshes: the phone is no longer a
+        // member, "Both" names only the server, and the Space only the
+        // phone could see stops once two listings in a row leave it out.
+        runtime.block_on(pc.check_network())?;
+        assert!(
+            pc.status()?
+                .shares
+                .iter()
+                .any(|s| s.collection_id == for_phone.collection_id),
+            "One listing is not enough to stop a Space"
+        );
         runtime.block_on(pc.check_network())?;
         let status = pc.status()?;
         assert!(status.members.iter().all(|m| m.node != phone_node));
@@ -564,8 +573,9 @@ fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
             .find(|s| s.collection_id == both.collection_id)
             .context("The PC stopped a Space that still has a device")?;
         assert_eq!(kept.recipients, vec![server_node.clone()]);
-        // The phone is refused: its certificate is revoked, so neither the
-        // server nor the PC accepts it, and its Space releases nothing.
+        // The PC has seen the phone's certificates revoked, and the phone
+        // reaches neither the server nor the PC.
+        assert!(pc.status()?.trust_checkpoint.crl_sequence > revocations);
         assert!(
             runtime.block_on(phone.check_network()).is_err() || phone.status()?.problem.is_some()
         );

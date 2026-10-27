@@ -84,8 +84,9 @@ network. Approving from the phone instead of a terminal comes with Requests.
 `remove NAME` takes the device with that name off the network: its
 certificates are revoked, the Spaces it shares or that only it could see stop,
 and the others no longer name it (see
-[remove a device](everyday-workflow.md#remove-a-device)). It joins again only
-after a fresh setup of Connect on it.
+[remove a device](everyday-workflow.md#remove-a-device)). When two devices
+share a name, it lists their keys; give the key instead. A removed device
+joins again only after a fresh setup of Connect on it.
 
 `recovery NAME` writes `/var/lib/genesismesh-connect/recovery/NAME` and shows
 its key once; it never replaces an existing file. Copy the file somewhere safe,

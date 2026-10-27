@@ -397,10 +397,11 @@ class Owner:
 
     def remove_device(self, host_node):
         """Take a device off the network. Every certificate of its key is
-        revoked at the authority, so no device and no decision accepts it
-        again; the Spaces it shares stop, and those shared with it no longer
-        name it (one left with nobody stops). Asking again finishes what a
-        failure left undone."""
+        revoked at the authority, which then never enrolls that key again;
+        the Spaces it shares stop, those shared with it no longer name it
+        (one left with nobody stops), and a folder shared with it before
+        Spaces loses its permission. Asking again finishes what a failure
+        left undone."""
         host_node = node(host_node)
         response = self.read("/admin/edge-nodes", {"node_sovereign_id": self.subject(host_node)})
         if response.status_code != 200 or len(response.content) > 512*1024:
@@ -408,7 +409,8 @@ class Owner:
         revoked = 0
         for edge in response.json()["edge_nodes"]:
             if edge["node_public_key"] == host_node and edge["cert_id"]:
-                result = self.admin("/admin/revoke", {"cert_id": edge["cert_id"], "reason": "cessation_of_operation"})
+                # A removed device may be lost or stolen: its key never joins again.
+                result = self.admin("/admin/revoke", {"cert_id": edge["cert_id"], "reason": "key_compromise"})
                 revoked += len(result.get("edge_node", {}).get("revoked_cert_ids", []))
         stopped, changed = [], []
         for entry in self._spaces():
@@ -424,6 +426,19 @@ class Owner:
                 else:
                     self.space_remove(entry["host"], entry["collection"])
                     stopped.append(entry["collection"])
+        # A folder shared before Spaces has a permission but no registry entry.
+        spaces = {entry["collection"] for entry in self._spaces()}
+        response = self.read("/admin/boundary-policies/active")
+        if response.status_code != 200 or len(response.content) > 16*1024*1024:
+            raise Refused(f"The network authority refused this operation ({response.status_code}).")
+        for active in response.json()["active"]:
+            policy_id = active["policy_id"]
+            collection = policy_id.removeprefix("connect-")
+            peers = [value for gate in active["policy"]["gates"] if gate["gate_id"] == "peer"
+                for value in gate["config"].get("values", [])]
+            if policy_id.startswith("connect-") and collection not in spaces and host_node in peers:
+                self.admin(f"/admin/boundary-policies/{policy_id}/deactivate", {"version": active["version"]})
+                stopped.append(collection)
         return {"revoked": revoked, "stopped": stopped, "changed": changed}
 
     def space_renew(self, days=RENEW_DAYS):

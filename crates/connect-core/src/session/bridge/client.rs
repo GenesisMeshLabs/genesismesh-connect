@@ -1,6 +1,15 @@
 use super::*;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
+/// The network computer's Spaces for one device.
+pub struct Listing {
+    pub spaces: Vec<super::SpaceView>,
+    /// None from a computer that predates inboxes or did not answer.
+    pub inboxes: Option<Vec<super::SpaceView>>,
+    /// Every collection it listed, entries this device cannot use included.
+    pub listed: std::collections::BTreeSet<String>,
+}
+
 /// Provision the host node key independently from its reachability ticket.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -156,8 +165,9 @@ impl BridgeAuthority {
         identity: SessionIdentity,
         trust: TrustSnapshot,
     ) -> Result<Vec<super::SpaceView>> {
-        let (mut spaces, inboxes) = self.listing(identity, trust).await?;
-        spaces.extend(inboxes.unwrap_or_default());
+        let listing = self.listing(identity, trust).await?;
+        let mut spaces = listing.spaces;
+        spaces.extend(listing.inboxes.unwrap_or_default());
         Ok(spaces)
     }
     /// The shared folders, and the inboxes when the network computer could
@@ -166,24 +176,39 @@ impl BridgeAuthority {
         &self,
         identity: SessionIdentity,
         trust: TrustSnapshot,
-    ) -> Result<(Vec<super::SpaceView>, Option<Vec<super::SpaceView>>)> {
+    ) -> Result<Listing> {
+        let mut listed = std::collections::BTreeSet::new();
         let spaces = self
-            .listed(identity.clone(), trust.clone(), Operation::Spaces)
+            .listed(
+                identity.clone(),
+                trust.clone(),
+                Operation::Spaces,
+                &mut listed,
+            )
             .await?;
-        let inboxes = self.listed(identity, trust, Operation::Inboxes).await.ok();
-        Ok((spaces, inboxes))
+        let inboxes = self
+            .listed(identity, trust, Operation::Inboxes, &mut listed)
+            .await
+            .ok();
+        Ok(Listing {
+            spaces,
+            inboxes,
+            listed,
+        })
     }
     async fn listed(
         &self,
         identity: SessionIdentity,
         trust: TrustSnapshot,
         operation: Operation,
+        listed: &mut std::collections::BTreeSet<String>,
     ) -> Result<Vec<super::SpaceView>> {
         let value = self
             .retried(identity, trust, operation, || Ok(serde_json::json!({})))
             .await?;
         let answer: super::SpacesAnswer = serde_json::from_value(value)?;
         ensure!(answer.spaces.len() <= 64, "Too many shared folders");
+        listed.extend(answer.spaces.iter().map(|space| space.collection.clone()));
         // One entry this device cannot use never hides the others.
         Ok(answer
             .spaces

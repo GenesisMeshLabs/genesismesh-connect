@@ -142,6 +142,8 @@ pub struct DeviceController {
     spaces: Option<Vec<crate::owner::Space>>,
     /// When this device last asked its network computer for its settings.
     settings_checked: Option<std::time::Instant>,
+    /// This device's Spaces the network computer's last listing left out.
+    unlisted: std::collections::BTreeSet<String>,
 }
 
 impl DeviceController {
@@ -268,6 +270,7 @@ impl DeviceController {
             owner: None,
             spaces: None,
             settings_checked: None,
+            unlisted: Default::default(),
         })
     }
 
@@ -902,11 +905,13 @@ impl DeviceController {
         let Some(client) = self.bridge_client.clone() else {
             return Ok(());
         };
-        let Ok((mut views, inboxes)) = client.listing(identity.clone(), trust.clone()).await else {
+        let Ok(listing) = client.listing(identity.clone(), trust.clone()).await else {
             return Ok(());
         };
+        let inboxes_listed = listing.inboxes.is_some();
+        let mut views = listing.spaces;
         // Inboxes the computer did not list just now stay as last listed.
-        views.extend(inboxes.unwrap_or_else(|| {
+        views.extend(listing.inboxes.unwrap_or_else(|| {
             self.vault
                 .spaces()
                 .iter()
@@ -923,9 +928,26 @@ impl DeviceController {
                 .unshare_space(identity.clone(), trust.clone(), collection)
                 .await;
         }
+        // A Space of this device the computer stopped stops here too: left
+        // out of two listings in a row (entries this device cannot use count
+        // as listed), and an inbox only when the inboxes were listed.
+        let unlisted: std::collections::BTreeSet<String> = applied
+            .ended
+            .into_iter()
+            .filter(|collection| {
+                !listing.listed.contains(collection)
+                    && (inboxes_listed
+                        || self.vault.saved_shares().iter().any(|share| {
+                            share.collection_id == *collection
+                                && share.kind != crate::session::sharing::SpaceKind::Inbox
+                        }))
+            })
+            .collect();
+        let ended: Vec<String> = unlisted.intersection(&self.unlisted).cloned().collect();
+        self.unlisted = unlisted;
         // Stopping reconnects, and reconnecting refreshes: boxed, since
         // that refresh comes back here.
-        for collection in applied.ended {
+        for collection in ended {
             Box::pin(self.drop_space(&collection)).await?;
         }
         Ok(())

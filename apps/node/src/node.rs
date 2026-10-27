@@ -36,7 +36,7 @@ Under systemd:
 While the service runs:
   pair [--name NAME]   Add a device; NAME is how this server appears on it
   status               Show the network, its connection and its devices
-  remove NAME          Take a device off the network: it is revoked, its shared
+  remove NAME|KEY      Take a device off the network: it is revoked, its shared
                        folders stop, and other folders no longer include it
   connection public|private
                        Public relays, or private: local network only
@@ -183,7 +183,7 @@ pub async fn main(args: Vec<String>) -> Result<()> {
         }
         "pair" => pair(&paths, options.name.as_deref().unwrap_or("Network server")).await,
         "status" => status(&paths).await,
-        "remove" => remove(&paths, options.argument("device name")?).await,
+        "remove" => remove(&paths, options.argument("device name or key")?).await,
         "connection" => {
             let setting = match options.argument("setting: public or private")? {
                 "public" => Connectivity::PublicRelays,
@@ -487,18 +487,22 @@ async fn handle(node: &Shared, request: Value) -> Result<Value> {
                 .as_str()
                 .context("Name the device to remove")?;
             let mut node = node.lock().await;
+            // By name, or by its key when two devices share a name.
             let named: Vec<String> = node
                 .device
                 .status()?
                 .devices
                 .into_iter()
-                .filter(|d| d.name == name)
+                .filter(|d| d.name == name || d.node == name)
                 .map(|d| d.node)
                 .collect();
             let device = match named.as_slice() {
                 [one] => one.clone(),
                 [] => bail!("No device is called {name:?}. The status command lists them."),
-                _ => bail!("Several devices are called {name:?}. Rename one in its Connect app."),
+                several => bail!(
+                    "Several devices are called {name:?}. Remove one by its key: {}",
+                    several.join(", ")
+                ),
             };
             // Revoked first, so nothing accepts it while the rest is done;
             // asking again finishes a removal that failed part way.
