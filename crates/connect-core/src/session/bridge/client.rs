@@ -114,6 +114,35 @@ impl BridgeAuthority {
         Ok(settings)
     }
 
+    /// The network's other devices, reporting this device's own current
+    /// session address. Entries are checked as saved devices are; the caller
+    /// decides which to keep.
+    pub async fn members(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+        session_ticket: Option<String>,
+    ) -> Result<Vec<crate::device::PairedDevice>> {
+        let value = self
+            .authenticated(
+                identity,
+                trust,
+                Operation::Members,
+                &serde_json::to_value(super::MembersRequest { session_ticket })?,
+            )
+            .await?;
+        let answer: super::MembersAnswer = serde_json::from_value(value)?;
+        ensure!(answer.members.len() <= 32, "Too many network devices");
+        for member in &answer.members {
+            ensure!(
+                member.ticket.len() <= super::MAX_MEMBER_TICKET,
+                "Device address too long"
+            );
+            crate::device::validate_peer(member)?;
+        }
+        Ok(answer.members)
+    }
+
     /// Public, signed documents solve trust bootstrap after suspension. The
     /// locally pinned store verifies them before any credential is used.
     pub async fn refresh(&self, store: &mut TrustStore) -> Result<TrustSnapshot> {

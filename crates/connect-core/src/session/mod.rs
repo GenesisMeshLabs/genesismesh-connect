@@ -155,6 +155,14 @@ pub(crate) fn ticket_endpoint(ticket: &str) -> Result<iroh::EndpointId> {
     Ok(ticket.endpoint.id)
 }
 
+/// A session ticket in one spelling, so equal addresses compare equal and
+/// padding never reaches a saved profile.
+pub(crate) fn canonical_ticket(ticket: &str) -> Result<String> {
+    ticket_endpoint(ticket)?;
+    let ticket: SessionTicket = wire::decode(ticket.as_bytes())?;
+    Ok(serde_json::to_string(&ticket)?)
+}
+
 #[derive(Debug, Serialize)]
 pub struct SessionReport {
     pub peer_endpoint: String,

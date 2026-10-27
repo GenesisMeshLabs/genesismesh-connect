@@ -69,6 +69,11 @@ struct Record {
     #[serde(default)]
     #[zeroize(skip)]
     peers: Vec<super::PairedDevice>,
+    /// The network's other devices, as the network computer listed them.
+    /// Never a device in `peers`; together at most 32.
+    #[serde(default)]
+    #[zeroize(skip)]
+    members: Vec<super::PairedDevice>,
     #[serde(default)]
     auto_connect: bool,
     #[serde(default)]
@@ -119,6 +124,7 @@ impl Vault {
             bridge_seed: None,
             paired: None,
             peers: Vec::new(),
+            members: Vec::new(),
             auto_connect: false,
             consumer_mode: false,
             saved_share: None,
@@ -314,14 +320,62 @@ impl Vault {
             }
         })
     }
+    /// The selected device: one paired with this device, or a member.
     pub fn paired(&self) -> Option<&super::PairedDevice> {
         self.record
             .peers
             .iter()
+            .chain(&self.record.members)
             .find(|p| Some(p.node.as_str()) == self.peer())
     }
     pub fn peers(&self) -> &[super::PairedDevice] {
         &self.record.peers
+    }
+    pub fn members(&self) -> &[super::PairedDevice] {
+        &self.record.members
+    }
+    /// Keep the network computer's latest list of the other devices: never
+    /// this device or one it paired with itself, and at most 32 devices in
+    /// all. A selected member that left the network falls back to the network
+    /// computer. Returns whether anything changed.
+    pub fn save_members(&mut self, members: Vec<super::PairedDevice>) -> Result<bool> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let own = STANDARD.encode(self.key().verifying_key().to_bytes());
+        let mut kept: Vec<super::PairedDevice> = Vec::new();
+        for mut member in members {
+            validate_peer(&member)?;
+            member.ticket = crate::session::canonical_ticket(&member.ticket)?;
+            if member.node == own
+                || self.record.peers.iter().any(|p| p.node == member.node)
+                || kept.iter().any(|m| m.node == member.node)
+            {
+                continue;
+            }
+            if self.record.peers.len() + kept.len() >= 32 {
+                break;
+            }
+            kept.push(member);
+        }
+        if kept == self.record.members {
+            return Ok(false);
+        }
+        // Only a selected member that left the list changes the selection.
+        let left = self.record.peer.as_ref().is_some_and(|peer| {
+            self.record.members.iter().any(|m| &m.node == peer)
+                && !kept.iter().any(|m| &m.node == peer)
+                && !self.record.peers.iter().any(|p| &p.node == peer)
+        });
+        self.update(|record| {
+            record.members = kept;
+            if left {
+                record.peer = record
+                    .bridge_route
+                    .as_ref()
+                    .map(|route| route.host_node.clone())
+                    .or_else(|| record.peers.first().map(|p| p.node.clone()));
+            }
+        })?;
+        Ok(true)
     }
     pub fn forget_pairing(&mut self, node: &str) -> Result<()> {
         ensure!(
@@ -340,6 +394,38 @@ impl Vault {
                 .cloned();
             record.auto_connect = !record.peers.is_empty();
         })
+    }
+    /// Fresh session addresses devices reported for themselves, kept only for
+    /// the endpoint each one paired with. Returns whether anything changed.
+    pub fn save_peer_addresses(
+        &mut self,
+        reported: std::collections::BTreeMap<String, String>,
+    ) -> Result<bool> {
+        let fresh: Vec<(String, String)> = reported
+            .into_iter()
+            .filter(|(node, ticket)| {
+                self.record.peers.iter().any(|p| {
+                    &p.node == node
+                        && &p.ticket != ticket
+                        && crate::session::ticket_endpoint(&p.ticket).ok()
+                            == crate::session::ticket_endpoint(ticket).ok()
+                })
+            })
+            .collect();
+        if fresh.is_empty() {
+            return Ok(false);
+        }
+        self.update(|record| {
+            for (node, ticket) in fresh {
+                for peer in record.peers.iter_mut().filter(|p| p.node == node) {
+                    peer.ticket = ticket.clone();
+                }
+                if let Some(paired) = record.paired.as_mut().filter(|p| p.node == node) {
+                    paired.ticket = ticket;
+                }
+            }
+        })?;
+        Ok(true)
     }
     pub fn saved_share(&self) -> Option<&crate::session::sharing::ShareConfig> {
         self.record.saved_share.as_ref()
@@ -434,7 +520,12 @@ impl Vault {
         self.update(|record| {
             record.peer = Some(peer.node.clone());
             record.peers.retain(|p| p.node != peer.node);
+            record.members.retain(|m| m.node != peer.node);
             record.peers.push(peer.clone());
+            // Paired devices come first within the 32 a session allows.
+            record
+                .members
+                .truncate(32usize.saturating_sub(record.peers.len()));
             record.paired = Some(peer);
             record.auto_connect = true;
         })
@@ -452,7 +543,7 @@ impl Vault {
     }
 }
 
-fn validate_peer(peer: &super::PairedDevice) -> Result<()> {
+pub(crate) fn validate_peer(peer: &super::PairedDevice) -> Result<()> {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     ensure!(
         !peer.name.trim().is_empty()
@@ -475,9 +566,12 @@ fn migrate_peers(record: &mut Record) -> Result<()> {
     {
         record.peers.push(peer.clone());
     }
-    ensure!(record.peers.len() <= 32, "Too many saved devices");
+    ensure!(
+        record.peers.len() + record.members.len() <= 32,
+        "Too many saved devices"
+    );
     let mut nodes = std::collections::BTreeSet::new();
-    for peer in &record.peers {
+    for peer in record.peers.iter().chain(&record.members) {
         validate_peer(peer)?;
         ensure!(nodes.insert(&peer.node), "Duplicate saved device identity");
     }

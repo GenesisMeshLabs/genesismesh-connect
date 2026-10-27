@@ -41,6 +41,10 @@ test("ordinary connection errors explain the next action without exposing protoc
   assert.match(friendlyProblem("The file changed. Refresh the file list"), /Refresh/);
   assert.match(friendlyProblem("current folder permission. Share the folder again to allow larger files"), /Share this folder again/);
   assert.equal(friendlyProblem("TLS_EXPORTER protocol internals"), "Couldn’t complete this. Please try again.");
+  assert.match(
+    friendlyProblem("aborted by peer: the cryptographic handshake failed: error 120: peer doesn't support any known protocol"),
+    /isn’t sharing anything/,
+  );
 });
 test("file search filters actual returned entries without changing their version", () => {
   const file = { name: "Family Notes.txt", kind: "file" as const, bytes: 123, version: "abc" };

@@ -23,6 +23,8 @@ pub struct HomeDevice {
     name: String,
     selected: bool,
     authority_connection: bool,
+    /// Listed by the network computer rather than paired with this device.
+    member: bool,
 }
 #[derive(Serialize)]
 pub struct HomeStatus {
@@ -60,13 +62,16 @@ pub async fn home_status(
         devices: device
             .as_ref()
             .map(|d| {
-                d.devices
-                    .iter()
-                    .map(|p| HomeDevice {
+                let paired = d.devices.iter().map(|p| (p, false));
+                let members = d.members.iter().map(|p| (p, true));
+                paired
+                    .chain(members)
+                    .map(|(p, member)| HomeDevice {
                         id: p.node.clone(),
                         name: p.name.clone(),
                         selected: d.peer_node.as_ref() == Some(&p.node),
                         authority_connection: d.bridge_host_node.as_ref() == Some(&p.node),
+                        member,
                     })
                     .collect()
             })
@@ -468,6 +473,16 @@ pub async fn check_connection(desktop: tauri::State<'_, DesktopState>) -> Result
         .await
         .map_err(error)?;
     Ok(())
+}
+
+/// Ask the network computer for its devices now, when Devices opens.
+#[tauri::command]
+pub async fn check_network(desktop: tauri::State<'_, DesktopState>) -> Result<(), String> {
+    let mut slot = desktop.slot.lock().await;
+    match slot.controller.as_mut() {
+        Some(device) => device.check_network().await.map_err(error),
+        None => Ok(()),
+    }
 }
 
 #[tauri::command]

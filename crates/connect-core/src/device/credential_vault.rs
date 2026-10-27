@@ -163,6 +163,7 @@ mod tests {
             bridge_seed: None,
             paired: None,
             peers: Vec::new(),
+            members: Vec::new(),
             auto_connect: false,
             consumer_mode: false,
             saved_share: None,

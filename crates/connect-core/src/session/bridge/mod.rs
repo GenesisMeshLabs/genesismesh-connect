@@ -67,6 +67,31 @@ enum Operation {
     Evaluate,
     Attestation,
     Settings,
+    Members,
+}
+
+/// The longest session address a member list carries. Real addresses are a
+/// few hundred bytes; the bound keeps 32 of them within one response and a
+/// device's saved profile.
+pub(crate) const MAX_MEMBER_TICKET: usize = 2048;
+
+/// What a device tells its network computer when it asks for the members:
+/// its own current session address, so the others can reach it after its
+/// addresses change. Accepted only for the endpoint it paired with.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MembersRequest {
+    session_ticket: Option<String>,
+}
+
+/// The other devices of the network, from the network computer's saved
+/// devices. It is only sent over a mutually authenticated bridge connection.
+/// Knowing a member grants no file access: every operation still needs the
+/// authority's decision.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MembersAnswer {
+    members: Vec<crate::device::PairedDevice>,
 }
 
 /// What a network computer tells its devices about reaching it. It is only
