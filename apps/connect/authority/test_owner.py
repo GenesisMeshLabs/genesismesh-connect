@@ -1,5 +1,6 @@
 """Real core operations with disposable owner state; no existing network used."""
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -81,5 +82,72 @@ class OwnerTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError): owner.open()
             finally: owner.close()
 
+    def test_backup_and_restore_move_the_same_network_to_another_computer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first=Path(directory)/"first"/"owner"
+            owner=Owner(first)
+            try:
+                info=owner.create("Moving home")
+                node=generate_keypair().public_key_b64
+                owner.invite(node)
+                staged=owner.backup()
+                staging=Path(staged["staging"])
+                self.assertEqual(staging.parent,first)
+                # Owner keys travel only in the reply, never as files.
+                self.assertFalse(list(staging.rglob("*.key")))
+                self.assertTrue((staging/"network"/"na.db").is_file())
+                self.assertTrue((staging/staged["config"]).is_file())
+                self.assertEqual(sorted(Path(k).name for k in staged["keys"]),["na.key","operator.key","root.key"])
+                # A second, empty computer: stage beside its owner directory.
+                second=Path(directory)/"second"/"owner"; second.parent.mkdir()
+                moved=second.parent/".restore-test"
+                shutil.copytree(staging,moved)
+                shutil.rmtree(staging)
+            finally: owner.close()
+            restored=Owner(second)
+            try:
+                result=restored.restore(str(moved),staged["root"],staged["config"],staged["keys"])
+                self.assertEqual(result["pin"],info["pin"])
+                for private in (second/"network"/"keys").glob("*.key"):
+                    self.assertTrue(private.read_bytes().startswith(MAGIC))
+                settings=(second/staged["config"]).read_text()
+                self.assertNotIn(staged["root"],settings)
+                self.assertIn(second.as_posix(),settings)
+                # The restored authority keeps its history and its operator.
+                self.assertTrue(restored.invite(node)["invite"])
+                self.assertTrue(restored.service.db.conn.execute("select count(*) from invite_tokens").fetchone()[0]>=2)
+            finally: restored.close()
+            reopened=Owner(second)
+            try: self.assertEqual(reopened.open()["pin"],info["pin"])
+            finally: reopened.close()
+
+    def test_restore_refuses_an_existing_network_and_escaping_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/"source"/"owner"
+            owner=Owner(source)
+            try:
+                owner.create("Refusals")
+                staged=owner.backup()
+            finally: owner.close()
+            target=Path(directory)/"target"/"owner"; target.parent.mkdir()
+            moved=target.parent/".restore-test"
+            shutil.copytree(staged["staging"],moved)
+            secret=next(iter(staged["keys"].values()))
+            # Rooted, drive-relative and backslash names would escape on Windows.
+            for name in ("../outside.key","/Windows/Temp/x.key","D:x.key","network\\keys\\na.key","network/./na.key"):
+                with self.assertRaises(Refused,msg=name): Owner(target).restore(str(moved),staged["root"],staged["config"],{name:secret})
+            with self.assertRaises(Refused): Owner(target).restore(str(moved),staged["root"],"\\Users\\v\\settings.toml",staged["keys"])
+            climbing=moved/staged["config"]
+            original=climbing.read_text()
+            climbing.write_text(original.replace(staged["root"]+"/network/na.db",staged["root"]+"/../../escaped.db"))
+            with self.assertRaises(Refused): Owner(target).restore(str(moved),staged["root"],staged["config"],staged["keys"])
+            self.assertFalse((target.parent.parent/"escaped.db").exists())
+            climbing.write_text(original)
+            with self.assertRaises(Refused): Owner(target).restore(str(moved),staged["root"],"../settings.toml",staged["keys"])
+            with self.assertRaises(Refused): Owner(target).restore(str(moved),"/elsewhere",staged["config"],staged["keys"])
+            self.assertFalse((target/"owner.json").exists())
+            elsewhere=Path(directory)/"elsewhere"; shutil.copytree(moved,elsewhere)
+            with self.assertRaises(Refused): Owner(target).restore(str(elsewhere),staged["root"],staged["config"],staged["keys"])
+            with self.assertRaises(Refused): Owner(source).restore(str(moved),staged["root"],staged["config"],staged["keys"])
 
 if __name__=="__main__": unittest.main()

@@ -30,6 +30,7 @@ serde_json.workspace = true
 uuid = { version = "1", features = ["v4"] }
 tempfile = "=3.27.0"
 sha2 = "0.11"
+zeroize = "1"
 tauri-plugin-deep-link = "=2.6.2"
 
 [target.'cfg(any(windows, target_os = "macos", target_os = "linux"))'.dependencies]

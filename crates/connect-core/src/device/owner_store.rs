@@ -43,23 +43,7 @@ pub(crate) fn request(request: &Value) -> Result<Value> {
         }
         Some("open") => {
             ensure!(object.len() == 2, "Unsupported storage fields");
-            let reference = decode(
-                request["data"]
-                    .as_str()
-                    .context("Missing owner reference")?,
-            )?;
-            let id = std::str::from_utf8(
-                reference
-                    .strip_prefix(PREFIX)
-                    .context("Wrong owner storage provider")?,
-            )?;
-            ensure!(
-                uuid::Uuid::parse_str(id)?.to_string() == id,
-                "Invalid owner storage reference"
-            );
-            let stored = platform_store()?.get(id)?.context("The saved owner key is missing from the system credential store. Existing network state was preserved.")?;
-            ensure!(stored.len() <= 32 * 1024, "Owner credential too large");
-            let record: Value = serde_json::from_slice(&stored)?;
+            let (id, record) = stored(request)?;
             ensure!(
                 record["purpose"] == PURPOSE && record["id"] == id,
                 "Owner credential was substituted"
@@ -71,8 +55,41 @@ pub(crate) fn request(request: &Value) -> Result<Value> {
             )?;
             Ok(json!({"data":STANDARD.encode(&data)}))
         }
+        // A restore that failed removes the owner keys it sealed. Only an
+        // owner credential naming this exact reference is removed.
+        Some("delete") => {
+            ensure!(object.len() == 2, "Unsupported storage fields");
+            let (id, record) = stored(request)?;
+            ensure!(
+                record["purpose"] == PURPOSE && record["id"] == id,
+                "Not an owner credential"
+            );
+            platform_store()?.delete(&id)?;
+            Ok(json!({"deleted":true}))
+        }
         _ => anyhow::bail!("Unsupported native owner storage operation"),
     }
+}
+
+/// The credential an owner reference names, read from the native store.
+fn stored(request: &Value) -> Result<(String, Value)> {
+    let reference = decode(
+        request["data"]
+            .as_str()
+            .context("Missing owner reference")?,
+    )?;
+    let id = std::str::from_utf8(
+        reference
+            .strip_prefix(PREFIX)
+            .context("Wrong owner storage provider")?,
+    )?;
+    ensure!(
+        uuid::Uuid::parse_str(id)?.to_string() == id,
+        "Invalid owner storage reference"
+    );
+    let stored = platform_store()?.get(id)?.context("The saved owner key is missing from the system credential store. Existing network state was preserved.")?;
+    ensure!(stored.len() <= 32 * 1024, "Owner credential too large");
+    Ok((id.to_owned(), serde_json::from_slice(&stored)?))
 }
 
 fn decode(text: &str) -> Result<Zeroizing<Vec<u8>>> {

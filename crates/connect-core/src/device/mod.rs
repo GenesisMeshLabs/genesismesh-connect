@@ -160,6 +160,55 @@ impl DeviceController {
         Self::open(path)
     }
 
+    /// The network computer's own identity and verified trust history, for an
+    /// encrypted recovery file. Paired devices trust this identity, so a
+    /// restore keeps it instead of creating a new one.
+    pub fn recovery_identity(&self) -> Result<crate::recovery::DeviceIdentity> {
+        ensure!(
+            self.network_computer(),
+            "Create recovery files on your network computer"
+        );
+        Ok(crate::recovery::DeviceIdentity {
+            vault: self.vault.export()?,
+            trust: std::fs::read(self.state_directory.join("trust.json"))?,
+        })
+    }
+
+    /// Restore the network computer's identity from a recovery file, for the
+    /// restored authority at `authority`. Never replaces an existing profile.
+    pub fn restore_identity(
+        path: &Path,
+        identity: &crate::recovery::DeviceIdentity,
+        authority: String,
+        pin: TrustPin,
+    ) -> Result<Self> {
+        LocalAuthority::new(&authority)?;
+        ensure!(!path.exists(), "This device is already prepared");
+        let parent = path.parent().context("Missing application directory")?;
+        std::fs::create_dir_all(parent)?;
+        let stage = tempfile::tempdir_in(parent)?;
+        std::fs::write(stage.path().join("trust.json"), &identity.trust)?;
+        TrustStore::open(&stage.path().join("trust.json"), &pin)?;
+        Vault::restore(
+            &stage.path().join("device.bin"),
+            &identity.vault,
+            authority,
+            &pin,
+        )?;
+        std::fs::rename(stage.path(), path)?;
+        Self::open(path)
+    }
+
+    /// Remove a profile this process just created, after a failed restore,
+    /// including its secret in a native credential store.
+    pub fn discard(self) -> Result<()> {
+        let path = self.state_directory.clone();
+        let Self { vault, .. } = self;
+        vault.discard()?;
+        std::fs::remove_dir_all(path)?;
+        Ok(())
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         let vault = Vault::open(&path.join("device.bin"))?;
         let trust = TrustStore::open(&path.join("trust.json"), vault.pin())?;

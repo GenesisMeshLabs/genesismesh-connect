@@ -133,6 +133,55 @@ impl Vault {
             record,
         })
     }
+    /// Remove a vault this process just created (a failed restore), including
+    /// its secret in a native credential store. Windows keeps it in the file.
+    pub fn discard(self) -> Result<()> {
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "android"
+        ))]
+        {
+            let mut reference = Vec::new();
+            File::open(&self.path)?
+                .take(256)
+                .read_to_end(&mut reference)?;
+            credential::forget(&reference, &platform_store()?)?;
+        }
+        std::fs::remove_file(&self.path)?;
+        Ok(())
+    }
+    /// The whole private record, for an encrypted recovery file only.
+    pub fn export(&self) -> Result<Zeroizing<Vec<u8>>> {
+        Ok(Zeroizing::new(serde_json::to_vec(&self.record)?))
+    }
+    /// Recreate a network computer's identity from a recovery file on this
+    /// computer: the same keys, protected by this computer's store, pointed at
+    /// the restored authority. A shared folder must be chosen again here.
+    pub fn restore(
+        path: &Path,
+        exported: &[u8],
+        authority: String,
+        pin: &TrustPin,
+    ) -> Result<Self> {
+        let mut record: Record = serde_json::from_slice(exported)
+            .map_err(|_| anyhow::anyhow!("The recovery file's device identity is damaged"))?;
+        ensure!(record.version == 1, "Unsupported device identity version");
+        ensure!(
+            &record.pin == pin,
+            "The recovery file's device belongs to another network"
+        );
+        migrate_peers(&mut record)?;
+        record.storage_id = uuid::Uuid::new_v4().to_string();
+        record.authority = Some(authority);
+        record.saved_share = None;
+        persist(path, &record, true)?;
+        Ok(Self {
+            path: path.to_owned(),
+            record,
+        })
+    }
     pub fn open(path: &Path) -> Result<Self> {
         let mut sealed = Vec::new();
         File::open(path)?

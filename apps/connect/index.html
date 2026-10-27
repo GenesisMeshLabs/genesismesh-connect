@@ -61,7 +61,30 @@
           <button id="choose-existing" class="text-button" hidden>
             Use an existing network on this computer
           </button>
+          <button id="choose-restore" class="text-button" hidden>
+            Restore my network from a recovery file
+          </button>
         </div>
+        <section id="restore-screen" class="home-card setup-card" hidden>
+          <button class="text-button" data-back>← Back</button>
+          <h1>Restore your network</h1>
+          <p>
+            Choose the recovery file you saved and enter its recovery key.
+            Your devices stay paired with this network.
+          </p>
+          <form id="restore-form">
+            <label for="restore-key">Recovery key</label
+            ><input
+              id="restore-key"
+              maxlength="64"
+              required
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
+            />
+            <button type="submit">Choose recovery file and restore</button>
+          </form>
+        </section>
         <section id="create-screen" class="home-card setup-card" hidden>
           <button class="text-button" data-back>← Back</button>
           <h1>Create your network</h1>
@@ -237,6 +260,22 @@
               >
                 Save name
               </button>
+            </section>
+            <section id="recovery-card" class="home-card" hidden>
+              <h2>Recovery</h2>
+              <p>
+                A recovery file and its key bring this network back on another
+                computer, with every device still paired.
+              </p>
+              <button id="create-recovery" class="secondary">Create recovery file</button>
+              <div id="recovery-key-panel" hidden>
+                <p><strong>Write this recovery key down now.</strong> Connect cannot show it again.</p>
+                <p id="recovery-key" class="recovery-key"></p>
+                <p class="home-muted">
+                  Keep the key apart from the file, for example on paper. Anyone with both can restore your network.
+                </p>
+                <button id="recovery-done" class="secondary">I’ve written it down</button>
+              </div>
             </section>
             <section id="connection-card" class="home-card" hidden>
               <h2>Connection</h2>

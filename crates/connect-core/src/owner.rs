@@ -19,10 +19,33 @@ pub struct OwnerInfo {
     pub managed: bool,
 }
 
+/// A staged network: the owner keys (plaintext, held only in memory) and the
+/// staging directory holding the database snapshot and public files.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerBackup {
+    pub staging: std::path::PathBuf,
+    pub root: String,
+    pub config: String,
+    pub keys: std::collections::BTreeMap<String, String>,
+}
+impl Drop for OwnerBackup {
+    fn drop(&mut self) {
+        for value in self.keys.values_mut() {
+            zeroize::Zeroize::zeroize(value);
+        }
+    }
+}
+
+/// Copying a large authority database takes longer than ordinary operations.
+const RECOVERY_LIMIT: Duration = Duration::from_secs(600);
+
 pub struct OwnerRuntime {
     child: Child,
     input: Option<ChildStdin>,
     replies: mpsc::Receiver<Value>,
+    /// A request was sent and its final reply has not been read.
+    awaiting: bool,
 }
 impl OwnerRuntime {
     pub fn start(executable: &Path, directory: &Path) -> Result<Self> {
@@ -83,7 +106,10 @@ impl OwnerRuntime {
                 if !matches!(outcome, Ok(size) if size > 0 && size <= 64 * 1024) {
                     break;
                 }
-                let Ok(value) = serde_json::from_slice(&line) else {
+                let parsed = serde_json::from_slice(&line);
+                // Replies can carry owner keys for a recovery file.
+                zeroize::Zeroize::zeroize(&mut line);
+                let Ok(value) = parsed else {
                     break;
                 };
                 if sender.send(value).is_err() {
@@ -95,6 +121,7 @@ impl OwnerRuntime {
             child,
             input: Some(input),
             replies,
+            awaiting: false,
         };
         let hello = runtime
             .replies
@@ -108,16 +135,35 @@ impl OwnerRuntime {
     }
 
     fn request(&mut self, request: Value) -> Result<Value> {
-        let bytes = serde_json::to_vec(&request)?;
+        self.request_within(request, Duration::from_secs(30))
+    }
+
+    /// One fixed operation. If it fails after the request was sent and before
+    /// its final reply arrived (a timeout, say), the runtime is stopped for
+    /// good: a late reply must never be read as the answer to a later request.
+    fn request_within(&mut self, request: Value, limit: Duration) -> Result<Value> {
+        let outcome = self.exchange(request, limit);
+        if outcome.is_err() && self.awaiting {
+            self.input.take();
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        outcome
+    }
+
+    fn exchange(&mut self, request: Value, limit: Duration) -> Result<Value> {
+        let bytes = zeroize::Zeroizing::new(serde_json::to_vec(&request)?);
+        drop(request);
         ensure!(
             bytes.len() <= 16 * 1024,
             "Network setup request is too large"
         );
         let input = self.input.as_mut().context("Network runtime was closed")?;
+        self.awaiting = true;
         input.write_all(&bytes)?;
         input.write_all(b"\n")?;
         input.flush()?;
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + limit;
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         let mut storage_operations = 0;
         // Other targets have no nested native-store requests; their first
@@ -126,12 +172,16 @@ impl OwnerRuntime {
             not(any(target_os = "macos", target_os = "linux")),
             allow(clippy::never_loop)
         )]
-        let reply = loop {
+        let mut reply = loop {
             #[allow(unused_mut)] // Native storage replies are handled only on Unix desktops.
-            let mut reply = self
+            let Ok(mut reply) = self
                 .replies
                 .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
-                .context("The local network operation did not finish")?;
+            else {
+                anyhow::bail!(
+                    "The local network operation did not finish. Restart Connect to reopen your network."
+                );
+            };
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             if let Some(request) = reply.get_mut("native_storage") {
                 storage_operations += 1;
@@ -154,12 +204,13 @@ impl OwnerRuntime {
             }
             break reply;
         };
+        self.awaiting = false;
         if let Some(error) = reply.get("error").and_then(Value::as_str) {
             anyhow::bail!("{}", error);
         }
         reply
-            .get("ok")
-            .cloned()
+            .get_mut("ok")
+            .map(Value::take)
             .context("Invalid local network response")
     }
     pub fn create(&mut self, name: &str) -> Result<OwnerInfo> {
@@ -174,6 +225,30 @@ impl OwnerRuntime {
         Ok(serde_json::from_value(
             self.request(json!({"op":"attach","config":config}))?,
         )?)
+    }
+    /// Stage the network for a recovery file: files inside the owner's private
+    /// directory, the owner keys only in this reply.
+    pub fn backup(&mut self) -> Result<OwnerBackup> {
+        let backup: OwnerBackup =
+            serde_json::from_value(self.request_within(json!({"op":"backup"}), RECOVERY_LIMIT)?)?;
+        ensure!(
+            backup.staging.is_absolute() && !backup.keys.is_empty() && backup.keys.len() <= 16,
+            "Invalid network recovery staging"
+        );
+        Ok(backup)
+    }
+    /// Install a network from files staged beside the owner directory.
+    pub fn restore(
+        &mut self,
+        staging: &Path,
+        root: &str,
+        config: &str,
+        keys: &std::collections::BTreeMap<String, String>,
+    ) -> Result<OwnerInfo> {
+        Ok(serde_json::from_value(self.request_within(
+            json!({"op":"restore","staging":staging,"root":root,"config":config,"keys":keys}),
+            RECOVERY_LIMIT,
+        )?)?)
     }
     pub fn invite(&mut self, node: &str, host: bool) -> Result<String> {
         self.request(json!({"op":"invite","node":node,"host":host}))?["invite"]

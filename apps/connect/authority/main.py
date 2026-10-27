@@ -29,6 +29,8 @@ def main():
                 elif op=="invite" and set(request)=={"op","node","host"} and type(request["host"]) is bool: result=owner.invite(request["node"],request["host"])
                 elif op=="share" and set(request)=={"op","host","peer","collection"}: result=owner.share(request["host"],request["peer"],request["collection"])
                 elif op=="share" and set(request)=={"op","host","peer","collection","subject"}: result=owner.share(request["host"],request["peer"],request["collection"],request["subject"])
+                elif op=="backup" and set(request)=={"op"}: result=owner.backup()
+                elif op=="restore" and set(request)=={"op","staging","root","config","keys"}: result=owner.restore(request["staging"],request["root"],request["config"],request["keys"])
                 else: raise Refused("Unsupported network setup operation.")
                 print(json.dumps({"ok":result}),flush=True)
             except Refused as error:

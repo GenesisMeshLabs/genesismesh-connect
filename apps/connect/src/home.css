@@ -541,3 +541,15 @@
 .connection-choice .home-muted {
   display: block;
 }
+.recovery-key {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  font-size: 1.05rem !important;
+  letter-spacing: 0.06em;
+  color: #eef5ea !important;
+  background: #111b15;
+  border: 1px solid #455947;
+  border-radius: 9px;
+  padding: 12px 14px;
+  word-break: break-all;
+  user-select: all;
+}

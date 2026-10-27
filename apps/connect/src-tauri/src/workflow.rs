@@ -227,3 +227,112 @@ async fn install_network(
     slot.problem = None;
     Ok(())
 }
+
+/// Save an encrypted recovery file for this network computer and return its
+/// recovery key, shown to the owner once. `None` when the owner cancels.
+#[tauri::command]
+pub async fn recovery_create(
+    state: tauri::State<'_, WorkflowState>,
+    desktop: tauri::State<'_, crate::desktop::DesktopState>,
+) -> Result<Option<String>, String> {
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (state, desktop);
+        Err("Create recovery files on your network computer.".into())
+    }
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+    {
+        let Some(file) = rfd::AsyncFileDialog::new()
+            .add_filter("Connect recovery file", &["gmrecovery"])
+            .set_file_name("Genesis Mesh recovery.gmrecovery")
+            .set_title("Save your network's recovery file")
+            .save_file()
+            .await
+        else {
+            return Ok(None);
+        };
+        let mut owner = state.slot.lock().await;
+        let identity = {
+            let slot = desktop.slot.lock().await;
+            slot.controller
+                .as_ref()
+                .ok_or("Set up this computer first")?
+                .recovery_identity()
+                .map_err(|e| e.to_string())?
+        };
+        let pin = owner
+            .info
+            .as_ref()
+            .ok_or("Your network is still opening")?
+            .pin
+            .clone();
+        let mut runtime = owner
+            .runtime
+            .take()
+            .ok_or("The network computer is not ready")?;
+        let path = file.path().to_owned();
+        let (runtime, key) = tokio::task::spawn_blocking(move || {
+            let key = connect_core::recovery::create(&mut runtime, pin, identity, &path);
+            (runtime, key)
+        })
+        .await
+        .map_err(|_| "The recovery file was not written.".to_owned())?;
+        owner.runtime = Some(runtime);
+        Ok(Some(key.map_err(|e| e.to_string())?.to_string()))
+    }
+}
+
+/// Bring a network back on this computer from a recovery file and its key.
+/// `false` when the owner cancels choosing the file.
+#[tauri::command]
+pub async fn recovery_restore(
+    key: String,
+    state: tauri::State<'_, WorkflowState>,
+    desktop: tauri::State<'_, crate::desktop::DesktopState>,
+) -> Result<bool, String> {
+    let key = zeroize::Zeroizing::new(key);
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (key, state, desktop);
+        Err("Restore your network on a desktop computer.".into())
+    }
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+    {
+        let Some(file) = rfd::AsyncFileDialog::new()
+            .add_filter("Connect recovery file", &["gmrecovery"])
+            .set_title("Choose your network's recovery file")
+            .pick_file()
+            .await
+        else {
+            return Ok(false);
+        };
+        let mut owner = state.slot.lock().await;
+        let mut slot = desktop.slot.lock().await;
+        if slot.controller.is_some()
+            || owner.runtime.is_some()
+            || state.directory.join("owner.json").exists()
+        {
+            return Err("This computer already has a network. It has been preserved.".into());
+        }
+        let (directory, profile, path) = (
+            state.directory.clone(),
+            desktop.profile.clone(),
+            file.path().to_owned(),
+        );
+        let restored = tokio::task::spawn_blocking(move || {
+            connect_core::recovery::restore(&path, &key, &directory, &profile, start)
+        })
+        .await
+        .map_err(|_| "The network was not restored.".to_owned())?
+        .map_err(|e| e.to_string())?;
+        owner.runtime = Some(restored.owner);
+        owner.info = Some(restored.info);
+        owner.problem = None;
+        let mut device = restored.device;
+        if let Err(error) = device.reconnect_saved().await {
+            slot.problem = Some(error.to_string());
+        }
+        slot.controller = Some(device);
+        Ok(true)
+    }
+}
