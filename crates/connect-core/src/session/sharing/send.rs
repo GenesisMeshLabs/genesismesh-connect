@@ -1030,7 +1030,9 @@ pub(in crate::session) async fn transmit(
         } => (intent, decision, attestation, prepared),
         Header::Denied => anyhow::bail!("This device isn't accepting files from you."),
         Header::Busy => {
-            anyhow::bail!("This device is receiving other files. Try again shortly.")
+            anyhow::bail!(
+                "This device is receiving other files, or its network computer did not answer. Try again shortly."
+            )
         }
         Header::Resume { token, received } => {
             uuid::Uuid::parse_str(&token)?;

@@ -687,7 +687,9 @@ pub(in crate::session) async fn receive(
             "This file isn't available with the current folder permission. Share the folder again on the computer to allow larger files."
         ),
         Header::Busy => {
-            anyhow::bail!("The sharing device is busy with other downloads. Try again shortly.")
+            anyhow::bail!(
+                "The sharing device is busy with other downloads, or its network computer did not answer. Try again shortly."
+            )
         }
         Header::Expired => anyhow::bail!("The sharing device no longer has this download."),
     };

@@ -235,7 +235,8 @@ the whole file's digest never lets two versions mix. While the app runs it
 asks a broken window again for up to about two minutes, reaching the device
 afresh each time; a sharing device that is busy (its download limits, two
 snapshots already being prepared, or a network computer it could not ask in
-time) is asked again the same way; only a decision that says no refuses. A download
+time) is asked again the same way; only a decision that says no, or a
+certificate it refuses, ends the download. A download
 nobody has continued for a minute, for example a canceled one, gives its
 place to a new one, and can still go on later from a fresh snapshot.
 Snapshots a previous run left behind, for example after a crash, are removed
@@ -300,7 +301,10 @@ several senders take turns; one that waits more than ten seconds, finds
 the inbox full (before its budget or an authority request is spent), goes over
 its rate, or whose decision the device could not get from its network computer
 in time, is told the device is busy rather than refused, and the app tries
-that window again for a few minutes. Only a decision that says no refuses. One sender keeps at most two
+that window again for a few minutes. Only a decision that says no, or a
+certificate it refuses, refuses the file. A network computer that keeps
+failing for another reason, for example an attestation it no longer knows,
+also shows as busy until the app stops asking. One sender keeps at most two
 unfinished files in an inbox. A window at the wrong place in its file is
 refused, so a file's bytes and its checked hash always agree. The file is
 written under a temporary name starting with a dot and given its name by a
