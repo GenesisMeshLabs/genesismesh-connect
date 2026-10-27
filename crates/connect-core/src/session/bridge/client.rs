@@ -9,6 +9,12 @@ pub struct BridgeRoute {
     pub host_node: String,
 }
 
+/// The network computer closed the connection before answering: it cancels
+/// in-flight operations whenever it refreshes its own credentials.
+fn interrupted(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains("authority operation ended")
+}
+
 /// The endpoint a valid authority ticket names.
 pub(crate) fn endpoint_of(ticket: &str) -> Result<iroh::EndpointId> {
     let ticket: Ticket = wire::decode(ticket.as_bytes())?;
@@ -99,7 +105,9 @@ impl BridgeAuthority {
         trust: TrustSnapshot,
     ) -> Result<super::NetworkSettings> {
         let value = self
-            .authenticated(identity, trust, Operation::Settings, &serde_json::json!({}))
+            .retried(identity, trust, Operation::Settings, || {
+                Ok(serde_json::json!({}))
+            })
             .await?;
         let settings: super::NetworkSettings = serde_json::from_value(value)?;
         ensure!(
@@ -124,12 +132,11 @@ impl BridgeAuthority {
         session_ticket: Option<String>,
     ) -> Result<Vec<crate::device::PairedDevice>> {
         let value = self
-            .authenticated(
-                identity,
-                trust,
-                Operation::Members,
-                &serde_json::to_value(super::MembersRequest { session_ticket })?,
-            )
+            .retried(identity, trust, Operation::Members, || {
+                Ok(serde_json::to_value(super::MembersRequest {
+                    session_ticket: session_ticket.clone(),
+                })?)
+            })
             .await?;
         let answer: super::MembersAnswer = serde_json::from_value(value)?;
         ensure!(answer.members.len() <= 32, "Too many network devices");
@@ -173,7 +180,7 @@ impl BridgeAuthority {
         operation: Operation,
     ) -> Result<Vec<super::SpaceView>> {
         let value = self
-            .authenticated(identity, trust, operation, &serde_json::json!({}))
+            .retried(identity, trust, operation, || Ok(serde_json::json!({})))
             .await?;
         let answer: super::SpacesAnswer = serde_json::from_value(value)?;
         ensure!(answer.spaces.len() <= 64, "Too many shared folders");
@@ -243,6 +250,12 @@ impl BridgeAuthority {
     /// Public, signed documents solve trust bootstrap after suspension. The
     /// locally pinned store verifies them before any credential is used.
     pub async fn refresh(&self, store: &mut TrustStore) -> Result<TrustSnapshot> {
+        match self.refresh_once(store).await {
+            Err(error) if interrupted(&error) => self.refresh_once(store).await,
+            outcome => outcome,
+        }
+    }
+    async fn refresh_once(&self, store: &mut TrustStore) -> Result<TrustSnapshot> {
         let _permit = self
             .outgoing
             .try_acquire()
@@ -305,12 +318,9 @@ impl BridgeAuthority {
         id: &str,
     ) -> Result<Value> {
         uuid::Uuid::parse_str(id)?;
-        self.authenticated(
-            identity,
-            trust,
-            Operation::Attestation,
-            &serde_json::json!({"attestation_id":id}),
-        )
+        self.retried(identity, trust, Operation::Attestation, || {
+            Ok(serde_json::json!({"attestation_id":id}))
+        })
         .await
     }
 
@@ -332,17 +342,38 @@ impl BridgeAuthority {
             .contains(&capability),
             "Unsupported collection action"
         );
-        let signed = crate::authority::request(
-            &identity.key,
-            serde_json::json!({"cert_id":identity.certificate["cert_id"],"node_public_key":identity.public_key(),"purpose":"node_boundary_evaluate","audience":trust.audience()?,"attestation_id":attestation,"requested_capability":capability,"context":{"context_id":context,"request_parameters":parameters}}),
-        )?;
-        self.authenticated(
-            identity.clone(),
-            trust.clone(),
-            Operation::Evaluate,
-            &signed,
-        )
+        // Signed afresh for a second attempt: the authority refuses a nonce
+        // it has already seen.
+        let audience = trust.audience()?;
+        self.retried(identity.clone(), trust.clone(), Operation::Evaluate, || {
+            crate::authority::request(
+                &identity.key,
+                serde_json::json!({"cert_id":identity.certificate["cert_id"],"node_public_key":identity.public_key(),"purpose":"node_boundary_evaluate","audience":audience,"attestation_id":attestation,"requested_capability":capability,"context":{"context_id":context,"request_parameters":parameters.clone()}}),
+            )
+        })
         .await
+    }
+
+    /// An operation that can safely be asked again, asked once more when the
+    /// network computer cancelled it in flight: it does so whenever it
+    /// refreshes its own credentials, every 30 seconds.
+    async fn retried(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+        operation: Operation,
+        body: impl Fn() -> Result<Value>,
+    ) -> Result<Value> {
+        match self
+            .authenticated(identity.clone(), trust.clone(), operation, &body()?)
+            .await
+        {
+            Err(error) if interrupted(&error) => {
+                self.authenticated(identity, trust, operation, &body()?)
+                    .await
+            }
+            outcome => outcome,
+        }
     }
 
     async fn authenticated(

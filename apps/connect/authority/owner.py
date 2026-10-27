@@ -28,6 +28,7 @@ from genesis_mesh.cli.init_ops import init as initialize_network
 from genesis_mesh.crypto import load_private_key
 from genesis_mesh.crypto.admin_auth import sign_admin_request
 from genesis_mesh.models.genesis import GenesisBlock
+from genesis_mesh.na_service.rate_limit import RateLimits
 from genesis_mesh.na_service.server import NetworkAuthorityService
 
 from protection import discard, protect, unprotect, ready
@@ -41,6 +42,12 @@ class Refused(Exception):
 # write into the host's inbox.
 KINDS = {"folder": ["connect.collection.read", "connect.collection.list"],
          "inbox": ["connect.inbox.write"]}
+# Every device reaches this authority through Connect's bridge on loopback,
+# so per-address limits would cap the whole network as one client. They sit
+# above what the bridge forwards (its own budgets: 1,024 connections and 480
+# decisions and attestation reads a minute); per-device limits stay as core
+# sets them.
+BRIDGED_LIMITS = RateLimits(read=2400, node_address=1200)
 SPACE_DAYS = 90
 RENEW_DAYS = 30
 MAX_SPACES = 64
@@ -200,7 +207,8 @@ class Owner:
                 key_id=config["na"]["key_id"], db_path=str(location("db")),
                 operator_public_keys={config["operator"]["key_id"]:base64.b64encode(bytes(operator.verify_key)).decode()},
                 operator_key_tiers={config["operator"]["key_id"]:"privileged"},
-                boundary_policy_enforcement="required", evidence_store="on", evidence_out_of_band="on")
+                boundary_policy_enforcement="required", evidence_store="on", evidence_out_of_band="on",
+                rate_limits=BRIDGED_LIMITS)
             self.service = service
             self.server = make_server("127.0.0.1", 0, service.app, request_handler=QuietHandler)
             self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

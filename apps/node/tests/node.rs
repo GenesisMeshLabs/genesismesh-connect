@@ -562,13 +562,8 @@ fn send_with(
                 sha256: digest.clone(),
                 token: token.clone(),
                 offset,
-                // Larger files take larger windows, as the app's do: every
-                // window costs authority requests, which are rate limited.
-                length: if bytes.len() > 1_000_000 {
-                    8 * MIN_WINDOW_BYTES
-                } else {
-                    MIN_WINDOW_BYTES
-                },
+                // The smallest windows: the most authority requests per file.
+                length: MIN_WINDOW_BYTES,
             },
             &mut file,
         ))?;

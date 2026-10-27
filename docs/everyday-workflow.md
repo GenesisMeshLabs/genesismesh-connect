@@ -270,10 +270,13 @@ exFAT) the name is reserved first and written in place. A name too long to
 take " (2)" is refused before any byte is sent. Staging is
 claimed only after the authority allows the file, and each sender has its
 own rate limit. Every window of a download or a send asks the authority anew
-through the network computer, which answers a limited number of such
-requests a minute for the whole network (about 40 windows); the apps size
+through the network computer's bridge, whose budgets bound the whole
+network (480 decisions and attestation reads a minute, about 240 windows);
+the authority Connect runs accepts that much from the bridge's one loopback
+address, while each device keeps core's own per-device limit. The apps size
 windows to the connection, up to 32 MiB, so ordinary transfers stay well
-within it. A file interrupted
+within it. An authority attached from an existing configuration keeps its
+own limits. A file interrupted
 part way is sent again from the start; resuming is next. Sending from phones,
 and phones receiving files, need the phone builds' file pickers and are not
 available yet.
