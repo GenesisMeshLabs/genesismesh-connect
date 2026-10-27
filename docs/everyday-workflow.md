@@ -214,7 +214,11 @@ whole file; a file that changed in between is refused, and the app's check of
 the whole file's digest never lets two versions mix. While the app runs it
 asks a broken window again for up to about two minutes, reaching the device
 afresh each time; a sharing device that is busy (its download limits, or two
-snapshots already being prepared) is asked again the same way. The app keeps
+snapshots already being prepared) is asked again the same way. A download
+nobody has continued for a minute, for example a canceled one, gives its
+place to a new one, and can still go on later from a fresh snapshot.
+Snapshots a previous run left behind, for example after a crash, are removed
+the first time the app opens that Space again. The app keeps
 its token until the sharing device no longer has it or refuses it, then asks
 without it; asked without a token, the sharing device first continues a
 snapshot it already has of the same file for the same device, and makes a
@@ -306,7 +310,11 @@ token as soon as the receiving device names it, so even a file sent in one
 window can be asked again. A saved file is remembered for 10 minutes, across
 restarts of either device: its last window asked again, after a lost
 confirmation, is answered with the name it was saved under instead of the
-file being saved again. Sending the same file again (same
+file being saved again. A device that stopped while saving a file looks for
+it in the inbox when it starts again within the hour its staging is kept:
+found under one of the names it chooses from, written since, with the same
+size and digest, it is remembered as saved; otherwise the file is still
+staged and continues. Sending the same file again (same
 sender, inbox, name, size and digest), for example after the sending app
 restarted, continues the file already there instead of starting another; a
 transfer the device no longer has is answered with "start again", which the
