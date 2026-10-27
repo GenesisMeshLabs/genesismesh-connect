@@ -72,7 +72,11 @@ The [freshness and certificate-specific revocation limits](authority-spike.md#fr
 still apply. The host verifies its own fresh trust/credential before serving,
 fetches public records from the authority for each trust call, and periodically
 refreshes its control credentials. Refresh or suspension cancels current control
-operations. An interrupted renewal may already have committed at the authority;
+operations, closing them with a reason of their own; a device asks once more
+when an operation that is safe to repeat was cancelled this way (trust,
+attestation reads, decisions, which it signs afresh, settings, member and
+Space lists), never for a renewal or a change to a Space, and never for an
+operation the computer refused. An interrupted renewal may already have committed at the authority;
 Connect cannot undo that commit. Operator-assisted recovery and predecessor
 overlap remain relevant when a reply or durable write is lost.
 

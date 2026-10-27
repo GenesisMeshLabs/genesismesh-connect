@@ -36,6 +36,9 @@ use tokio::{
 use wire::{Protocol, Role, authenticate_for, read_frame, write_frame};
 
 const DEADLINE: Duration = Duration::from_secs(15);
+/// The close reason when the network computer cancels an operation because
+/// its own credentials changed, which it does every 30 seconds.
+pub(super) const CREDENTIALS_CHANGED: &[u8] = b"authority credentials changed";
 // Two authority responses of at most 256 KiB, plus a small envelope.
 const MAX_RESPONSE: usize = 512 * 1024 + 1024;
 

@@ -29,6 +29,9 @@ class OwnerTests(unittest.TestCase):
                 self.assertTrue(host_invite["invite"])
                 self.assertTrue(second_host_invite["invite"])
                 self.assertNotIn("private",json.dumps(info).lower())
+                # Bridged devices share one loopback address; per-device limits stay.
+                limits=owner.service.rate_limits
+                self.assertEqual((limits.read,limits.node_address,limits.node),(2400,1200,120))
                 with self.assertRaises(Refused): owner.create("Replace the root")
                 with self.assertRaises(Refused): owner.invite("invalid")
             finally: owner.close()
