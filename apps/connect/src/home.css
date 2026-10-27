@@ -378,6 +378,11 @@
   clip: rect(0, 0, 0, 0);
   border: 0;
 }
+/* The way back stays in reach: below a phone's status bar, above the
+   advanced pages, with their navigation sticking just under it. */
+#advanced-shell {
+  --return-height: calc(46px + env(safe-area-inset-top));
+}
 .advanced-return {
   position: sticky;
   top: 0;
@@ -386,7 +391,18 @@
   border-radius: 0;
   background: #c8ed9d;
   color: #152110;
-  min-height: 44px;
+  min-height: var(--return-height);
+  padding: calc(11px + env(safe-area-inset-top)) 18px 11px;
+}
+#advanced-shell .sidebar {
+  top: var(--return-height);
+  height: calc(100dvh - var(--return-height));
+}
+@media (max-width: 680px) {
+  #advanced-shell .sidebar {
+    height: auto;
+    padding-top: 13px;
+  }
 }
 .everyday pre {
   white-space: pre-wrap;

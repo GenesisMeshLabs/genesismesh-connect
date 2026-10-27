@@ -46,8 +46,4 @@ export function initializeNavigation() {
       showPage(button.dataset.page ?? button.dataset.go ?? "device"),
     );
   }
-  document.querySelector(".brand")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    showPage("device");
-  });
 }

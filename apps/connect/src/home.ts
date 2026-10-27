@@ -719,14 +719,35 @@ el("save-name").addEventListener("click", () => {
   text("this-device-name", name);
   message("Name saved on this device.");
 });
+// The advanced tools are one step from the everyday screens: the back bar,
+// the logo and a phone's back gesture all return.
+let advancedEntry = false;
+function showAdvanced(open: boolean) {
+  visible("everyday", !open);
+  visible("advanced-shell", open);
+  window.scrollTo(0, 0);
+  if (!open) void refresh();
+}
+function leaveAdvanced() {
+  if (advancedEntry) history.back();
+  else showAdvanced(false);
+}
 el("open-advanced").addEventListener("click", () => {
-  visible("everyday", false);
-  visible("advanced-shell", true);
+  showAdvanced(true);
+  history.pushState({ advanced: true }, "");
+  advancedEntry = true;
 });
-el("close-advanced").addEventListener("click", () => {
-  visible("advanced-shell", false);
-  visible("everyday", true);
-  void refresh();
+el("close-advanced").addEventListener("click", leaveAdvanced);
+document
+  .querySelector<HTMLAnchorElement>("#advanced-shell .brand")
+  ?.addEventListener("click", (event) => {
+    event.preventDefault();
+    leaveAdvanced();
+  });
+window.addEventListener("popstate", () => {
+  if (!advancedEntry) return;
+  advancedEntry = false;
+  showAdvanced(false);
 });
 async function acceptLink(urls: string[] | null) {
   const link = urls?.find((url) => url.startsWith("genesismesh://join/"));
