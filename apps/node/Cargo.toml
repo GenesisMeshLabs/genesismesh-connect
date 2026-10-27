@@ -1,0 +1,19 @@
+[package]
+name = "genesismesh-connect-node"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Genesis Mesh Connect's network computer on a headless Linux server"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+connect-core = { path = "../../crates/connect-core" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "io-std"] }
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+getrandom = "0.4"

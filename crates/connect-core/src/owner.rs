@@ -226,6 +226,11 @@ impl OwnerRuntime {
             self.request(json!({"op":"attach","config":config}))?,
         )?)
     }
+    /// Whether the authority process is still running and usable. It is not
+    /// after it exited, or after a request it never answered.
+    pub fn is_running(&mut self) -> bool {
+        self.input.is_some() && matches!(self.child.try_wait(), Ok(None))
+    }
     /// Stage the network for a recovery file: files inside the owner's private
     /// directory, the owner keys only in this reply.
     pub fn backup(&mut self) -> Result<OwnerBackup> {

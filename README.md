@@ -13,6 +13,7 @@ Settings → Advanced tools. Existing technical profiles are preserved.
 - `crates/connect-core`: portable Rust library; transport module and headless diagnostic example.
 - `apps/connect`: small TypeScript/Tauri application, calling the same Rust library.
 - `apps/connect/authority`: native desktop owner adapter and standalone runtime build.
+- `apps/node` and `deploy/node`: the network computer on a headless Linux server under systemd; see [Connect on a server](docs/server-node.md).
 - `docs/everyday-workflow.md`: ordinary setup, pairing, file browsing and bounds.
 - `docs/cross-platform.md`: platform adapters, native build steps, evidence and remaining parity work.
 - `docs/iphone-spike.md`: Mac build/install and physical-device test steps.

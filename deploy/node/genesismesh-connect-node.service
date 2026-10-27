@@ -1,0 +1,49 @@
+[Unit]
+Description=Genesis Mesh Connect network node
+Documentation=https://github.com/GenesisMeshLabs/genesismesh-connect/blob/main/docs/server-node.md
+After=network-online.target
+Wants=network-online.target
+# Nothing to run until `genesismesh-connect init` or `restore` made a network.
+ConditionPathExists=/var/lib/genesismesh-connect/device
+ConditionPathExists=/var/lib/genesismesh-connect/network-owner/owner.json
+
+[Service]
+Type=simple
+User=genesismesh-connect
+Group=genesismesh-connect
+StateDirectory=genesismesh-connect
+StateDirectoryMode=0700
+UMask=0077
+# systemd decrypts the master key (TPM2-sealed where the machine has a TPM)
+# into this service's private credential directory; it never reaches disk.
+LoadCredentialEncrypted=connect-master-key:/etc/credstore.encrypted/genesismesh-connect-master-key
+Environment=CONNECT_SEALED_STORE=/var/lib/genesismesh-connect/sealed
+ExecStart=/opt/genesismesh-connect/genesismesh-connect-node run --state /var/lib/genesismesh-connect
+Restart=on-failure
+RestartSec=5
+# The node stops first and closes the authority's pipe, so the authority
+# shuts down cleanly instead of receiving the same signal at once.
+KillMode=mixed
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# Iroh watches network interfaces through netlink.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
