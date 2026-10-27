@@ -544,7 +544,7 @@ fn send_with(
     bytes: &[u8],
     declared: Option<String>,
 ) -> Result<Option<String>> {
-    use connect_core::session::sharing::send::{MIN_WINDOW_BYTES, Request};
+    use connect_core::session::sharing::send::{MIN_WINDOW_BYTES, Outcome, Request};
     use std::io::Write as _;
     let mut file = tempfile::tempfile()?;
     file.write_all(bytes)?;
@@ -554,7 +554,7 @@ fn send_with(
         let window = runtime.block_on(session.send_window_to(
             &host.node,
             &host.ticket,
-            Request {
+            &mut Request {
                 request_id: request_id()?,
                 collection_id: inbox.into(),
                 file_name: name.into(),
@@ -567,6 +567,15 @@ fn send_with(
             },
             &mut file,
         ))?;
+        let window = match window {
+            Outcome::Sent(window) => window,
+            Outcome::ContinueAt { token: kept, at } => {
+                token = Some(kept);
+                offset = at;
+                continue;
+            }
+            other => anyhow::bail!("Unexpected answer: {other:?}"),
+        };
         offset += window.bytes as u64;
         token = Some(window.token);
         if window.done {
@@ -834,5 +843,276 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
     for device in [&mut pc, &mut phone, &mut tablet] {
         runtime.block_on(device.stop());
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "Requires the packaged, standalone owner runtime"]
+fn transfers_continue_where_they_stopped() -> Result<()> {
+    let _one = one_at_a_time();
+    use connect_core::session::sharing::{
+        browse,
+        download::{self, MIN_WINDOW_BYTES},
+        send::{Outcome, Request},
+    };
+    use std::io::{Read as _, Seek as _, Write as _};
+    let directory = tempfile::tempdir()?;
+    devices_sealed();
+    let (store, credentials) = sealed(directory.path(), "server")?;
+    let server = Server {
+        state: directory.path().join("server"),
+        store,
+        credentials,
+    };
+    let init = server.command(&["init", "--name", "Home"])?.output()?;
+    ensure!(
+        init.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let runtime = tokio::runtime::Runtime::new()?;
+    let child = server.run()?;
+    let outcome = (|| {
+        server.control(json!({"op":"connection","setting":"local_network"}))?;
+        let pc_path = directory.path().join("pc");
+        let mut pc = join(&server, &runtime, &pc_path, "Home PC")?;
+        let mut phone = join(&server, &runtime, &directory.path().join("phone"), "Phone")?;
+        runtime.block_on(pc.check_network())?;
+        runtime.block_on(phone.check_network())?;
+        let phone_node = phone.status()?.node_public_key;
+        let pc_node = pc.status()?.node_public_key;
+        let received = directory.path().join("received");
+        std::fs::create_dir(&received)?;
+        let inbox = runtime.block_on(pc.share_space(
+            None,
+            received.clone(),
+            "Inbox".into(),
+            vec![phone_node.clone()],
+            SpaceKind::Inbox,
+        ))?;
+        let photos = directory.path().join("photos");
+        std::fs::create_dir(&photos)?;
+        let film: Vec<u8> = (0..300_000u32).map(|i| (i % 239) as u8).collect();
+        std::fs::write(photos.join("film.bin"), &film)?;
+        let folder = runtime.block_on(pc.share_space(
+            None,
+            photos,
+            "Photos".into(),
+            vec![phone_node.clone()],
+            SpaceKind::Folder,
+        ))?;
+        runtime.block_on(phone.check_network())?;
+        let pc_ticket = || -> Result<String> {
+            Ok(phone
+                .status()?
+                .members
+                .into_iter()
+                .find(|m| m.node == pc_node)
+                .context("Missing PC")?
+                .ticket)
+        };
+
+        // A send: one window, then the PC restarts, losing everything in
+        // memory; the phone carries on from what the PC kept.
+        let video: Vec<u8> = (0..200_000u32).map(|i| (i % 233) as u8).collect();
+        let mut file = tempfile::tempfile()?;
+        file.write_all(&video)?;
+        let window = |token: Option<String>, offset: u64| Request {
+            request_id: request_id().unwrap(),
+            collection_id: inbox.collection_id.clone(),
+            file_name: "video.bin".into(),
+            size: video.len() as u64,
+            sha256: sha256(&video),
+            token,
+            offset,
+            length: MIN_WINDOW_BYTES,
+        };
+        let mut opening = window(None, 0);
+        let first = match runtime.block_on(phone.session()?.send_window_to(
+            &pc_node,
+            &pc_ticket()?,
+            &mut opening,
+            &mut file,
+        ))? {
+            Outcome::Sent(first) => first,
+            other => anyhow::bail!("Unexpected first window: {other:?}"),
+        };
+        assert_eq!(opening.token.as_ref(), Some(&first.token));
+        runtime.block_on(pc.stop());
+        drop(pc);
+        let mut pc = DeviceController::open(&pc_path)?;
+        pc.restore_managed_share()?;
+        runtime.block_on(pc.reconnect_saved())?;
+        // The same file started again, as after the phone's app restarted,
+        // continues the transfer the PC kept on disk.
+        let again = runtime.block_on(phone.session()?.send_window_to(
+            &pc_node,
+            &pc_ticket()?,
+            &mut window(None, 0),
+            &mut file,
+        ))?;
+        assert!(
+            matches!(&again, Outcome::ContinueAt { token, at } if *token == first.token && *at == first.bytes as u64),
+            "{again:?}"
+        );
+        // A window sent again at the old place learns where the file stands.
+        let resumed = runtime.block_on(phone.session()?.send_window_to(
+            &pc_node,
+            &pc_ticket()?,
+            &mut window(Some(first.token.clone()), 0),
+            &mut file,
+        ))?;
+        let mut offset = match resumed {
+            Outcome::ContinueAt { token, at } => {
+                assert_eq!(token, first.token);
+                at
+            }
+            other => anyhow::bail!("Expected to continue: {other:?}"),
+        };
+        assert_eq!(offset, first.bytes as u64);
+        let saved = loop {
+            match runtime.block_on(phone.session()?.send_window_to(
+                &pc_node,
+                &pc_ticket()?,
+                &mut window(Some(first.token.clone()), offset),
+                &mut file,
+            ))? {
+                Outcome::Sent(next) if next.done => break next.saved_as,
+                Outcome::Sent(next) => offset += next.bytes as u64,
+                other => anyhow::bail!("Unexpected window: {other:?}"),
+            }
+        };
+        assert_eq!(saved.as_deref(), Some("video.bin"));
+        assert_eq!(std::fs::read(received.join("video.bin"))?, video);
+        // The last window asked again, as after a lost confirmation, learns
+        // where the file went, and it is not saved twice.
+        let again = runtime.block_on(phone.session()?.send_window_to(
+            &pc_node,
+            &pc_ticket()?,
+            &mut window(Some(first.token.clone()), offset),
+            &mut file,
+        ))?;
+        assert!(
+            matches!(&again, Outcome::Saved { saved_as } if saved_as == "video.bin"),
+            "{again:?}"
+        );
+        assert_eq!(std::fs::read_dir(&received)?.count(), 1);
+        // A transfer the PC no longer has starts over.
+        let lost = runtime.block_on(phone.session()?.send_window_to(
+            &pc_node,
+            &pc_ticket()?,
+            &mut window(Some(request_id()?), MIN_WINDOW_BYTES as u64),
+            &mut file,
+        ))?;
+        assert!(matches!(lost, Outcome::StartOver));
+
+        // A download: the first window, then a fresh start at the offset
+        // with no token, as after a restart of either device.
+        let session = phone.session()?;
+        let page = runtime.block_on(session.browse_from(
+            &pc_node,
+            &pc_ticket()?,
+            None,
+            Vec::new(),
+            Some(folder.collection_id.clone()),
+        ))?;
+        let entry = page
+            .files
+            .iter()
+            .find(|f| f.name == "film.bin" && f.kind == browse::Kind::File)
+            .context("Missing film")?
+            .clone();
+        let mut output = tempfile::tempfile()?;
+        let request = |token: Option<String>, offset: u64| download::Request {
+            request_id: request_id().unwrap(),
+            collection_id: folder.collection_id.clone(),
+            file_name: entry.name.clone(),
+            directory: Vec::new(),
+            version: entry.version.clone(),
+            size: entry.bytes,
+            token,
+            offset,
+            length: MIN_WINDOW_BYTES,
+        };
+        let first = runtime.block_on(session.download_window_from(
+            &pc_node,
+            &pc_ticket()?,
+            request(None, 0),
+            &mut output,
+        ))?;
+        let mut offset = first.bytes as u64;
+        // Asked again without its token, as after a lost answer, the PC
+        // continues the snapshot it has.
+        let reused = runtime.block_on(session.download_window_from(
+            &pc_node,
+            &pc_ticket()?,
+            request(None, offset),
+            &mut output,
+        ))?;
+        assert_eq!(reused.token, first.token);
+        offset += reused.bytes as u64;
+        // The PC restarts: its snapshot is gone, and the old token with it.
+        runtime.block_on(pc.stop());
+        drop(pc);
+        let mut pc = DeviceController::open(&pc_path)?;
+        pc.restore_managed_share()?;
+        runtime.block_on(pc.reconnect_saved())?;
+        let session = phone.session()?;
+        let expired = runtime
+            .block_on(session.download_window_from(
+                &pc_node,
+                &pc_ticket()?,
+                request(Some(first.token.clone()), offset),
+                &mut output,
+            ))
+            .err()
+            .context("The old token was taken")?;
+        assert!(
+            expired.to_string().contains("no longer has this download"),
+            "{expired}"
+        );
+        let mut token = None;
+        loop {
+            let next = runtime.block_on(session.download_window_from(
+                &pc_node,
+                &pc_ticket()?,
+                request(token.clone(), offset),
+                &mut output,
+            ))?;
+            assert_eq!(next.sha256, first.sha256, "The same version, the same file");
+            offset += next.bytes as u64;
+            token = Some(next.token);
+            if next.done {
+                break;
+            }
+        }
+        output.rewind()?;
+        let mut downloaded = Vec::new();
+        output.read_to_end(&mut downloaded)?;
+        assert_eq!(downloaded, film);
+        // A file changed in between is refused, never stitched.
+        std::fs::write(
+            directory.path().join("photos").join("film.bin"),
+            b"a new film",
+        )?;
+        let mut other = tempfile::tempfile()?;
+        other.write_all(&film[..MIN_WINDOW_BYTES as usize])?;
+        assert!(
+            runtime
+                .block_on(session.download_window_from(
+                    &pc_node,
+                    &pc_ticket()?,
+                    request(None, u64::from(MIN_WINDOW_BYTES)),
+                    &mut other,
+                ))
+                .is_err(),
+            "A changed file is not continued"
+        );
+        Ok::<_, anyhow::Error>((pc, phone))
+    })();
+    stop(child)?;
+    let (mut pc, mut phone) = outcome?;
+    runtime.block_on(pc.stop());
+    runtime.block_on(phone.stop());
     Ok(())
 }

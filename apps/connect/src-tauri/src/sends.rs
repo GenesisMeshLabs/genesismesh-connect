@@ -3,7 +3,7 @@
 //! never paths or bytes.
 use anyhow::{Context, Result, ensure};
 use connect_core::session::sharing::send::{
-    MAX_FILE_BYTES, MAX_WINDOW_BYTES, MIN_WINDOW_BYTES, Request,
+    MAX_FILE_BYTES, MAX_WINDOW_BYTES, MIN_WINDOW_BYTES, Outcome, Request,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -90,9 +90,10 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
         if size > MAX_FILE_BYTES {
             return Err("Choose a file up to 1 GB.".into());
         }
-        let (session, peer) =
+        let (mut session, mut peer) =
             crate::consumer::session(&app.state::<crate::desktop::DesktopState>(), Some(&space))
                 .await?;
+        let handle = app.clone();
         let id = uuid::Uuid::new_v4().to_string();
         let (cancel, mut canceled) = watch::channel(false);
         *state.job.lock().expect("send state") = Some(Job {
@@ -133,6 +134,11 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                 .await??;
                 update(&jobs, &task_id, |job| job.progress.state = "sending".into());
                 let (mut token, mut offset, mut length) = (None, 0u64, MIN_WINDOW_BYTES);
+                let mut started_over = false;
+                // Answers in a row that only move the file along, and all
+                // that was sent: a device that keeps taking the file back
+                // is not followed for ever.
+                let (mut continued, mut sent) = (0, 0u64);
                 loop {
                     let now = file.metadata()?;
                     ensure!(
@@ -140,7 +146,7 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                         "The file changed while it was being sent. Send it again."
                     );
                     let started = Instant::now();
-                    let request = Request {
+                    let mut request = Request {
                         request_id: uuid::Uuid::new_v4().to_string(),
                         collection_id: space.clone(),
                         file_name: name.clone(),
@@ -150,14 +156,17 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                         offset,
                         length,
                     };
-                    // A busy inbox takes the window a little later.
-                    let mut waits = 0;
+                    // A busy inbox takes the window a little later; after a
+                    // dropped connection or a restart of either device, the
+                    // same window is asked again, with the token the other
+                    // device named, and it says where the file stands.
+                    let (mut waits, mut attempts) = (0, 0u32);
                     let window = loop {
                         match session
-                            .send_window_to(&peer.node, &peer.ticket, request.clone(), &mut file)
+                            .send_window_to(&peer.node, &peer.ticket, &mut request, &mut file)
                             .await
                         {
-                            Ok(window) => break window,
+                            Ok(outcome) => break outcome,
                             Err(error)
                                 if waits < 30
                                     && error.to_string().contains("receiving other files") =>
@@ -165,7 +174,60 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                                 waits += 1;
                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                             }
+                            Err(error)
+                                if attempts < 6
+                                    && !error.to_string().contains("isn't accepting files") =>
+                            {
+                                attempts += 1;
+                                tokio::time::sleep(std::time::Duration::from_secs(
+                                    1 << attempts.min(5),
+                                ))
+                                .await;
+                                if let Ok((again, host)) = crate::consumer::session(
+                                    &handle.state::<crate::desktop::DesktopState>(),
+                                    Some(&space),
+                                )
+                                .await
+                                {
+                                    (session, peer) = (again, host);
+                                }
+                            }
                             Err(error) => return Err(error),
+                        }
+                    };
+                    let window = match window {
+                        Outcome::Sent(window) => {
+                            continued = 0;
+                            sent += window.bytes as u64;
+                            ensure!(
+                                sent <= size.saturating_mul(4) + u64::from(MAX_WINDOW_BYTES),
+                                "The other device does not take this file"
+                            );
+                            window
+                        }
+                        // The last window's confirmation was lost.
+                        Outcome::Saved { saved_as } => {
+                            update(&jobs, &task_id, |job| job.progress.sent = size);
+                            return Ok(saved_as);
+                        }
+                        // The other device holds the file up to here.
+                        Outcome::ContinueAt { token: kept, at } => {
+                            ensure!(continued < 32, "The other device does not take this file");
+                            continued += 1;
+                            token = Some(kept);
+                            offset = at;
+                            update(&jobs, &task_id, |job| job.progress.sent = offset);
+                            continue;
+                        }
+                        // It no longer has the transfer: once, from the start.
+                        Outcome::StartOver => {
+                            ensure!(
+                                !started_over,
+                                "The other device lost this file. Send it again."
+                            );
+                            started_over = true;
+                            (token, offset) = (None, 0);
+                            continue;
                         }
                     };
                     offset += window.bytes as u64;

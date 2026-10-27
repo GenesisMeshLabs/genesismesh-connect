@@ -22,10 +22,16 @@ const MAX_HEADER: usize = 512 * 1024;
 const MAX_STAGED: usize = 4;
 const MAX_STAGED_PER_SENDER: usize = 2;
 const MAX_STAGED_BYTES: u64 = 2 * MAX_FILE_BYTES;
-/// An unfinished file nobody continues is dropped after this long.
-const STAGED_FOR: Duration = Duration::from_secs(600);
+/// An unfinished file nobody continues is dropped after this long, long
+/// enough for either device to restart and carry on.
+const STAGED_FOR: Duration = Duration::from_secs(3600);
 /// How long a window waits for another sender's window to finish.
 const WAIT_FOR_TURN: Duration = Duration::from_secs(10);
+/// A saved file is remembered this long, across restarts, so a sender whose
+/// last confirmation was lost learns where it went instead of sending it
+/// again; at most this many at once.
+const SAVED_FOR: Duration = Duration::from_secs(600);
+const MAX_SAVED: usize = 256;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +45,22 @@ pub struct Request {
     pub token: Option<String>,
     pub offset: u64,
     pub length: u32,
+}
+/// What one window came to.
+#[derive(Debug)]
+pub enum Outcome {
+    /// Received; the file is saved once `done`.
+    Sent(Window),
+    /// The receiving device holds the file up to `at` under `token`: continue
+    /// from there, for example after a lost confirmation, or when the same
+    /// file was started again.
+    ContinueAt { token: String, at: u64 },
+    /// The receiving device already saved this file under `saved_as`: the
+    /// confirmation of its last window was lost.
+    Saved { saved_as: String },
+    /// The receiving device no longer has this transfer: send the file again
+    /// from the beginning.
+    StartOver,
 }
 #[derive(Debug, Serialize)]
 pub struct Window {
@@ -61,6 +83,17 @@ enum Header {
     Denied,
     /// Allowed, but the inbox has no room or turn for this file just now.
     Busy,
+    /// The file stands here; only its own sender is told.
+    Resume {
+        token: String,
+        received: u64,
+    },
+    /// The file was saved under this name; only its own sender is told.
+    Saved {
+        saved_as: String,
+    },
+    /// No such transfer any more.
+    Restart,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,33 +108,112 @@ struct Confirmation {
     saved_as: Option<String>,
 }
 
-struct Staged {
+/// What a receiving device keeps of an unfinished file beside its bytes, so
+/// it can be continued after either device restarts.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Record {
     peer: String,
     collection: String,
     file_name: String,
     size: u64,
     sha256: String,
     received: u64,
-    /// The whole file's hash so far: windows arrive in order, so the last
-    /// one needs no second pass over the file.
-    hash: Sha256,
-    touched: Instant,
-    file: tempfile::NamedTempFile,
 }
-/// Why a window was not taken: not allowed, or not just now.
+struct Staged {
+    record: Record,
+    /// The whole file's hash so far, while this process has seen every
+    /// window; after a restart it is worked out again at the end.
+    hash: Option<Sha256>,
+    touched: std::time::SystemTime,
+}
+/// A file whose last window arrived, still in staging until it is saved.
+struct Finished {
+    token: String,
+    record: Record,
+    hash: Option<Sha256>,
+    part: PathBuf,
+    meta: PathBuf,
+}
+impl Finished {
+    fn discard(&self) {
+        let _ = std::fs::remove_file(&self.part);
+        let _ = std::fs::remove_file(&self.meta);
+    }
+    /// Save the file into the inbox folder, only if it is exactly what the
+    /// sender declared. After a restart the hash is worked out from the
+    /// staged bytes here.
+    fn save(&self, directory: &Collection) -> Result<String> {
+        let mut file = File::open(&self.part)?;
+        let digest = match self.hash.clone() {
+            Some(hash) => storage::hex(&hash.finalize()),
+            None => {
+                let mut hash = Sha256::new();
+                let mut buffer = vec![0u8; 65536];
+                loop {
+                    let count = file.read(&mut buffer)?;
+                    if count == 0 {
+                        break;
+                    }
+                    hash.update(&buffer[..count]);
+                }
+                storage::hex(&hash.finalize())
+            }
+        };
+        ensure!(
+            digest == self.record.sha256 && file.metadata()?.len() == self.record.size,
+            "The file did not match its digest and was not saved"
+        );
+        directory.commit(&self.record.file_name, &mut file)
+    }
+}
+/// What a receiving device keeps of a saved file beside staging, for
+/// `SAVED_FOR`.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SavedRecord {
+    record: Record,
+    saved_as: String,
+}
+/// A file that was saved, or is being saved, remembered for its sender.
+struct Done {
+    record: Record,
+    /// None while it is being saved.
+    saved_as: Option<String>,
+    at: std::time::SystemTime,
+}
+/// Why a window was not taken.
 enum Refusal {
     Denied,
     Busy,
+    Resume(String, u64),
+    Saved(String),
+    Restart,
+}
+impl Refusal {
+    fn header(self) -> Header {
+        match self {
+            Self::Denied => Header::Denied,
+            Self::Busy => Header::Busy,
+            Self::Resume(token, received) => Header::Resume { token, received },
+            Self::Saved(saved_as) => Header::Saved { saved_as },
+            Self::Restart => Header::Restart,
+        }
+    }
 }
 pub(crate) struct Incoming {
     directory: PathBuf,
     entries: Mutex<BTreeMap<String, Staged>>,
+    /// Locked after `entries` whenever both are.
+    done: Mutex<BTreeMap<String, Done>>,
     /// Per sender, so one device cannot use up another's budget.
     requests: Mutex<BTreeMap<String, (Instant, u32, u32)>>,
 }
 impl Incoming {
     /// One staging area per inbox for the life of the process, so reopening
-    /// shares (after any Space changes) keeps files that are arriving.
+    /// shares (after any Space changes) keeps files that are arriving. The
+    /// first open in a process takes up the unfinished files a previous run
+    /// left, so they can be continued.
     pub fn open(state: &Path) -> Result<Arc<Self>> {
         static OPEN: Mutex<BTreeMap<PathBuf, std::sync::Weak<Incoming>>> =
             Mutex::new(BTreeMap::new());
@@ -111,23 +223,157 @@ impl Incoming {
         if let Some(incoming) = open.get(&directory).and_then(std::sync::Weak::upgrade) {
             return Ok(incoming);
         }
-        // Unfinished files from an earlier run cannot be continued yet.
-        if directory.exists() {
-            std::fs::remove_dir_all(&directory)?;
-        }
         std::fs::create_dir_all(&directory)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
         }
+        let (entries, done) = Self::load(&directory)?;
         let incoming = Arc::new(Self {
             directory: directory.clone(),
-            entries: Mutex::new(BTreeMap::new()),
+            entries: Mutex::new(entries),
+            done: Mutex::new(done),
             requests: Mutex::new(BTreeMap::new()),
         });
         open.insert(directory, Arc::downgrade(&incoming));
         Ok(incoming)
+    }
+    /// Unfinished files from a previous run, at most `MAX_STAGED`, each cut
+    /// back to what it recorded, and the files it saved lately; anything
+    /// else in the folder goes.
+    fn load(directory: &Path) -> Result<(BTreeMap<String, Staged>, BTreeMap<String, Done>)> {
+        let mut entries = BTreeMap::new();
+        let mut done = BTreeMap::new();
+        let mut keep = std::collections::BTreeSet::new();
+        for entry in std::fs::read_dir(directory)? {
+            let path = entry?.path();
+            if let Some(token) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".saved"))
+                .filter(|t| uuid::Uuid::parse_str(t).is_ok())
+                .map(str::to_owned)
+            {
+                let loaded = (|| {
+                    let metadata = std::fs::metadata(&path)?;
+                    let age = metadata.modified()?.elapsed().unwrap_or_default();
+                    ensure!(age < SAVED_FOR && done.len() < MAX_SAVED, "Expired");
+                    ensure!(metadata.len() <= 4096, "Unexpected record");
+                    let saved: SavedRecord = serde_json::from_slice(&std::fs::read(&path)?)?;
+                    storage::name(&saved.saved_as)?;
+                    Ok::<_, anyhow::Error>(Done {
+                        record: saved.record,
+                        saved_as: Some(saved.saved_as),
+                        at: std::time::SystemTime::now() - age,
+                    })
+                })();
+                if let Ok(saved) = loaded {
+                    keep.insert(path.clone());
+                    done.insert(token, saved);
+                }
+                continue;
+            }
+            let Some(token) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".json"))
+                .filter(|t| uuid::Uuid::parse_str(t).is_ok())
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            let part = directory.join(format!("{token}.part"));
+            let loaded = (|| {
+                // A file saved just before the previous run ended is not
+                // taken again, whatever became of its saved record.
+                ensure!(!directory.join(format!("{token}.saved")).exists(), "Saved");
+                let metadata = std::fs::metadata(&path)?;
+                let age = metadata.modified()?.elapsed().unwrap_or_default();
+                ensure!(age < STAGED_FOR && entries.len() < MAX_STAGED, "Expired");
+                ensure!(metadata.len() <= 4096, "Unexpected record");
+                let record: Record = serde_json::from_slice(&std::fs::read(&path)?)?;
+                ensure!(
+                    record.received <= record.size && record.size <= MAX_FILE_BYTES,
+                    "Unexpected record"
+                );
+                let file = std::fs::OpenOptions::new().write(true).open(&part)?;
+                ensure!(file.metadata()?.len() >= record.received, "Short file");
+                file.set_len(record.received)?;
+                Ok::<_, anyhow::Error>(Staged {
+                    record,
+                    hash: None,
+                    touched: std::time::SystemTime::now() - age,
+                })
+            })();
+            if let Ok(staged) = loaded {
+                keep.insert(path.clone());
+                keep.insert(part);
+                entries.insert(token, staged);
+            }
+        }
+        for entry in std::fs::read_dir(directory)? {
+            let path = entry?.path();
+            if !keep.contains(&path) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        Ok((entries, done))
+    }
+    fn part(&self, token: &str) -> PathBuf {
+        self.directory.join(format!("{token}.part"))
+    }
+    fn meta(&self, token: &str) -> PathBuf {
+        self.directory.join(format!("{token}.json"))
+    }
+    fn saved(&self, token: &str) -> PathBuf {
+        self.directory.join(format!("{token}.saved"))
+    }
+    fn save(&self, token: &str, record: &Record) -> Result<()> {
+        self.write(&self.meta(token), &serde_json::to_vec(record)?)
+    }
+    /// Write a record whole or not at all.
+    fn write(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+        let mut pending = path.as_os_str().to_owned();
+        pending.push(".tmp");
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&pending)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&pending, path)?;
+        Ok(())
+    }
+    /// Forget saved files after `SAVED_FOR`, and the oldest beyond
+    /// `MAX_SAVED`, with their records.
+    fn prune(&self, done: &mut BTreeMap<String, Done>) {
+        let mut oldest: Vec<(std::time::SystemTime, String)> = done
+            .iter()
+            .map(|(token, entry)| (entry.at, token.clone()))
+            .collect();
+        oldest.sort();
+        let over = done.len().saturating_sub(MAX_SAVED);
+        for (index, (at, token)) in oldest.into_iter().enumerate() {
+            if index < over || at.elapsed().unwrap_or_default() >= SAVED_FOR {
+                done.remove(&token);
+                let _ = std::fs::remove_file(self.saved(&token));
+            }
+        }
+    }
+    /// Drop files nobody continued, with their bytes.
+    fn expire(&self, entries: &mut BTreeMap<String, Staged>) {
+        let stale: Vec<String> = entries
+            .iter()
+            .filter(|(_, entry)| entry.touched.elapsed().unwrap_or_default() >= STAGED_FOR)
+            .map(|(token, _)| token.clone())
+            .collect();
+        for token in stale {
+            entries.remove(&token);
+            let _ = std::fs::remove_file(self.part(&token));
+            let _ = std::fs::remove_file(self.meta(&token));
+        }
     }
     /// Rate limits for one sender, before anything else.
     fn admit(&self, peer: &str, request: &Request) -> Result<()> {
@@ -144,33 +390,65 @@ impl Incoming {
         budget.2 += u32::from(request.token.is_none());
         Ok(())
     }
+    /// Whether a window continues `entry` for `peer`: the same file, at the
+    /// place it stands. Only its own sender learns where that is.
+    fn continues(
+        entry: &Staged,
+        token: &str,
+        peer: &str,
+        request: &Request,
+    ) -> std::result::Result<(), Refusal> {
+        if !same_file(&entry.record, peer, request) {
+            return Err(Refusal::Denied);
+        }
+        if entry.record.received != request.offset {
+            return Err(Refusal::Resume(token.to_owned(), entry.record.received));
+        }
+        Ok(())
+    }
+    /// The answer for a window whose file is no longer staged: it was saved,
+    /// it is being saved, or this device no longer has it.
+    fn gone(&self, token: &str, peer: &str, request: &Request) -> Refusal {
+        let mut done = self.done.lock().expect("saved files");
+        self.prune(&mut done);
+        match done.get(token) {
+            None => Refusal::Restart,
+            Some(entry) if !same_file(&entry.record, peer, request) => Refusal::Denied,
+            Some(Done {
+                saved_as: Some(name),
+                ..
+            }) => Refusal::Saved(name.clone()),
+            Some(_) => Refusal::Busy,
+        }
+    }
     /// The token a window carries, or a new one. A continuing window must
     /// match its file exactly; a new file must fit now, checked before any
     /// budget or authority request is spent. Nothing is staged yet.
     fn token(&self, peer: &str, request: &Request) -> std::result::Result<String, Refusal> {
         let mut entries = self.entries.lock().expect("incoming files");
-        entries.retain(|_, entry| entry.touched.elapsed() < STAGED_FOR);
+        self.expire(&mut entries);
         let Some(token) = &request.token else {
             if request.offset != 0 {
                 return Err(Refusal::Denied);
+            }
+            // The same sender sending the same file again, for example after
+            // its app restarted: it continues the file already here.
+            if let Some((token, entry)) = entries
+                .iter()
+                .find(|(_, entry)| same_file(&entry.record, peer, request))
+            {
+                return Err(Refusal::Resume(token.clone(), entry.record.received));
             }
             if !room(&entries, peer, request.size) {
                 return Err(Refusal::Busy);
             }
             return Ok(uuid::Uuid::new_v4().to_string());
         };
-        let entry = entries.get(token).ok_or(Refusal::Denied)?;
-        if entry.peer == peer
-            && entry.collection == request.collection_id
-            && entry.file_name == request.file_name
-            && entry.size == request.size
-            && entry.sha256 == request.sha256
-            && entry.received == request.offset
-        {
-            Ok(token.clone())
-        } else {
-            Err(Refusal::Denied)
-        }
+        let Some(entry) = entries.get(token) else {
+            return Err(self.gone(token, peer, request));
+        };
+        Self::continues(entry, token, peer, request)?;
+        Ok(token.clone())
     }
     /// After the authority allowed the file: its staging file, positioned at
     /// the window, and the file's hash so far. A first window gets a new
@@ -180,78 +458,149 @@ impl Incoming {
         peer: &str,
         token: &str,
         request: &Request,
-    ) -> std::result::Result<(File, Sha256), Refusal> {
+    ) -> std::result::Result<(File, Option<Sha256>), Refusal> {
         let mut entries = self.entries.lock().expect("incoming files");
-        entries.retain(|_, entry| entry.touched.elapsed() < STAGED_FOR);
+        self.expire(&mut entries);
         if let Some(entry) = entries.get_mut(token) {
             // Checked again here: a window that waited its turn may have been
             // overtaken by one for the same offset.
-            if entry.peer != peer || entry.received != request.offset {
-                return Err(Refusal::Denied);
-            }
-            entry.touched = Instant::now();
-            let mut file = entry.file.reopen().map_err(|_| Refusal::Busy)?;
+            Self::continues(entry, token, peer, request)?;
+            entry.touched = std::time::SystemTime::now();
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(self.part(token))
+                .map_err(|_| Refusal::Busy)?;
             file.seek(SeekFrom::Start(request.offset))
                 .map_err(|_| Refusal::Busy)?;
             return Ok((file, entry.hash.clone()));
         }
         if request.token.is_some() {
-            return Err(Refusal::Denied);
+            return Err(self.gone(token, peer, request));
         }
         if !room(&entries, peer, request.size) {
             return Err(Refusal::Busy);
         }
-        let file = tempfile::NamedTempFile::new_in(&self.directory).map_err(|_| Refusal::Busy)?;
-        let handle = file.reopen().map_err(|_| Refusal::Busy)?;
+        let record = Record {
+            peer: peer.to_owned(),
+            collection: request.collection_id.clone(),
+            file_name: request.file_name.clone(),
+            size: request.size,
+            sha256: request.sha256.clone(),
+            received: 0,
+        };
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let file = options.open(self.part(token)).map_err(|_| Refusal::Busy)?;
+        self.save(token, &record).map_err(|_| Refusal::Busy)?;
         entries.insert(
             token.to_owned(),
             Staged {
-                peer: peer.to_owned(),
-                collection: request.collection_id.clone(),
-                file_name: request.file_name.clone(),
-                size: request.size,
-                sha256: request.sha256.clone(),
-                received: 0,
-                hash: Sha256::new(),
-                touched: Instant::now(),
-                file,
+                record,
+                hash: Some(Sha256::new()),
+                touched: std::time::SystemTime::now(),
             },
         );
-        Ok((handle, Sha256::new()))
+        Ok((file, Some(Sha256::new())))
     }
     /// Record a verified window and the file's hash after it. The finished
-    /// file leaves staging with its whole digest.
+    /// file leaves the list, still in staging until it is saved, and is
+    /// remembered as being saved.
     fn received(
         &self,
         token: &str,
         offset: u64,
         bytes: u64,
-        hash: Sha256,
-    ) -> Result<Option<(Staged, String)>> {
+        hash: Option<Sha256>,
+    ) -> Result<Option<Finished>> {
         let mut entries = self.entries.lock().expect("incoming files");
         let entry = entries.get_mut(token).context("This transfer expired")?;
         ensure!(
-            entry.received == offset,
+            entry.record.received == offset,
             "This window does not continue its file"
         );
-        entry.received += bytes;
+        entry.record.received += bytes;
         entry.hash = hash;
-        if entry.received < entry.size {
+        entry.touched = std::time::SystemTime::now();
+        if entry.record.received < entry.record.size {
+            let record = entry.record.clone();
+            drop(entries);
+            self.save(token, &record)?;
             return Ok(None);
         }
         let staged = entries.remove(token).context("This transfer expired")?;
-        let digest = storage::hex(&staged.hash.clone().finalize());
-        Ok(Some((staged, digest)))
+        let mut done = self.done.lock().expect("saved files");
+        self.prune(&mut done);
+        done.insert(
+            token.to_owned(),
+            Done {
+                record: staged.record.clone(),
+                saved_as: None,
+                at: std::time::SystemTime::now(),
+            },
+        );
+        Ok(Some(Finished {
+            token: token.to_owned(),
+            record: staged.record,
+            hash: staged.hash,
+            part: self.part(token),
+            meta: self.meta(token),
+        }))
     }
-    fn forget(&self, token: &str) {
-        self.entries.lock().expect("incoming files").remove(token);
+    /// Save a finished file and remember for a while where it went, on disk
+    /// too before its staging goes; a file that is not saved is forgotten,
+    /// so its sender starts again.
+    fn finish(&self, finished: Finished, directory: &Collection) -> Result<String> {
+        let saved = finished.save(directory);
+        let mut done = self.done.lock().expect("saved files");
+        match (&saved, done.get_mut(&finished.token)) {
+            (Ok(name), Some(entry)) => {
+                entry.saved_as = Some(name.clone());
+                let record = SavedRecord {
+                    record: finished.record.clone(),
+                    saved_as: name.clone(),
+                };
+                if let Ok(bytes) = serde_json::to_vec(&record) {
+                    let _ = self.write(&self.saved(&finished.token), &bytes);
+                }
+            }
+            _ => {
+                done.remove(&finished.token);
+            }
+        }
+        drop(done);
+        finished.discard();
+        saved
+    }
+    /// A window that did not finish leaves the file as it was recorded.
+    fn rewind(&self, token: &str) {
+        let entries = self.entries.lock().expect("incoming files");
+        if let Some(entry) = entries.get(token)
+            && let Ok(file) = std::fs::OpenOptions::new()
+                .write(true)
+                .open(self.part(token))
+        {
+            let _ = file.set_len(entry.record.received);
+        }
     }
 }
 
+/// Whether `record` is the file `request` names, from the same sender.
+fn same_file(record: &Record, peer: &str, request: &Request) -> bool {
+    record.peer == peer
+        && record.collection == request.collection_id
+        && record.file_name == request.file_name
+        && record.size == request.size
+        && record.sha256 == request.sha256
+}
 /// Whether the inbox has room for one more unfinished file from `peer`.
 fn room(entries: &BTreeMap<String, Staged>, peer: &str, size: u64) -> bool {
-    let staged: u64 = entries.values().map(|entry| entry.size).sum();
-    let own = entries.values().filter(|entry| entry.peer == peer).count();
+    let staged: u64 = entries.values().map(|entry| entry.record.size).sum();
+    let own = entries
+        .values()
+        .filter(|entry| entry.record.peer == peer)
+        .count();
     entries.len() < MAX_STAGED
         && own < MAX_STAGED_PER_SENDER
         && staged.saturating_add(size) <= MAX_STAGED_BYTES
@@ -438,8 +787,7 @@ pub(in crate::session) async fn serve(
     // asked, so a sender waiting for room spends neither.
     let token = match share.incoming.token(&sender, &request) {
         Ok(token) => token,
-        Err(Refusal::Denied) => return refuse(connection, send, Header::Denied, None).await,
-        Err(Refusal::Busy) => return refuse(connection, send, Header::Busy, None).await,
+        Err(refusal) => return refuse(connection, send, refusal.header(), None).await,
     };
     if share.incoming.admit(&sender, &request).is_err() {
         return refuse(connection, send, Header::Denied, None).await;
@@ -456,10 +804,7 @@ pub(in crate::session) async fn serve(
     };
     let (mut file, mut whole) = match share.incoming.claim(&sender, &token, &request) {
         Ok(claimed) => claimed,
-        Err(Refusal::Denied) => {
-            return refuse(connection, send, Header::Denied, Some(turn)).await;
-        }
-        Err(Refusal::Busy) => return refuse(connection, send, Header::Busy, Some(turn)).await,
+        Err(refusal) => return refuse(connection, send, refusal.header(), Some(turn)).await,
     };
     let staged = async {
         send_header(
@@ -494,7 +839,9 @@ pub(in crate::session) async fn serve(
                 .context("The permission to send ended")??;
             file.write_all(&buffer[..chunk])?;
             window.update(&buffer[..chunk]);
-            whole.update(&buffer[..chunk]);
+            if let Some(whole) = whole.as_mut() {
+                whole.update(&buffer[..chunk]);
+            }
             count += chunk;
         }
         let window_sha256 = storage::hex(&window.finalize());
@@ -524,33 +871,27 @@ pub(in crate::session) async fn serve(
         Ok::<_, anyhow::Error>((sent, finished))
     }
     .await;
-    // The next window may start while this one saves and confirms.
-    drop(turn);
     let (sent, finished) = match staged {
         Ok(staged) => staged,
         Err(error) => {
-            share.incoming.forget(&token);
+            // A dropped connection or an ended permission: the sender can
+            // continue from what was recorded. The turn goes after.
+            share.incoming.rewind(&token);
             return Err(error);
         }
     };
-    // A window the sender cannot learn the outcome of ends its file, so
-    // nothing waits in staging for a window that will not come.
+    // The next window may start while this one saves and confirms.
+    drop(turn);
+    // If this answer is lost, the sender asks again and is told where its
+    // file stands, or where it was saved.
     let confirmed = async {
         let mut saved_as = None;
-        if let Some((mut finished, digest)) = finished {
-            // The whole file must be what the sender declared before it is saved.
-            ensure!(
-                digest == finished.sha256
-                    && finished.file.as_file().metadata()?.len() == finished.size,
-                "The file did not match its digest and was not saved"
-            );
+        if let Some(finished) = finished {
+            let incoming = share.incoming.clone();
             let directory = share.directory.clone();
             saved_as = Some(
-                tokio::task::spawn_blocking(move || {
-                    let name = finished.file_name.clone();
-                    directory.commit(&name, finished.file.as_file_mut())
-                })
-                .await??,
+                tokio::task::spawn_blocking(move || incoming.finish(finished, &directory))
+                    .await??,
             );
         }
         let confirmation = super::receipt(
@@ -577,22 +918,21 @@ pub(in crate::session) async fn serve(
         Ok::<_, anyhow::Error>(())
     }
     .await;
-    if confirmed.is_err() {
-        share.incoming.forget(&token);
-    }
     confirmed?;
     connection.closed().await;
     Ok(())
 }
 
-/// The sending side of one window: `input` holds the whole file.
+/// The sending side of one window: `input` holds the whole file. The token
+/// the receiving device names is written into `request` before any byte is
+/// sent, so a window whose answer is lost can be asked again.
 pub(in crate::session) async fn transmit(
     connection: &Connection,
     local: iroh::EndpointId,
     credentials: &Credentials,
-    request: &Request,
+    request: &mut Request,
     input: &mut File,
-) -> Result<Window> {
+) -> Result<Outcome> {
     validate(request)?;
     let (mut send, mut recv) = connection.open_bi().await?;
     let peer = authenticate_for(
@@ -605,7 +945,7 @@ pub(in crate::session) async fn transmit(
         Protocol::Send,
     )
     .await?;
-    write_frame(&mut send, request).await?;
+    write_frame(&mut send, &*request).await?;
     let (intent, decision, attestation, prepared) = match receive_header(&mut recv).await? {
         Header::Allowed {
             intent,
@@ -617,13 +957,36 @@ pub(in crate::session) async fn transmit(
         Header::Busy => {
             anyhow::bail!("This device is receiving other files. Try again shortly.")
         }
+        Header::Resume { token, received } => {
+            uuid::Uuid::parse_str(&token)?;
+            ensure!(
+                received <= request.size
+                    && (request.token.is_none()
+                        || request.token.as_deref() == Some(token.as_str()))
+                    && !(request.token.is_some() && received == request.offset),
+                "Wrong send response"
+            );
+            return Ok(Outcome::ContinueAt {
+                token,
+                at: received,
+            });
+        }
+        Header::Saved { saved_as } => {
+            ensure!(request.token.is_some(), "Wrong send response");
+            storage::name(&saved_as)?;
+            return Ok(Outcome::Saved { saved_as });
+        }
+        Header::Restart => {
+            ensure!(request.token.is_some(), "Wrong send response");
+            return Ok(Outcome::StartOver);
+        }
     };
     let expected = length(request);
     // The decision must be for this inbox's own permission.
     let policy_id = format!("connect-{}", request.collection_id);
     ensure!(
         intent["domain"] == "genesismesh-connect/send/v1"
-            && intent["request"] == serde_json::to_value(request)?
+            && intent["request"] == serde_json::to_value(&*request)?
             && intent["host_node"] == credentials.expected_node
             && intent["peer_node"] == credentials.identity.public_key()
             && intent["sha256"] == request.sha256
@@ -660,6 +1023,7 @@ pub(in crate::session) async fn transmit(
         &decision,
         "prepared",
     )?;
+    request.token = Some(token.clone());
     input.seek(SeekFrom::Start(request.offset))?;
     let mut hash = Sha256::new();
     let mut buffer = zeroize::Zeroizing::new([0u8; 65536]);
@@ -704,12 +1068,12 @@ pub(in crate::session) async fn transmit(
     credentials
         .trust
         .certificate(&peer, &credentials.expected_node, Utc::now())?;
-    Ok(Window {
+    Ok(Outcome::Sent(Window {
         token,
         bytes: count,
         done: phase(request) == "received",
         saved_as: confirmation.saved_as,
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -728,6 +1092,12 @@ mod tests {
             length: MIN_WINDOW_BYTES,
         }
     }
+    fn new_file(incoming: &Incoming, peer: &str, size: u64) -> Result<String> {
+        let first = request(None, 0, size);
+        let token = incoming.token(peer, &first).ok().context("token")?;
+        incoming.claim(peer, &token, &first).ok().context("claim")?;
+        Ok(token)
+    }
 
     #[test]
     fn staging_follows_its_file_in_order_and_within_its_limits() -> Result<()> {
@@ -737,85 +1107,239 @@ mod tests {
             Arc::ptr_eq(&incoming, &Incoming::open(state.path())?),
             "Reopening an inbox keeps the files arriving in it"
         );
-        let size = 3 * u64::from(MIN_WINDOW_BYTES);
-        let first = request(None, 0, size);
-        let token = incoming.token("phone", &first).ok().context("token")?;
-        let (_, hash) = incoming
-            .claim("phone", &token, &first)
-            .ok()
-            .context("claim")?;
+        let window = u64::from(MIN_WINDOW_BYTES);
+        let size = 3 * window;
+        let token = new_file(&incoming, "phone", size)?;
         assert!(
             incoming
-                .received(&token, 0, u64::from(MIN_WINDOW_BYTES), hash)?
+                .received(&token, 0, window, Some(Sha256::new()))?
                 .is_none()
         );
-        // A window must continue exactly where the file stands, for its sender.
+        // A window at the wrong place learns where the file stands; another
+        // sender learns nothing.
         let stale = request(Some(&token), 0, size);
-        assert!(incoming.token("phone", &stale).is_err());
+        assert!(
+            matches!(incoming.token("phone", &stale), Err(Refusal::Resume(_, n)) if n == window)
+        );
         assert!(matches!(
             incoming.claim("phone", &token, &stale),
+            Err(Refusal::Resume(_, n)) if n == window
+        ));
+        let next = request(Some(&token), window, size);
+        assert!(matches!(
+            incoming.token("tablet", &next),
             Err(Refusal::Denied)
         ));
-        let next = request(Some(&token), u64::from(MIN_WINDOW_BYTES), size);
-        assert!(incoming.token("tablet", &next).is_err());
         assert!(matches!(
             incoming.claim("tablet", &token, &next),
             Err(Refusal::Denied)
         ));
         assert!(incoming.claim("phone", &token, &next).is_ok());
         assert!(
-            incoming
-                .received(&token, 0, u64::from(MIN_WINDOW_BYTES), Sha256::new())
-                .is_err(),
+            incoming.received(&token, 0, window, None).is_err(),
             "A window recorded at the wrong offset is refused"
         );
+        // An unknown transfer is started again.
+        let unknown = uuid::Uuid::new_v4().to_string();
+        assert!(matches!(
+            incoming.token("phone", &request(Some(&unknown), window, size)),
+            Err(Refusal::Restart)
+        ));
         // One sender keeps at most two unfinished files; the inbox, four.
-        let other = incoming
-            .token("phone", &request(None, 0, 10))
-            .ok()
-            .context("token")?;
-        assert!(
-            incoming
-                .claim("phone", &other, &request(None, 0, 10))
-                .is_ok()
-        );
+        new_file(&incoming, "phone", 10)?;
         assert!(
             matches!(
-                incoming.token("phone", &request(None, 0, 10)),
+                incoming.token("phone", &request(None, 0, 11)),
                 Err(Refusal::Busy)
             ),
             "A full inbox says so before a budget or a decision is spent"
         );
         for sender in ["tablet", "laptop"] {
-            let token = incoming
-                .token(sender, &request(None, 0, 10))
-                .ok()
-                .context("token")?;
-            let _ = incoming.claim(sender, &token, &request(None, 0, 10));
+            new_file(&incoming, sender, 10)?;
         }
         assert!(matches!(
             incoming.token("watch", &request(None, 0, 10)),
             Err(Refusal::Busy)
         ));
-        // An abandoned file goes, and its window is refused after that.
+        // An abandoned file goes with its bytes, and its window starts over.
         incoming
             .entries
             .lock()
             .unwrap()
             .get_mut(&token)
             .context("entry")?
-            .touched = Instant::now() - STAGED_FOR;
-        assert!(incoming.token("phone", &next).is_err());
+            .touched = std::time::SystemTime::now() - STAGED_FOR;
         assert!(matches!(
-            incoming.claim("phone", &token, &next),
-            Err(Refusal::Denied)
+            incoming.token("phone", &next),
+            Err(Refusal::Restart)
         ));
+        assert!(!incoming.part(&token).exists() && !incoming.meta(&token).exists());
         // Each sender has its own budget of new files.
         for _ in 0..8 {
             incoming.admit("phone", &request(None, 0, 10))?;
         }
         assert!(incoming.admit("phone", &request(None, 0, 10)).is_err());
         assert!(incoming.admit("tablet", &request(None, 0, 10)).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn an_unfinished_file_is_continued_after_the_receiving_device_restarts() -> Result<()> {
+        let state = tempfile::tempdir()?;
+        let window = u64::from(MIN_WINDOW_BYTES);
+        let token = {
+            let incoming = Incoming::open(state.path())?;
+            let token = new_file(&incoming, "phone", 2 * window)?;
+            let (mut file, _) = incoming
+                .claim("phone", &token, &request(Some(&token), 0, 2 * window))
+                .ok()
+                .context("claim")?;
+            file.write_all(&vec![1u8; window as usize])?;
+            // A window that never finished leaves bytes past what was recorded.
+            file.write_all(b"partial")?;
+            incoming.received(&token, 0, window, Some(Sha256::new()))?;
+            std::fs::write(state.path().join("incoming").join("stray.bin"), b"x")?;
+            token
+        };
+        // The next process picks the file up where it was recorded.
+        let incoming = Incoming::open(state.path())?;
+        assert!(!state.path().join("incoming").join("stray.bin").exists());
+        assert_eq!(std::fs::metadata(incoming.part(&token))?.len(), window);
+        assert!(matches!(
+            incoming.token("phone", &request(Some(&token), 0, 2 * window)),
+            Err(Refusal::Resume(_, n)) if n == window
+        ));
+        let next = request(Some(&token), window, 2 * window);
+        let (mut file, hash) = incoming
+            .claim("phone", &token, &next)
+            .ok()
+            .context("claim")?;
+        assert!(hash.is_none(), "The hash is worked out again at the end");
+        file.write_all(&vec![2u8; window as usize])?;
+        let finished = incoming
+            .received(&token, window, window, None)?
+            .context("finished")?;
+        assert_eq!(std::fs::metadata(&finished.part)?.len(), 2 * window);
+        // The declared digest does not match these bytes: nothing is saved,
+        // staging goes, and the sender starts again.
+        let folder = tempfile::tempdir()?;
+        let directory = Collection::open(folder.path())?;
+        assert!(incoming.finish(finished, &directory).is_err());
+        assert_eq!(std::fs::read_dir(folder.path())?.count(), 0);
+        assert!(!incoming.part(&token).exists() && !incoming.meta(&token).exists());
+        assert!(matches!(
+            incoming.token("phone", &next),
+            Err(Refusal::Restart)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_saved_file_tells_its_sender_where_it_went() -> Result<()> {
+        let state = tempfile::tempdir()?;
+        let incoming = Incoming::open(state.path())?;
+        let window = u64::from(MIN_WINDOW_BYTES);
+        let bytes = vec![7u8; window as usize];
+        let mut only = request(None, 0, window);
+        only.sha256 = storage::hex(&Sha256::digest(&bytes));
+        let token = incoming.token("phone", &only).ok().context("token")?;
+        let (mut file, hash) = incoming
+            .claim("phone", &token, &only)
+            .ok()
+            .context("claim")?;
+        file.write_all(&bytes)?;
+        let mut hash = hash.context("hash")?;
+        hash.update(&bytes);
+        let finished = incoming
+            .received(&token, 0, window, Some(hash))?
+            .context("finished")?;
+        // The confirmation is lost and the window asked again: it waits while
+        // the file is saved, then learns where it went, and nothing is saved
+        // twice.
+        only.token = Some(token.clone());
+        assert!(matches!(incoming.token("phone", &only), Err(Refusal::Busy)));
+        let folder = tempfile::tempdir()?;
+        let directory = Collection::open(folder.path())?;
+        assert_eq!(incoming.finish(finished, &directory)?, "photo.jpg");
+        assert!(matches!(
+            incoming.token("phone", &only),
+            Err(Refusal::Saved(name)) if name == "photo.jpg"
+        ));
+        assert!(matches!(
+            incoming.claim("phone", &token, &only),
+            Err(Refusal::Saved(_))
+        ));
+        assert!(matches!(
+            incoming.token("tablet", &only),
+            Err(Refusal::Denied)
+        ));
+        assert_eq!(std::fs::read_dir(folder.path())?.count(), 1);
+        assert!(!incoming.part(&token).exists() && !incoming.meta(&token).exists());
+        // The receiving device stops before its staging went, then restarts:
+        // it still knows where the file went and does not take it up again.
+        let record = Record {
+            peer: "phone".into(),
+            collection: only.collection_id.clone(),
+            file_name: only.file_name.clone(),
+            size: window,
+            sha256: only.sha256.clone(),
+            received: 0,
+        };
+        incoming.save(&token, &record)?;
+        std::fs::write(incoming.part(&token), b"")?;
+        drop(incoming);
+        let incoming = Incoming::open(state.path())?;
+        assert!(!incoming.part(&token).exists() && !incoming.meta(&token).exists());
+        assert!(matches!(
+            incoming.token("phone", &only),
+            Err(Refusal::Saved(name)) if name == "photo.jpg"
+        ));
+        // After a while it is forgotten.
+        incoming
+            .done
+            .lock()
+            .unwrap()
+            .get_mut(&token)
+            .context("done")?
+            .at = std::time::SystemTime::now() - SAVED_FOR;
+        assert!(matches!(
+            incoming.token("phone", &only),
+            Err(Refusal::Restart)
+        ));
+        assert!(!incoming.saved(&token).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn a_broken_window_keeps_its_file_and_a_restarted_send_finds_it() -> Result<()> {
+        let state = tempfile::tempdir()?;
+        let incoming = Incoming::open(state.path())?;
+        let window = u64::from(MIN_WINDOW_BYTES);
+        let token = new_file(&incoming, "phone", 2 * window)?;
+        let (mut file, _) = incoming
+            .claim("phone", &token, &request(Some(&token), 0, 2 * window))
+            .ok()
+            .context("claim")?;
+        file.write_all(b"half a window, then the connection dropped")?;
+        incoming.rewind(&token);
+        assert_eq!(std::fs::metadata(incoming.part(&token))?.len(), 0);
+        assert!(
+            incoming
+                .token("phone", &request(Some(&token), 0, 2 * window))
+                .is_ok()
+        );
+        // The same sender starting the same file again, as after its app
+        // restarted, continues it; anyone else, or another file, does not.
+        assert!(matches!(
+            incoming.token("phone", &request(None, 0, 2 * window)),
+            Err(Refusal::Resume(found, 0)) if found == token
+        ));
+        assert!(
+            incoming
+                .token("tablet", &request(None, 0, 2 * window))
+                .is_ok()
+        );
+        assert!(incoming.token("phone", &request(None, 0, window)).is_ok());
         Ok(())
     }
 }

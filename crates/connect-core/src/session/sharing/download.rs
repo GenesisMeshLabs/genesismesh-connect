@@ -40,6 +40,26 @@ pub struct Window {
     pub done: bool,
 }
 
+/// A refusal that clears by itself: the requester asks again shortly.
+#[derive(Debug)]
+struct Busy(&'static str);
+impl std::fmt::Display for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for Busy {}
+/// A download this device no longer has: it expired, or the device
+/// restarted. The requester asks again without its token.
+#[derive(Debug)]
+struct Expired;
+impl std::fmt::Display for Expired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("This download expired. Start it again.")
+    }
+}
+impl std::error::Error for Expired {}
+
 struct Cached {
     peer: String,
     collection: String,
@@ -106,7 +126,7 @@ impl State {
             }
             ensure!(
                 budget.1 < 120 && (request.token.is_some() || budget.2 < 8),
-                "Too many downloads. Try again in a minute."
+                Busy("Too many downloads. Try again in a minute.")
             );
             budget.1 += 1;
             budget.2 += u32::from(request.token.is_none());
@@ -115,9 +135,7 @@ impl State {
             let mut entries = self.entries.lock().expect("download cache");
             entries.retain(|_, entry| entry.touched.elapsed() < Duration::from_secs(900));
             if let Some(token) = &request.token {
-                let entry = entries
-                    .get_mut(token)
-                    .context("This download expired. Start it again.")?;
+                let entry = entries.get_mut(token).ok_or(Expired)?;
                 ensure!(
                     entry.peer == peer
                         && entry.collection == request.collection_id
@@ -138,14 +156,35 @@ impl State {
                     },
                 ));
             }
-            ensure!(
-                request.offset == 0,
-                "Start a new download from the beginning"
-            );
+            // The same device asking again for a file without its token, for
+            // example after a lost answer, continues the snapshot it has.
+            if let Some((token, entry)) = entries.iter_mut().find(|(_, entry)| {
+                entry.peer == peer
+                    && entry.collection == request.collection_id
+                    && entry.file == request.file_name
+                    && entry.directory == request.directory
+                    && entry.version == request.version
+                    && entry.snapshot.size == request.size
+            }) {
+                entry.touched = Instant::now();
+                entry.finished = false;
+                return Ok((
+                    token.clone(),
+                    entry.snapshot.clone(),
+                    permit,
+                    PendingSnapshot {
+                        entries: self.entries.clone(),
+                        token: None,
+                    },
+                ));
+            }
+            // A download continued later, its snapshot gone, starts a fresh
+            // snapshot of the same version at its offset: the version names
+            // the file's exact revision, and each window is decided anew.
             entries.retain(|_, entry| !entry.finished);
             ensure!(
                 entries.len() < 2,
-                "Two downloads are already being prepared. Try again shortly."
+                Busy("Two downloads are already being prepared. Try again shortly.")
             );
         }
         let file_name = request.file_name.clone();
@@ -153,7 +192,7 @@ impl State {
         let cache = self.directory.clone();
         let mut stored = 0u64;
         for (index, file) in std::fs::read_dir(&cache)?.enumerate() {
-            ensure!(index < 16, "Download snapshot cache is full");
+            ensure!(index < 16, Busy("Download snapshot cache is full"));
             let metadata = std::fs::symlink_metadata(file?.path())?;
             ensure!(
                 metadata.is_file() && !metadata.file_type().is_symlink(),
@@ -161,11 +200,11 @@ impl State {
             );
             stored = stored
                 .checked_add(metadata.len())
-                .context("Download snapshot cache is full")?;
+                .ok_or(Busy("Download snapshot cache is full"))?;
         }
         ensure!(
             stored.saturating_add(request.size) <= 2 * MAX_FILE_BYTES,
-            "Download snapshot cache is full"
+            Busy("Download snapshot cache is full")
         );
         // The blocking job retains the permit even if its network task is
         // canceled, preventing concurrent orphan snapshot copies from piling up.
@@ -205,6 +244,10 @@ impl State {
             entry.finished = true;
         }
     }
+    /// A snapshot that can no longer be read is not offered again.
+    fn forget(&self, token: &str) {
+        self.entries.lock().expect("download cache").remove(token);
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -217,6 +260,10 @@ enum Header {
         prepared: Value,
     },
     Denied,
+    /// Not now; ask again shortly.
+    Busy,
+    /// This device no longer has the download's token.
+    Expired,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -332,11 +379,17 @@ impl Share {
         let length = u64::from(request.length).min(snapshot.size - request.offset) as usize;
         let snapshot_sha = snapshot.sha256.clone();
         let offset = request.offset;
-        let (file, window_sha, permit) = tokio::task::spawn_blocking(move || {
+        let read = tokio::task::spawn_blocking(move || {
             let (file, digest) = snapshot.window(offset, length)?;
             Ok::<_, anyhow::Error>((file, digest, permit))
         })
-        .await??;
+        .await?;
+        // A snapshot that can no longer be read is gone: the requester asks
+        // again and gets a fresh one.
+        let Ok((file, window_sha, permit)) = read else {
+            self.downloads.forget(&token);
+            return Err(Expired.into());
+        };
         let mut store = self.trust.lock().await;
         let trust = self.authority.refresh(&mut store).await?;
         drop(store);
@@ -429,22 +482,27 @@ pub(in crate::session) async fn serve(
     // An unknown Space is refused like any other denial.
     let share = shares.get(&request.collection_id);
     let prepared = match share {
-        Some(share) => {
-            let permit = share
-                .budget
-                .clone()
-                .try_acquire_owned()
-                .context("Another file operation is running")?;
-            share
-                .prepare_window(credentials, &peer, &request, permit)
-                .await
-        }
+        Some(share) => match share.budget.clone().try_acquire_owned() {
+            Ok(permit) => {
+                share
+                    .prepare_window(credentials, &peer, &request, permit)
+                    .await
+            }
+            Err(_) => Err(Busy("Another file operation is running").into()),
+        },
         None => Err(anyhow::anyhow!("Unknown shared folder")),
     };
     let (mut prepared, _permit) = match prepared {
         Ok(prepared) => prepared,
-        Err(_) => {
-            send_header(&mut send, &Header::Denied).await?;
+        Err(error) => {
+            let header = if error.is::<Expired>() {
+                Header::Expired
+            } else if error.is::<Busy>() {
+                Header::Busy
+            } else {
+                Header::Denied
+            };
+            send_header(&mut send, &header).await?;
             send.finish()?;
             connection.closed().await;
             return Ok(());
@@ -556,16 +614,20 @@ pub(in crate::session) async fn receive(
     )
     .await?;
     write_frame(&mut send, request).await?;
-    let Header::Allowed {
-        intent,
-        decision,
-        attestation,
-        prepared,
-    } = receive_header(&mut recv).await?
-    else {
-        anyhow::bail!(
+    let (intent, decision, attestation, prepared) = match receive_header(&mut recv).await? {
+        Header::Allowed {
+            intent,
+            decision,
+            attestation,
+            prepared,
+        } => (intent, decision, attestation, prepared),
+        Header::Denied => anyhow::bail!(
             "This file isn't available with the current folder permission. Share the folder again on the computer to allow larger files."
-        );
+        ),
+        Header::Busy => {
+            anyhow::bail!("The sharing device is busy with other downloads. Try again shortly.")
+        }
+        Header::Expired => anyhow::bail!("The sharing device no longer has this download."),
     };
     let expected_length = u64::from(request.length).min(request.size - request.offset) as usize;
     ensure!(

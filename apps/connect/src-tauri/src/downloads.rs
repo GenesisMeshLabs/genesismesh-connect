@@ -163,11 +163,12 @@ pub async fn download_file(
         .clone()
         .try_acquire_owned()
         .map_err(|_| "Finish or cancel the current download first.")?;
-    let (session, peer) = crate::consumer::session(
+    let (mut session, mut peer) = crate::consumer::session(
         &app.state::<crate::desktop::DesktopState>(),
         Some(&collection_id),
     )
     .await?;
+    let handle = app.clone();
     let id = uuid::Uuid::new_v4().to_string();
     let (cancel, mut canceled) = watch::channel(false);
     *state.job.lock().expect("download state") = Some(Job {
@@ -208,7 +209,7 @@ pub async fn download_file(
             let mut length = MIN_WINDOW_BYTES;
             loop {
                 let started = Instant::now();
-                let request = Request {
+                let mut request = Request {
                     request_id: uuid::Uuid::new_v4().to_string(),
                     collection_id: collection_id.clone(),
                     file_name: name.clone(),
@@ -219,7 +220,7 @@ pub async fn download_file(
                     offset,
                     length,
                 };
-                let mut retries = 0;
+                let (mut retries, mut attempts) = (0, 0u32);
                 let window = loop {
                     match session
                         .download_window_from(
@@ -239,9 +240,41 @@ pub async fn download_file(
                             retries += 1;
                             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                         }
+                        // The connection dropped, the sharing device is busy,
+                        // or it restarted: wait and reach it again. When it no
+                        // longer has the snapshot, or refuses the token, the
+                        // next attempt asks without it, from where this
+                        // download stands; a refusal without a token is final.
+                        Err(error)
+                            if attempts < 6
+                                && (request.token.is_some()
+                                    || !error.to_string().contains("isn't available")) =>
+                        {
+                            attempts += 1;
+                            tokio::time::sleep(std::time::Duration::from_secs(
+                                1 << attempts.min(5),
+                            ))
+                            .await;
+                            if let Ok((again, host)) = crate::consumer::session(
+                                &handle.state::<crate::desktop::DesktopState>(),
+                                Some(&collection_id),
+                            )
+                            .await
+                            {
+                                (session, peer) = (again, host);
+                            }
+                            let error = error.to_string();
+                            if error.contains("isn't available")
+                                || error.contains("no longer has this download")
+                            {
+                                request.token = None;
+                                request.request_id = uuid::Uuid::new_v4().to_string();
+                            }
+                        }
                         Err(error) => return Err(error),
                     }
                 };
+                // Any fresh snapshot must be of the very same file.
                 ensure!(
                     digest.as_ref().is_none_or(|d| d == &window.sha256),
                     "File digest changed during download"
