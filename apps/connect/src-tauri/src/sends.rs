@@ -135,7 +135,7 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                 update(&jobs, &task_id, |job| job.progress.state = "sending".into());
                 let (mut token, mut offset, mut length) = (None, 0u64, MIN_WINDOW_BYTES);
                 let mut started_over = false;
-                // Answers that only move the file along, without a window.
+                // Answers in a row that only move the file along.
                 let mut continued = 0;
                 loop {
                     let now = file.metadata()?;
@@ -144,7 +144,7 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                         "The file changed while it was being sent. Send it again."
                     );
                     let started = Instant::now();
-                    let request = Request {
+                    let mut request = Request {
                         request_id: uuid::Uuid::new_v4().to_string(),
                         collection_id: space.clone(),
                         file_name: name.clone(),
@@ -156,12 +156,12 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                     };
                     // A busy inbox takes the window a little later; after a
                     // dropped connection or a restart of either device, the
-                    // same window is asked again and the other device says
-                    // where the file stands.
+                    // same window is asked again, with the token the other
+                    // device named, and it says where the file stands.
                     let (mut waits, mut attempts) = (0, 0u32);
                     let window = loop {
                         match session
-                            .send_window_to(&peer.node, &peer.ticket, request.clone(), &mut file)
+                            .send_window_to(&peer.node, &peer.ticket, &mut request, &mut file)
                             .await
                         {
                             Ok(outcome) => break outcome,
@@ -194,7 +194,15 @@ pub async fn send_file(space: String, app: tauri::AppHandle) -> Result<Option<St
                         }
                     };
                     let window = match window {
-                        Outcome::Sent(window) => window,
+                        Outcome::Sent(window) => {
+                            continued = 0;
+                            window
+                        }
+                        // The last window's confirmation was lost.
+                        Outcome::Saved { saved_as } => {
+                            update(&jobs, &task_id, |job| job.progress.sent = size);
+                            return Ok(saved_as);
+                        }
                         // The other device holds the file up to here.
                         Outcome::ContinueAt { token: kept, at } => {
                             ensure!(continued < 32, "The other device does not take this file");

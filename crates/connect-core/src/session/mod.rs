@@ -692,12 +692,13 @@ impl SessionEndpoint {
 
 impl SessionEndpoint {
     /// Send one window of the file in `input` into `node`'s inbox. Each window
-    /// is decided by the receiving device for the whole file.
+    /// is decided by the receiving device for the whole file. The transfer's
+    /// token is written into `request` once the receiving device names it.
     pub async fn send_window_to(
         &self,
         node: &str,
         ticket: &str,
-        request: sharing::send::Request,
+        request: &mut sharing::send::Request,
         input: &mut std::fs::File,
     ) -> Result<sharing::send::Outcome> {
         let ticket: SessionTicket = wire::decode(ticket.as_bytes())?;
@@ -723,7 +724,7 @@ impl SessionEndpoint {
         limit_streams(&connection);
         let result = tokio::select! { biased;
             _=changes.changed()=>Err(anyhow::anyhow!("Trust changed while sending")),
-            result=timeout(Duration::from_secs(120),sharing::send::transmit(&connection,self.endpoint.id(),&credentials,&request,input))=>result.context("Sending timed out").and_then(|r|r),
+            result=timeout(Duration::from_secs(120),sharing::send::transmit(&connection,self.endpoint.id(),&credentials,request,input))=>result.context("Sending timed out").and_then(|r|r),
         };
         connection.close(0u32.into(), b"send window complete");
         result

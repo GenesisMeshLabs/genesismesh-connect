@@ -138,6 +138,28 @@ impl State {
                     },
                 ));
             }
+            // The same device asking again for a file without its token, for
+            // example after a lost answer, continues the snapshot it has.
+            if let Some((token, entry)) = entries.iter_mut().find(|(_, entry)| {
+                entry.peer == peer
+                    && entry.collection == request.collection_id
+                    && entry.file == request.file_name
+                    && entry.directory == request.directory
+                    && entry.version == request.version
+                    && entry.snapshot.size == request.size
+            }) {
+                entry.touched = Instant::now();
+                entry.finished = false;
+                return Ok((
+                    token.clone(),
+                    entry.snapshot.clone(),
+                    permit,
+                    PendingSnapshot {
+                        entries: self.entries.clone(),
+                        token: None,
+                    },
+                ));
+            }
             // A download continued later, its snapshot gone, starts a fresh
             // snapshot of the same version at its offset: the version names
             // the file's exact revision, and each window is decided anew.

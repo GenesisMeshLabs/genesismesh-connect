@@ -241,10 +241,15 @@ pub async fn download_file(
                             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                         }
                         // The connection dropped or the sharing device
-                        // restarted: wait, reach it again, and if its snapshot
-                        // is gone, take a fresh one of the same version from
-                        // where this download stands.
-                        Err(_) if attempts < 6 => {
+                        // restarted: wait and reach it again. A refusal of the
+                        // token means its snapshot may be gone, so the next
+                        // attempt asks without it, from where this download
+                        // stands; a refusal without a token is final.
+                        Err(error)
+                            if attempts < 6
+                                && (request.token.is_some()
+                                    || !error.to_string().contains("isn't available")) =>
+                        {
                             attempts += 1;
                             tokio::time::sleep(std::time::Duration::from_secs(
                                 1 << attempts.min(5),
@@ -258,7 +263,7 @@ pub async fn download_file(
                             {
                                 (session, peer) = (again, host);
                             }
-                            if attempts >= 2 {
+                            if error.to_string().contains("isn't available") {
                                 request.token = None;
                                 request.request_id = uuid::Uuid::new_v4().to_string();
                             }

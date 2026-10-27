@@ -554,7 +554,7 @@ fn send_with(
         let window = runtime.block_on(session.send_window_to(
             &host.node,
             &host.ticket,
-            Request {
+            &mut Request {
                 request_id: request_id()?,
                 collection_id: inbox.into(),
                 file_name: name.into(),
@@ -574,7 +574,7 @@ fn send_with(
                 offset = at;
                 continue;
             }
-            Outcome::StartOver => anyhow::bail!("The receiving device lost the file"),
+            other => anyhow::bail!("Unexpected answer: {other:?}"),
         };
         offset += window.bytes as u64;
         token = Some(window.token);
@@ -927,15 +927,17 @@ fn transfers_continue_where_they_stopped() -> Result<()> {
             offset,
             length: MIN_WINDOW_BYTES,
         };
+        let mut opening = window(None, 0);
         let first = match runtime.block_on(phone.session()?.send_window_to(
             &pc_node,
             &pc_ticket()?,
-            window(None, 0),
+            &mut opening,
             &mut file,
         ))? {
             Outcome::Sent(first) => first,
             other => anyhow::bail!("Unexpected first window: {other:?}"),
         };
+        assert_eq!(opening.token.as_ref(), Some(&first.token));
         runtime.block_on(pc.stop());
         drop(pc);
         let mut pc = DeviceController::open(&pc_path)?;
@@ -946,7 +948,7 @@ fn transfers_continue_where_they_stopped() -> Result<()> {
         let again = runtime.block_on(phone.session()?.send_window_to(
             &pc_node,
             &pc_ticket()?,
-            window(None, 0),
+            &mut window(None, 0),
             &mut file,
         ))?;
         assert!(
@@ -957,7 +959,7 @@ fn transfers_continue_where_they_stopped() -> Result<()> {
         let resumed = runtime.block_on(phone.session()?.send_window_to(
             &pc_node,
             &pc_ticket()?,
-            window(Some(first.token.clone()), 0),
+            &mut window(Some(first.token.clone()), 0),
             &mut file,
         ))?;
         let mut offset = match resumed {
@@ -972,7 +974,7 @@ fn transfers_continue_where_they_stopped() -> Result<()> {
             match runtime.block_on(phone.session()?.send_window_to(
                 &pc_node,
                 &pc_ticket()?,
-                window(Some(first.token.clone()), offset),
+                &mut window(Some(first.token.clone()), offset),
                 &mut file,
             ))? {
                 Outcome::Sent(next) if next.done => break next.saved_as,
@@ -982,11 +984,24 @@ fn transfers_continue_where_they_stopped() -> Result<()> {
         };
         assert_eq!(saved.as_deref(), Some("video.bin"));
         assert_eq!(std::fs::read(received.join("video.bin"))?, video);
+        // The last window asked again, as after a lost confirmation, learns
+        // where the file went, and it is not saved twice.
+        let again = runtime.block_on(phone.session()?.send_window_to(
+            &pc_node,
+            &pc_ticket()?,
+            &mut window(Some(first.token.clone()), offset),
+            &mut file,
+        ))?;
+        assert!(
+            matches!(&again, Outcome::Saved { saved_as } if saved_as == "video.bin"),
+            "{again:?}"
+        );
+        assert_eq!(std::fs::read_dir(&received)?.count(), 1);
         // A transfer the PC no longer has starts over.
         let lost = runtime.block_on(phone.session()?.send_window_to(
             &pc_node,
             &pc_ticket()?,
-            window(Some(request_id()?), MIN_WINDOW_BYTES as u64),
+            &mut window(Some(request_id()?), MIN_WINDOW_BYTES as u64),
             &mut file,
         ))?;
         assert!(matches!(lost, Outcome::StartOver));
@@ -1026,6 +1041,16 @@ fn transfers_continue_where_they_stopped() -> Result<()> {
             &mut output,
         ))?;
         let mut offset = first.bytes as u64;
+        // Asked again without its token, as after a lost answer, the PC
+        // continues the snapshot it has.
+        let reused = runtime.block_on(session.download_window_from(
+            &pc_node,
+            &pc_ticket()?,
+            request(None, offset),
+            &mut output,
+        ))?;
+        assert_eq!(reused.token, first.token);
+        offset += reused.bytes as u64;
         // The PC restarts: its snapshot is gone, and the old token with it.
         runtime.block_on(pc.stop());
         drop(pc);
