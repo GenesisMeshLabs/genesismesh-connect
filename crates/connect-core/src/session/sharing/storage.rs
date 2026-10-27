@@ -176,7 +176,9 @@ impl Collection {
                 .hard_link(&hidden, &self.directory, candidate)
             {
                 Ok(()) => {
-                    self.directory.remove_file(&hidden)?;
+                    // The file is saved; a hidden name left behind does not
+                    // undo that.
+                    let _ = self.directory.remove_file(&hidden);
                     return Ok(candidate.clone());
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -204,16 +206,31 @@ impl Collection {
         anyhow::bail!("This folder already has 99 files with that name")
     }
     /// The name `commit` saved these exact bytes under, if one of the names
-    /// it chooses from holds them: whether a save under way when the device
-    /// stopped was completed.
-    pub fn committed(&self, file_name: &str, size: u64, sha256: &str) -> Option<String> {
+    /// it chooses from holds them and was written `since` then: whether a
+    /// save under way when the device stopped was completed. An older copy
+    /// of the same bytes is not taken for it.
+    pub fn committed(
+        &self,
+        file_name: &str,
+        size: u64,
+        sha256: &str,
+        since: std::time::SystemTime,
+    ) -> Option<String> {
+        // Room for filesystems that keep coarse times, such as FAT's two
+        // seconds.
+        let since = since - std::time::Duration::from_secs(2);
         candidates(file_name).into_iter().find(|candidate| {
             (|| {
                 let mut options = OpenOptions::new();
                 options.read(true).follow(FollowSymlinks::No);
                 let file = self.directory.open_with(candidate, &options)?;
                 let metadata = file.metadata()?;
-                ensure!(metadata.is_file() && metadata.len() == size, "Another file");
+                ensure!(
+                    metadata.is_file()
+                        && metadata.len() == size
+                        && metadata.modified()?.into_std() >= since,
+                    "Another file"
+                );
                 let mut file = file.into_std();
                 let mut hash = Sha256::new();
                 let mut buffer = Zeroizing::new(vec![0u8; 65536]);

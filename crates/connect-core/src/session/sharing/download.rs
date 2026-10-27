@@ -200,11 +200,14 @@ impl State {
             // snapshot of the same version at its offset: the version names
             // the file's exact revision, and each window is decided anew.
             entries.retain(|_, entry| !entry.finished);
+            // Windows of one Space are served one at a time, so the place
+            // given away is never one being served; its snapshot would be
+            // held if it were. The download that gave its place can go on
+            // from a fresh snapshot, even if this one is then refused.
             if entries.len() >= 2
                 && let Some(idle) = entries
                     .iter()
                     .filter(|(_, entry)| {
-                        // A window being served holds its snapshot.
                         Arc::strong_count(&entry.snapshot) == 1
                             && entry.touched.elapsed() >= IDLE_FOR
                     })
@@ -269,6 +272,15 @@ impl State {
             token: Some(token.clone()),
         };
         Ok((token, snapshot, permit, pending))
+    }
+    /// Its own device asked for the download again, even if it has to wait:
+    /// it is not idle.
+    fn touch(&self, token: &str, peer: &str) {
+        if let Some(entry) = self.entries.lock().expect("download cache").get_mut(token)
+            && entry.peer == peer
+        {
+            entry.touched = Instant::now();
+        }
     }
     /// A window was served: the download went on just now, and is finished
     /// once its last window was.
@@ -519,6 +531,9 @@ pub(in crate::session) async fn serve(
     );
     // An unknown Space is refused like any other denial.
     let share = shares.get(&request.collection_id);
+    if let (Some(share), Some(token)) = (share, &request.token) {
+        share.downloads.touch(token, &credentials.expected_node);
+    }
     let prepared = match share {
         Some(share) => match share.budget.clone().try_acquire_owned() {
             Ok(permit) => {

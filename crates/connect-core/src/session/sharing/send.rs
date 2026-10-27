@@ -248,7 +248,8 @@ impl Incoming {
         inbox: &Collection,
     ) -> Result<(BTreeMap<String, Staged>, BTreeMap<String, Done>)> {
         // A file the previous run was saving when it stopped is remembered
-        // as saved if it is in the inbox; otherwise it is still staged.
+        // as saved if it reached the inbox, for as long as its staging would
+        // have been kept; otherwise it is still staged.
         for entry in std::fs::read_dir(directory)? {
             let path = entry?.path();
             let Some(token) = path
@@ -263,12 +264,12 @@ impl Incoming {
             let _ = (|| {
                 ensure!(!saved.exists(), "Recorded");
                 let metadata = std::fs::metadata(&path)?;
-                let age = metadata.modified()?.elapsed().unwrap_or_default();
-                ensure!(age < SAVED_FOR, "Expired");
+                let noted = metadata.modified()?;
+                ensure!(noted.elapsed().unwrap_or_default() < STAGED_FOR, "Expired");
                 ensure!(metadata.len() <= 4096, "Unexpected record");
                 let record: Record = serde_json::from_slice(&std::fs::read(&path)?)?;
                 let saved_as = inbox
-                    .committed(&record.file_name, record.size, &record.sha256)
+                    .committed(&record.file_name, record.size, &record.sha256, noted)
                     .context("Not saved")?;
                 store(
                     &saved,
@@ -581,6 +582,9 @@ impl Incoming {
         }
         let saved = finished.save(directory);
         let mut done = self.done.lock().expect("saved files");
+        // The note stays until the saved record is written, for the next
+        // start to settle.
+        let mut settled = true;
         match (&saved, done.get_mut(&finished.token)) {
             (Ok(name), Some(entry)) => {
                 entry.saved_as = Some(name.clone());
@@ -588,16 +592,17 @@ impl Incoming {
                     record: finished.record.clone(),
                     saved_as: name.clone(),
                 };
-                if let Ok(bytes) = serde_json::to_vec(&record) {
-                    let _ = store(&self.saved(&finished.token), &bytes);
-                }
+                settled = serde_json::to_vec(&record)
+                    .is_ok_and(|bytes| store(&self.saved(&finished.token), &bytes).is_ok());
             }
             _ => {
                 done.remove(&finished.token);
             }
         }
         drop(done);
-        let _ = std::fs::remove_file(self.saving(&finished.token));
+        if settled {
+            let _ = std::fs::remove_file(self.saving(&finished.token));
+        }
         finished.discard();
         saved
     }
@@ -1360,13 +1365,22 @@ mod tests {
         let folder = tempfile::tempdir()?;
         let directory = Collection::open(folder.path())?;
         let window = u64::from(MIN_WINDOW_BYTES);
+        let bytes = |byte: u8| vec![byte; window as usize];
+        let ago = |by: Duration| std::time::SystemTime::now() - by;
+        // An older copy of the second file is already in the inbox.
+        let older = folder.path().join("photo.jpg");
+        std::fs::write(&older, bytes(8))?;
+        std::fs::File::options()
+            .write(true)
+            .open(&older)?
+            .set_modified(ago(Duration::from_secs(3600)))?;
         // Two files arrive whole, and the device stops while saving them:
         // one after it reached the inbox, the other before.
         let sends: Vec<(&str, Request)> = [("phone", 7u8), ("tablet", 8u8)]
             .into_iter()
             .map(|(peer, byte)| {
                 let mut send = request(None, 0, window);
-                send.sha256 = storage::hex(&Sha256::digest(vec![byte; window as usize]));
+                send.sha256 = storage::hex(&Sha256::digest(bytes(byte)));
                 (peer, send)
             })
             .collect();
@@ -1376,7 +1390,7 @@ mod tests {
             for (index, (peer, send)) in sends.iter().enumerate() {
                 let token = incoming.token(peer, send).ok().context("token")?;
                 let (mut file, _) = incoming.claim(peer, &token, send).ok().context("claim")?;
-                file.write_all(&vec![7 + index as u8; window as usize])?;
+                file.write_all(&bytes(7 + index as u8))?;
                 let finished = incoming
                     .received(&token, 0, window, None)?
                     .context("finished")?;
@@ -1385,7 +1399,13 @@ mod tests {
                     &serde_json::to_vec(&finished.record)?,
                 )?;
                 if index == 0 {
-                    assert_eq!(finished.save(&directory)?, "photo.jpg");
+                    assert_eq!(finished.save(&directory)?, "photo (2).jpg");
+                    // The device comes back later than a saved file is
+                    // usually remembered, still within the staging's hour.
+                    std::fs::File::options()
+                        .write(true)
+                        .open(incoming.saving(&token))?
+                        .set_modified(ago(SAVED_FOR + Duration::from_secs(60)))?;
                 }
                 tokens.push(token);
             }
@@ -1396,16 +1416,17 @@ mod tests {
         first.token = Some(tokens[0].clone());
         assert!(matches!(
             incoming.token("phone", &first),
-            Err(Refusal::Saved(name)) if name == "photo.jpg"
+            Err(Refusal::Saved(name)) if name == "photo (2).jpg"
         ));
         assert!(!incoming.part(&tokens[0]).exists() && !incoming.meta(&tokens[0]).exists());
-        // The second is still staged, from what was recorded.
+        // The second is still staged, from what was recorded: the older copy
+        // is not taken for it.
         let mut second = sends[1].1.clone();
         second.token = Some(tokens[1].clone());
         assert!(incoming.token("tablet", &second).is_ok());
         assert_eq!(std::fs::metadata(incoming.part(&tokens[1]))?.len(), 0);
         assert!(tokens.iter().all(|token| !incoming.saving(token).exists()));
-        assert_eq!(std::fs::read_dir(folder.path())?.count(), 1);
+        assert_eq!(std::fs::read_dir(folder.path())?.count(), 2);
         Ok(())
     }
 
