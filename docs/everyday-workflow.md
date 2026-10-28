@@ -380,6 +380,14 @@ The network computer cannot leave through this action: its authority and other d
 
 ## Shared library and larger files
 
+**Photos & videos** opens the system picker. On iPhone, browse the library or
+Albums and select up to 100 photos/videos in one batch. Several selected items
+become one collection named **Photos & videos (N)**. Native copies keep the file
+types, disambiguate duplicate names, check available disk, and publish only after
+every copy succeeds. Canceling the picker shares nothing. The iOS cache location
+now matches the Rust path contract. These picker changes require a new phone
+build; physical album-selection acceptance remains pending.
+
 Choosing a folder that is already shared updates its existing share and allowed
 devices instead of creating another entry; custom policy limits and rules are
 preserved. Read access and receiving files remain separate permissions. Older

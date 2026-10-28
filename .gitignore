@@ -12,6 +12,7 @@
 /apps/connect/src-tauri/binaries/
 **/__pycache__/
 /vendor/*/target/
+/vendor/tauri-plugin-view/android/build/
 **/node_modules/
 /dist/
 **/dist/

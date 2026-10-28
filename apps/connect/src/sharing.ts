@@ -14,7 +14,7 @@ export function setupSharing(getStatus: () => HomeStatus | null, refresh: () => 
     el("share-inbox").hidden = el("share-inbox-label").hidden = kind !== "send";
     el("share-service-fields").hidden = kind !== "service";
     for (const field of el("share-service-fields").querySelectorAll<HTMLInputElement | HTMLSelectElement>("input,select")) field.disabled = kind !== "service";
-    confirm.textContent = ({ service: "Share service", file: "Choose file and share", media: "Choose photo or video", folder: "Choose folder and share", inbox: "Start receiving", send: "Choose file and send" })[kind];
+    confirm.textContent = ({ service: "Share service", file: "Choose file and share", media: "Choose photos & videos", folder: "Choose folder and share", inbox: "Start receiving", send: "Choose file and send" })[kind];
   }
   function open(kind?: ShareKind) {
     const status = getStatus(); if (!status || status.disconnected) return;

@@ -22,7 +22,7 @@ class ViewArgs {
 }
 
 @InvokeArg
-class PickArgs { var media: Boolean = false }
+class PickArgs { var media: Boolean = false; var multiple: Boolean = false }
 
 @InvokeArg
 class WebArgs { var url: String = "" }
@@ -65,6 +65,7 @@ class ViewPlugin(private val activity: Activity) : Plugin(activity) {
     try {
       val args = invoke.parseArgs(PickArgs::class.java)
       val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+      intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, args.multiple)
       if (args.media) intent.putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
       startActivityForResult(invoke, intent, "picked")
     } catch (e: Exception) { picking.set(false); invoke.reject("Could not open the file picker") }
@@ -72,15 +73,21 @@ class ViewPlugin(private val activity: Activity) : Plugin(activity) {
 
   @ActivityCallback
   fun picked(invoke: Invoke, result: ActivityResult) {
-    val uri = result.data?.data
-    if (result.resultCode != Activity.RESULT_OK || uri == null) {
-      picking.set(false); invoke.resolve(JSObject()); return
+    if (result.resultCode != Activity.RESULT_OK || result.data == null) {
+      picking.set(false); invoke.resolve(JSObject().put("files", org.json.JSONArray())); return
     }
+    val uris = mutableListOf<android.net.Uri>()
+    result.data?.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri) }
+    if (uris.isEmpty()) result.data?.data?.let { uris.add(it) }
+    if (uris.size > 100) { picking.set(false); invoke.reject("Choose up to 100 files at a time"); return }
     // Providers can return non-seekable streams. Make one private bounded-memory
     // copy, with the provider's display name, before Rust hashes and resumes it.
     Thread {
-      var copy: File? = null
+      val copies = mutableListOf<File>()
       try {
+        val files = org.json.JSONArray()
+        for (uri in uris.distinct()) {
+        var copy: File? = null
         val resolver = activity.contentResolver
         var name = "Shared file"
         var size: Long? = null
@@ -99,6 +106,7 @@ class ViewPlugin(private val activity: Activity) : Plugin(activity) {
         }
         room(size ?: 8L * 1024 * 1024)
         copy = File.createTempFile("picked-", ".bin", root)
+        copies.add(copy!!)
         resolver.openInputStream(uri)?.use { input ->
           copy!!.outputStream().use { output ->
             val buffer = ByteArray(64 * 1024)
@@ -120,9 +128,11 @@ class ViewPlugin(private val activity: Activity) : Plugin(activity) {
             if (size != null) check(total == size) { "The file changed while preparing it" }
           }
         } ?: error("Could not read the selected file")
-        invoke.resolve(JSObject().put("path", copy!!.absolutePath).put("name", name))
+        files.put(JSObject().put("path", copy!!.absolutePath).put("name", name))
+        }
+        invoke.resolve(JSObject().put("files", files))
       } catch (e: Exception) {
-        copy?.delete()
+        copies.forEach { it.delete() }
         invoke.reject(e.message ?: "Could not prepare the selected file")
       } finally { picking.set(false) }
     }.start()

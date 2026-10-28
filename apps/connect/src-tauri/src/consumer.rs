@@ -519,15 +519,18 @@ pub async fn share_file(
         .clone()
         .try_read_owned()
         .map_err(|_| "This device is changing networks")?;
-    let Some(picked) = crate::picking::file(&app, media.unwrap_or(false))
+    let media = media.unwrap_or(false);
+    let picked = crate::picking::files(&app, media, media)
         .await
-        .map_err(error)?
-    else {
+        .map_err(error)?;
+    if picked.is_empty() {
         return Ok(false);
+    }
+    let name = if picked.len() == 1 {
+        picked[0].name.chars().take(64).collect::<String>()
+    } else {
+        format!("Photos & videos ({})", picked.len())
     };
-    // Validate before joining a provider-controlled name onto a private path.
-    connect_core::validate_shared_file_name(&picked.name).map_err(error)?;
-    let name = picked.name.chars().take(64).collect::<String>();
     let root = desktop.profile.join("shared-files");
     std::fs::create_dir_all(&root).map_err(error)?;
     let folder = tempfile::Builder::new()
@@ -536,7 +539,7 @@ pub async fn share_file(
         .map_err(error)?;
     let directory = folder.path().to_owned();
     let destination = directory.clone();
-    tokio::task::spawn_blocking(move || crate::picking::copy(&picked, &destination))
+    tokio::task::spawn_blocking(move || crate::picking::copy_batch(&picked, &destination))
         .await
         .map_err(error)?
         .map_err(error)?;
