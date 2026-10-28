@@ -207,6 +207,11 @@ The everyday interface has Shared, Devices and Settings, with bottom navigation
 on phones. Choose a device by name to browse its files. Technical controls and
 error details stay in Settings > Advanced.
 
+**Open advanced tools** now starts with guided connection help, access help and
+recent technical activity. Choose a saved device directly for a connection check;
+manual keys, routes and protocol tests stay under the collapsed Expert tools
+menu. See [Help and advanced tools](help-tools.md).
+
 Metadata-only catalog pages require their own authenticated proof and
 `connect.collection.list` decision. Downloads use disk-backed snapshots and a
 fresh `connect.collection.read` decision for each short transfer window. The

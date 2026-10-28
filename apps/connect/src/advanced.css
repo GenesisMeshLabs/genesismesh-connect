@@ -1,0 +1,31 @@
+#advanced-shell .help-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:24px 0;}
+#advanced-shell .help-card {display:flex;align-items:flex-start;text-align:left;flex-direction:column;gap:10px;padding:22px;background:#19251e;border:1px solid #405343;border-radius:14px;color:#e6eee3;}
+#advanced-shell .help-card strong {font-size:1rem;}
+#advanced-shell .help-card span {color:#afc1b2;font-weight:400;line-height:1.6;font-size:.84rem;}
+#advanced-shell .help-card b {font-size:.8rem;color:var(--accent);margin-top:auto;}
+#advanced-shell .help-status {border:1px solid #4b6540;border-radius:14px;background:#1d2c20;padding:22px;}
+#advanced-shell .help-status h2 {margin-top:0;}
+#advanced-shell .help-status p {font-size:.86rem;line-height:1.7;color:#bacbb9;}
+#advanced-shell .help-steps {padding-left:24px;line-height:1.8;color:#b7c8b8;}
+#advanced-shell .help-steps li {padding:8px 0 14px 8px;}
+#advanced-shell .help-steps strong {display:block;color:#e5eee2;}
+#advanced-shell .help-actions {display:flex;flex-wrap:wrap;gap:10px;margin:16px 0;}
+#advanced-shell .help-back {margin-bottom:18px;}
+#advanced-shell .expert-navigation {margin:18px 0 0;padding-top:14px;}
+#advanced-shell .expert-navigation > summary {padding:8px 0;font-size:.8rem;}
+#advanced-shell .expert-navigation p {font-size:.74rem;line-height:1.6;color:#a7b9aa;}
+#advanced-shell .expert-navigation .navigation {margin-top:12px;}
+#advanced-shell .help-scope {color:#a8bca8;font-size:.83rem;line-height:1.7;}
+#advanced-shell .help-result {border:1px solid #45603b;padding:20px;border-radius:12px;margin:20px 0;background:#19281e;}
+#advanced-shell .help-result p {font-size:.85rem;line-height:1.7;}
+#advanced-shell .help-result small {color:#a7bba8;}
+#advanced-shell .help-check-target {padding:12px 0;font-size:.9rem;color:#c8deb8;}
+@media(max-width:680px){
+ #advanced-shell .help-grid {grid-template-columns:1fr;gap:12px;}
+ #advanced-shell .help-card {padding:18px;}
+ #advanced-shell .expert-navigation {margin-top:0;padding:0 0 8px;border-top:0;}
+ #advanced-shell .expert-navigation .navigation {display:grid;max-height:35dvh;overflow:auto;padding:0;}
+ #advanced-shell .expert-navigation .navigation button {width:100%;justify-content:flex-start;}
+ #advanced-shell .help-actions {display:grid;}
+ #advanced-shell .help-status {padding:18px;}
+}

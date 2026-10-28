@@ -15,6 +15,7 @@ Settings → Advanced tools. Existing technical profiles are preserved.
 - `apps/connect/authority`: native desktop owner adapter and standalone runtime build.
 - `apps/node` and `deploy/node`: the network computer on a headless Linux server under systemd; see [Connect on a server](docs/server-node.md).
 - `docs/everyday-workflow.md`: ordinary setup, pairing, file browsing and bounds.
+- `docs/help-tools.md`: guided connection/access help and the separate expert diagnostics.
 - `docs/cross-platform.md`: platform adapters, native build steps, evidence and remaining parity work.
 - `docs/iphone-spike.md`: Mac build/install and physical-device test steps.
 - `docs/session-spike.md`: session trust, refusal cases and the independent local test.

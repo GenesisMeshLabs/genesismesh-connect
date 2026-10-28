@@ -41,7 +41,7 @@ export function renderDevice(
     !state
       ? "Loading your device…"
       : !supported
-        ? "Connection checks are available. Enrolled device features currently require Windows."
+        ? "This build cannot use a protected device credential store. Raw connection tests remain available."
         : !device
           ? state.problem
             ? "Stored identity needs attention. Your existing profile has been preserved."
@@ -59,6 +59,7 @@ export function renderDevice(
   const error = actionError || state?.problem || device?.problem || "";
   text("device-error", error);
   el("device-error").hidden = !error;
+  el("advanced-error-details").hidden = !error;
   const badge = !state
     ? "Getting ready"
     : !supported
@@ -68,7 +69,7 @@ export function renderDevice(
         : ready
           ? "Session ready"
           : enrolled
-            ? "Enrolled · offline"
+          ? "Joined"
             : device
               ? "Awaiting enrollment"
               : "Setup needed";
@@ -105,7 +106,7 @@ export function renderDevice(
     "overview-session-detail",
     ready
       ? `${device!.received_messages} authenticated messages received`
-      : "Authenticated sessions currently use the local network",
+      : "Choose a saved device or use manual session tickets for this diagnostic",
   );
   text(
     "overview-sharing",
@@ -131,7 +132,7 @@ export function renderDevice(
     text(
       "authority-route-status",
       device.authority_via_bridge
-        ? `Desktop bridge · ${device.bridge_host_node}`
+        ? "Using your saved network computer’s desktop bridge"
         : device.local_authority_available
           ? "Using the local authority on this desktop"
           : "Add the operator's desktop key and authority ticket below",
@@ -177,7 +178,7 @@ export function renderDevice(
   text(
     "files-prerequisite",
     !supported && state
-      ? "Protected reads currently require Windows enrollment. Connection checks are available on this device."
+      ? "This build cannot use authenticated file tests. Use a supported native Connect app."
       : !enrolled
         ? "Join your network in Devices before requesting protected files."
         : "Start a secure session in Devices and add the host's current session ticket first.",

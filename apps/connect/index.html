@@ -402,7 +402,7 @@
             <details class="home-card">
               <summary>Advanced</summary>
               <p>
-                Technical setup, trust details, activity and connection tests.
+                Get help with a connection or permissions, then inspect technical details if needed.
               </p>
               <pre id="last-error-detail"></pre>
               <button id="open-advanced" class="secondary">
@@ -413,7 +413,7 @@
                 <p id="peer-state"></p>
                 <button id="check-connection-button" class="secondary">Check connection</button>
               </section>
-              <p class="home-muted">Connections may use public relays and publish addresses for reconnecting. Your network computer handles permissions. Recovery and backup tools are still being developed.</p>
+              <p class="home-muted">Manage sharing access on each item in Shared. The network computer also offers a recovery file in Settings.</p>
             </details>
           </div>
         </div>
@@ -478,48 +478,22 @@
             /><span>Genesis Mesh<strong>Connect</strong></span></a
           >
           <p class="sidebar-caption">YOUR PRIVATE NETWORK</p>
-          <nav class="navigation" aria-label="Connect pages">
-            <button
-              id="device-tab"
-              data-page="device"
-              aria-pressed="true"
-              aria-controls="device-panel"
-            >
-              <span aria-hidden="true">▦</span> Devices
-            </button>
-            <button
-              id="files-tab"
-              data-page="files"
-              aria-pressed="false"
-              aria-controls="files-panel"
-            >
-              <span aria-hidden="true">▤</span> Files
-            </button>
-            <button
-              id="trust-tab"
-              data-page="trust"
-              aria-pressed="false"
-              aria-controls="trust-panel"
-            >
-              <span aria-hidden="true">◇</span> Trust &amp; policies
-            </button>
-            <button
-              id="activity-tab"
-              data-page="activity"
-              aria-pressed="false"
-              aria-controls="activity-panel"
-            >
-              <span aria-hidden="true">≋</span> Activity
-            </button>
-            <button
-              id="transport-tab"
-              data-page="transport"
-              aria-pressed="false"
-              aria-controls="transport-panel"
-            >
-              <span aria-hidden="true">⇄</span> Connection check
-            </button>
+          <nav class="navigation" aria-label="Help tasks">
+            <button id="guide-tab" data-page="guide" aria-pressed="true" aria-controls="guide-panel">Start here</button>
+            <button id="connection-help-tab" data-page="connection-help" aria-pressed="false" aria-controls="connection-help-panel">Connection help</button>
+            <button id="access-help-tab" data-page="access-help" aria-pressed="false" aria-controls="access-help-panel">Access help</button>
+            <button id="activity-tab" data-page="activity" aria-pressed="false" aria-controls="activity-panel">Technical activity</button>
           </nav>
+          <details id="expert-tools" class="expert-navigation">
+            <summary>Expert tools</summary>
+            <p>Use manual values supplied by your network operator, or inspect a specific protocol.</p>
+            <nav class="navigation" aria-label="Expert diagnostics">
+              <button id="device-tab" data-page="device" aria-pressed="false" aria-controls="device-panel">Manual device setup</button>
+              <button id="trust-tab" data-page="trust" aria-pressed="false" aria-controls="trust-panel">Identity &amp; trust details</button>
+              <button id="files-tab" data-page="files" aria-pressed="false" aria-controls="files-panel">Legacy file test</button>
+              <button id="transport-tab" data-page="transport" aria-pressed="false" aria-controls="transport-panel">Raw connection test</button>
+            </nav>
+          </details>
           <div class="sidebar-bottom">
             <span class="status-dot" id="sidebar-dot"></span
             ><span id="sidebar-state">Checking this device</span
@@ -532,18 +506,55 @@
             ><span class="pill" id="connection-badge">Getting ready</span>
           </header>
           <p id="app-toast" class="toast" role="status" hidden></p>
-          <p id="device-error" class="error" role="alert" hidden></p>
-          <div id="device-panel" class="page">
+          <details id="advanced-error-details" hidden><summary>Technical device error</summary><p id="device-error" class="error" role="alert" hidden></p></details>
+          <div id="guide-panel" class="page">
+            <div class="page-heading"><div><p class="eyebrow">CHOOSE A TASK</p><h1>Help &amp; advanced tools</h1><p class="intro">Start with what you want to do. Each guide explains the next step.</p></div></div>
+            <section id="help-context" class="help-status" aria-label="Suggested next step"><h2 id="help-status-title">Checking this device</h2><p id="help-status-detail"></p><button id="help-next-action" type="button">Open Connect</button></section>
+            <div class="help-grid">
+              <button class="help-card" data-go="connection-help"><strong>Fix a connection</strong><span>A device is offline, unavailable, or not replying. Work through a saved-device check.</span><b>Start connection help →</b></button>
+              <button class="help-card" data-go="access-help"><strong>Understand who can access what</strong><span>Learn how joining, sharing and access rules fit together, then open the right controls.</span><b>Open access help →</b></button>
+              <button class="help-card" data-go="activity"><strong>Review a technical check</strong><span>See checks and manual operations performed in these tools during this app session.</span><b>View recent technical activity →</b></button>
+              <button class="help-card" id="help-recovery-action" data-home-view="settings" data-home-anchor="recovery-card" hidden><strong>Keep your network recoverable</strong><span>Open the network computer’s recovery settings and learn what to keep safe.</span><b>Open recovery settings →</b></button>
+            </div>
+            <section><h2>Have manual configuration from an operator?</h2><p class="help-scope">Expert tools contain enrollment forms, identity details and protocol tests. Everyday setup and sharing are available from Connect’s main screens.</p><button id="help-show-experts" class="secondary">Show expert tools</button></section>
+          </div>
+          <div id="connection-help-panel" class="page" hidden>
+            <button class="secondary help-back" data-go="guide">← Back to tools</button>
+            <div class="page-heading"><div><p class="eyebrow">GET CONNECTED AGAIN</p><h1>Connection help</h1><p class="intro">Start with your saved devices. There are no keys or tickets to copy for this check.</p></div></div>
+            <ol class="help-steps">
+              <li><strong>Keep the devices awake</strong>Open Connect on both devices and on the computer running your network.</li>
+              <li><strong>Choose the device you want to reach</strong>Select a saved device here. Use Devices to add or rename one. Reconnect in Settings if this device is disconnected.<label for="help-device-select">Saved device</label><select id="help-device-select"><option value="">Choose a saved device</option></select><p id="help-select-problem" class="hint" hidden>Could not confirm the device selection. Review Devices, then try again.</p><div class="help-actions"><button class="secondary" data-home-view="devices">Open Devices</button><button class="secondary" data-home-view="settings">Open Settings</button></div></li>
+              <li><strong>Check the saved connection</strong>Connect checks the encrypted round trip and the other device’s identity.<p class="help-check-target" id="help-check-device"></p><p id="help-check-prerequisite" class="hint"></p><button id="help-check">Check saved device</button></li>
+            </ol>
+            <section id="help-check-result" class="help-result" hidden aria-live="polite"><h2 id="help-check-outcome"></h2><p id="help-check-advice"></p><small id="help-check-time"></small><details id="help-check-details" hidden><summary>Technical details for this check</summary><pre id="help-check-error"></pre></details></section>
+            <div class="help-actions"><button data-home-view="files">Try your shared items</button><button class="secondary" data-go="access-help">Connected, but access is refused?</button></div>
+            <details><summary>Need to test only the network path?</summary><p class="help-scope">The raw connection test uses manually exchanged tickets. Its echo checks reachability; file and service access still require Genesis Mesh checks.</p><button class="secondary" data-go="transport">Open raw connection test</button></details>
+          </div>
+          <div id="access-help-panel" class="page" hidden>
+            <button class="secondary help-back" data-go="guide">← Back to tools</button>
+            <div class="page-heading"><div><p class="eyebrow">UNDERSTAND PERMISSIONS</p><h1>Who can access what?</h1><p class="intro">Being on the same network is the first step. Each shared item has its own rules.</p></div></div>
+            <ol class="help-steps">
+              <li><strong>Joining identifies a device</strong>Your network owner approves the device. Review known devices from Devices.</li>
+              <li><strong>Sharing gives access to an item</strong>On the device that shared it, open Shared → Manage → Manage access. Choose allowed devices, an expiry and limits. Additional rules are available there.</li>
+              <li><strong>Each request checks the current rules</strong>Your authority evaluates access. An expired or revoked identity, a policy limit, or an unavailable network computer can stop a request.</li>
+            </ol>
+            <div class="help-actions"><button data-home-view="files">Open Shared to manage access</button><button class="secondary" data-home-view="devices">Review devices</button></div>
+            <section><h2>Reading, sending and services</h2><p class="help-scope">Shared files let chosen devices view or save copies. Receive files chooses who may send copies to this device. App and service sharing opens a connection to a service already running on its host. Each uses its own permission.</p><p class="help-scope">If someone else shared the item, ask that device’s owner to update its access. A connection check confirms a connection; the next file or service request evaluates its own policy.</p></section>
+            <details><summary>Inspect this device’s identity and trust</summary><p class="help-scope">Certificate expiry, the pinned network root and verified trust checkpoints are available for a detailed diagnosis.</p><button class="secondary" data-go="trust">Open identity &amp; trust details</button></details>
+          </div>
+          <div id="device-panel" class="page" hidden>
+            <button class="secondary help-back" data-go="guide">← Back to tools</button>
             <div class="page-heading">
               <div>
                 <p class="eyebrow">YOUR NETWORK, WITH YOU</p>
-                <h1>Your devices</h1>
+                <h1>Manual device setup</h1>
                 <p class="intro">
-                  A familiar place for your devices, identity and connections.
+                  Use operator-supplied values to configure identity and sessions manually.
                 </p>
               </div>
               <span class="version-tag">PREVIEW</span>
             </div>
+            <p class="notice">For everyday setup, use an invitation from Connect. Continue below when your operator has supplied manual configuration. <button class="secondary" data-home-view="devices">Use guided Devices</button></p>
             <div class="summary-grid">
               <article class="metric">
                 <span>This device</span
@@ -713,7 +724,7 @@
                   <p class="eyebrow">YOUR OTHER DEVICES</p>
                   <h2>Choose who to connect to</h2>
                 </div>
-                <span class="pill muted">Local network</span>
+                <span class="pill muted">Manual session</span>
               </div>
               <p class="hint">
                 Save names for devices you recognize. Genesis Mesh still checks
@@ -805,15 +816,16 @@ Your authenticated reply will appear here.</pre>
             </section>
           </div>
           <div id="files-panel" class="page" hidden>
+            <button class="secondary help-back" data-go="guide">← Back to tools</button>
             <div class="page-heading">
               <div>
                 <p class="eyebrow">ACCESS, WITH PERMISSION</p>
-                <h1>Shared files</h1>
+                <h1>Legacy file-protocol test</h1>
                 <p class="intro">
-                  Read from an authorized collection on your other device.
+                  Request a known small file through the original diagnostic protocol.
                 </p>
               </div>
-              <span class="pill muted">Up to 64 KiB</span>
+              <span class="pill muted">Legacy test · up to 64 KiB</span>
             </div>
             <p id="files-prerequisite" class="notice">
               Join your network and start a secure session in Devices first.
@@ -828,8 +840,8 @@ Your authenticated reply will appear here.</pre>
               </div>
               <p class="hint">
                 Ask the sharing device's owner for the collection and file name.
-                Add their session ticket under Devices → Exchange connection
-                tickets. Folder browsing and large transfers come later.
+                Add their session ticket under Manual device setup → Exchange connection
+                tickets. For folder browsing and larger transfers, use Shared in the everyday interface.
               </p>
               <form id="read-form">
                 <div class="form-grid">
@@ -923,10 +935,11 @@ Your verified text preview will appear here.</pre>
             </section>
           </div>
           <div id="trust-panel" class="page" hidden>
+            <button class="secondary help-back" data-go="guide">← Back to tools</button>
             <div class="page-heading">
               <div>
                 <p class="eyebrow">GENESIS MESH GOVERNS ACCESS</p>
-                <h1>Trust &amp; policies</h1>
+                <h1>Identity &amp; trust details</h1>
                 <p class="intro">
                   See which identity, authority and access rules this device
                   uses.
@@ -1019,21 +1032,19 @@ Your verified text preview will appear here.</pre>
                   <p>
                     <strong>Access stays within the collection</strong
                     ><span
-                      >One configured collection, flat file names and a 64 KiB
-                      file limit.</span
+                      >Resource identity, allowed devices and policy limits constrain each request. The legacy file test uses its own small-file protocol.</span
                     >
                   </p>
                 </div>
               </div>
               <p class="hint">
-                Policy authoring, device revocation and network-wide policy
-                lists are managed by your Genesis Mesh authority. This app shows
-                its configured requirements and completed read receipts.
+                Change a shared item’s rules in Shared → Manage → Manage access on its sharing device. Remove a device from Devices on the network computer. This diagnostic shows one configured resource reference; it is not the complete policy inventory.
               </p>
             </section>
             <section id="authority-settings" hidden>
               <h2>Authority connection</h2>
               <p id="authority-route-status" class="hint"></p>
+              <details id="authority-route-editor"><summary>Change authority connection (expert)</summary>
               <p class="hint">
                 Use a desktop bridge for enrollment, refresh and renewal.
                 Confirm its node public key directly with its owner. Stop your
@@ -1089,19 +1100,22 @@ Your verified text preview will appear here.</pre>
                   session stops this listener too.
                 </p>
               </div>
+              </details>
             </section>
           </div>
           <div id="activity-panel" class="page" hidden>
+            <button class="secondary help-back" data-go="guide">← Back to tools</button>
             <div class="page-heading">
               <div>
                 <p class="eyebrow">WHAT HAPPENED HERE</p>
-                <h1>Activity</h1>
+                <h1>Recent technical activity</h1>
                 <p class="intro">
-                  Connection, trust and file actions from this app session.
+                  Checks and manual operations from these tools during this app session.
                 </p>
               </div>
               <span class="pill muted" id="activity-count">0 events</span>
             </div>
+            <p class="help-scope">Start with Needs attention, read what the last check confirmed, then return to Connection help if needed. Everyday sharing and sends are not shown here.</p><div class="help-actions"><button id="help-show-failures" class="secondary">Show needs attention</button><button class="secondary" data-go="connection-help">Open connection help</button></div>
             <div class="activity-toolbar">
               <label for="activity-filter">Show</label
               ><select id="activity-filter">
@@ -1113,7 +1127,7 @@ Your verified text preview will appear here.</pre>
             <section>
               <div id="activity-empty" class="empty-state">
                 <div class="empty-symbol" aria-hidden="true">≋</div>
-                <h2>A clear view of your actions</h2>
+                <h2>No matching technical checks yet</h2>
                 <p>
                   Completed operations and failures will appear here. Invites,
                   tickets, message text and file contents are excluded.
@@ -1128,19 +1142,18 @@ Your verified text preview will appear here.</pre>
             </p>
           </div>
           <div id="transport-panel" class="page" hidden>
+            <button class="secondary help-back" data-go="guide">← Back to tools</button>
             <div class="page-heading">
               <div>
                 <p class="eyebrow">CHECK THE CONNECTION</p>
-                <h1>Can your devices talk?</h1>
+                <h1>Raw connection test</h1>
                 <p class="intro">
-                  A simple connection check before setting up your network
-                  identity.
+                  Manually exchange tickets to inspect a network path separately from your saved device setup.
                 </p>
               </div>
             </div>
             <p class="notice">
-              This check verifies connectivity. Enrolled sessions and file
-              access use Genesis Mesh identity and policy checks in Devices.
+              This test checks reachability using an echoed message. It does not authenticate a Genesis Mesh device or grant access. Start with Connection help for a saved, enrolled device.
             </p>
             <div class="two-columns">
               <section>

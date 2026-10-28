@@ -5,7 +5,8 @@ import { sharingChoices } from "./sharing-state";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import QRCode from "qrcode";
-import { el, input } from "./ui";
+import { el, input, showPage } from "./ui";
+import { setupAdvanced } from "./advanced";
 import {
   primaryScreen,
   isService,
@@ -111,6 +112,7 @@ function render(status: HomeStatus) {
   const oldPeer = current?.peer;
   const oldDevice = current?.selected_device;
   current = status;
+  advanced.render();
   visible("disconnected-banner", status.disconnected);
   visible("leave-retry", status.leaving);
   visible("leave-network-option", status.can_leave);
@@ -927,6 +929,7 @@ function showAdvanced(open: boolean) {
   if (open === !el("advanced-shell").hidden) return;
   visible("everyday", !open);
   visible("advanced-shell", open);
+  if(open){el<HTMLDetailsElement>("expert-tools").open=false;el<HTMLDetailsElement>("advanced-error-details").open=false;showPage("guide");}
   window.scrollTo(0, 0);
   el(open ? "close-advanced" : "open-advanced").focus({ preventScroll: true });
   if (!open) void refresh();
@@ -1004,3 +1007,17 @@ if (isTauri()) {
 
 const services = setupServices(() => current, refresh, message);
 setupSharing(() => current, refresh, message, sendTo);
+
+const advanced = setupAdvanced(()=>current,refresh,(view,anchor)=>{
+  leaveAdvanced();selectView(view);
+  requestAnimationFrame(()=>{
+    const target=anchor?el(anchor):el(`view-${view}`);
+    if(!target.closest("[hidden]")){
+      target.scrollIntoView({block:"start"});const heading=target.querySelector<HTMLElement>("h1,h2");
+      if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});}
+    }else{
+      const heading=[...document.querySelectorAll<HTMLElement>("#everyday h1,#everyday h2")].find(h=>!h.closest("[hidden]"));
+      if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});}
+    }
+  });
+});

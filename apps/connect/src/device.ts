@@ -50,7 +50,7 @@ async function perform(label: string, operation: () => Promise<string | void>) {
   } finally {
     busy = false;
     await refreshStatus();
-    if (actionError) el("device-error").scrollIntoView({ block: "nearest" });
+    if (actionError) {el<HTMLDetailsElement>("advanced-error-details").open=true;el("device-error").scrollIntoView({ block: "nearest" });}
   }
 }
 function form(
