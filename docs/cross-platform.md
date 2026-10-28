@@ -106,8 +106,9 @@ download resume, multiple resources, service tunnels and resource-policy editing
 are implemented. Mobile folder-tree hosting, broader service compatibility,
 installers, and physical acceptance of the latest picker/service workflows remain
 pending. The earlier Windows build and signed iPhone build 11 ran successfully. The
-subsequent sharing-fixes build is blocked by Windows Smart App Control, and its
-iOS changes need compilation and installation when the Mac is available. Installation does not establish physical acceptance of
+subsequent sharing-fixes executable was blocked by Windows Smart App Control;
+the later guided-tools build `42e457d` launched normally without security changes.
+Its iOS changes need compilation and installation when the Mac is available. Installation does not establish physical acceptance of
 every new service, policy or picker workflow.
 Every device should eventually offer both sides of that workflow. Mobile
 foreground/background rules remain platform constraints; no always-on iPhone
@@ -157,3 +158,20 @@ Windows signing identity is needed to follow Microsoft's
 [Smart App Control signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control).
 Security settings were not changed. Detailed test logs and the executable hash
 are in ignored `temp/sharing-fixes-results.json` and its associated logs.
+
+## Guided help tools: 2026-10-28
+
+Source `42e457d` adds task-based connection and access help, scoped technical
+activity and recovery navigation, with manual configuration behind Expert tools.
+The Windows executable compiled, launched and displayed the new task hub using
+the existing profile. A background UX reviewer checked the source and phone
+preview. Validation includes 22 frontend tests, TypeScript/Vite, and desktop and
+phone browser flows with mocked native commands. These do not establish physical
+iPhone acceptance or a healthy authority connection.
+
+The subsequent status-label correction separates overall help state from manual
+session readiness. Its tests and native compilation passed, but Application
+Control blocked the unsigned executable. The identical known-working `42e457d`
+executable was restored at the original path; no security settings were changed.
+The running build therefore has the guided hub but retains the earlier session
+status labels. Mac/iPhone compilation and physical checks remain deferred.

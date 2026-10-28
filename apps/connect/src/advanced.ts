@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { record } from "./activity";
-import { advancedGuidance, connectionFailure, type EverydayView } from "./advanced-state";
+import { advancedGuidance, connectionFailure, helpStatus, type EverydayView } from "./advanced-state";
 import type { HomeStatus } from "./home-state";
 import { el } from "./ui";
 import "./advanced.css";
@@ -9,6 +9,10 @@ export function setupAdvanced(getStatus:()=>HomeStatus|null, refresh:()=>Promise
   let checking=false, selecting=false, context="";
   function render() {
     const status=getStatus(), guidance=advancedGuidance(status);
+    el("help-connection-status").textContent=helpStatus(status);
+    el("help-sidebar-state").textContent=helpStatus(status);
+    el("help-sidebar-dot").classList.toggle("attention",!!status?.problem||!!status?.leaving);
+    el("help-connection-status").className=`pill ${status?.problem||status?.leaving?"attention":"muted"}`;
     el("help-context").hidden=!!status&&status.configured&&!status.disconnected&&!status.leaving&&!status.problem&&status.devices.length>0;
     el("help-status-title").textContent=guidance.title;
     el("help-status-detail").textContent=guidance.detail;

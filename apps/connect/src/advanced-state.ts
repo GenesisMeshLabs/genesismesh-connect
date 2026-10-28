@@ -1,6 +1,14 @@
 import type { HomeStatus } from "./home-state";
 
 export type EverydayView = "files" | "devices" | "settings";
+export function helpStatus(status:HomeStatus|null) {
+  if(!status)return "Checking this device";
+  if(status.leaving)return "Cleanup needs attention";
+  if(!status.configured)return "Setup needed";
+  if(status.disconnected)return "Disconnected";
+  if(status.problem)return "Needs attention";
+  return "Joined network";
+}
 export function advancedGuidance(status: HomeStatus | null) {
   const selected=status?.devices.find(d=>d.id===status.selected_device);
   const canCheck=!!status?.configured&&!status.disconnected&&!status.leaving&&!!selected;

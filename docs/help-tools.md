@@ -3,6 +3,9 @@
 Open **Settings → Advanced → Open advanced tools**. Start here offers tasks
 rather than manual setup forms. When setup, a disconnected device or unfinished
 cleanup needs attention, a suggested next action leads back to Connect.
+The help header describes this device's overall network state. Manual session
+readiness is shown only inside the expert device setup page; it does not establish
+that the authority or a shared resource is available.
 
 ## Fix a connection
 

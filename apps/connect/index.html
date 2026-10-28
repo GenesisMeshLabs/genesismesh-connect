@@ -495,15 +495,15 @@
             </nav>
           </details>
           <div class="sidebar-bottom">
-            <span class="status-dot" id="sidebar-dot"></span
-            ><span id="sidebar-state">Checking this device</span
+            <span class="status-dot" id="help-sidebar-dot"></span
+            ><span id="help-sidebar-state">Checking this device</span
             ><small>Genesis Mesh Connect · Preview</small>
           </div>
         </aside>
         <main>
           <header class="topbar">
             <span id="network-label">Your devices. Your network.</span
-            ><span class="pill" id="connection-badge">Getting ready</span>
+            ><span class="pill muted" id="help-connection-status">Checking this device</span>
           </header>
           <p id="app-toast" class="toast" role="status" hidden></p>
           <details id="advanced-error-details" hidden><summary>Technical device error</summary><p id="device-error" class="error" role="alert" hidden></p></details>
@@ -552,7 +552,7 @@
                   Use operator-supplied values to configure identity and sessions manually.
                 </p>
               </div>
-              <span class="version-tag">PREVIEW</span>
+              <div><p class="hint">Manual session status</p><span class="pill" id="connection-badge">Getting ready</span><span id="sidebar-state" hidden></span><span id="sidebar-dot" hidden></span></div>
             </div>
             <p class="notice">For everyday setup, use an invitation from Connect. Continue below when your operator has supplied manual configuration. <button class="secondary" data-home-view="devices">Use guided Devices</button></p>
             <div class="summary-grid">

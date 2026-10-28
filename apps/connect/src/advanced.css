@@ -20,6 +20,7 @@
 #advanced-shell .help-result p {font-size:.85rem;line-height:1.7;}
 #advanced-shell .help-result small {color:#a7bba8;}
 #advanced-shell .help-check-target {padding:12px 0;font-size:.9rem;color:#c8deb8;}
+#advanced-shell #help-sidebar-dot.attention {background:#d5ad6b;box-shadow:none;}
 @media(max-width:680px){
  #advanced-shell .help-grid {grid-template-columns:1fr;gap:12px;}
  #advanced-shell .help-card {padding:18px;}

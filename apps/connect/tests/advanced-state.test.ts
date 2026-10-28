@@ -1,10 +1,15 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {advancedGuidance,connectionFailure} from "../src/advanced-state.ts";
+import {advancedGuidance,connectionFailure,helpStatus} from "../src/advanced-state.ts";
 import type {HomeStatus} from "../src/home-state.ts";
 
 const status={configured:true,disconnected:false,ready:false,problem:null,network:"Home",selected_device:"phone",
   devices:[{id:"phone",name:"My phone",selected:true,authority_connection:false,member:false}]} as HomeStatus;
+test("help status includes authority problems even when a manual session is ready",()=>{
+  assert.equal(helpStatus({...status,ready:true,problem:"Authority unavailable"}),"Needs attention");
+  assert.equal(helpStatus({...status,ready:true}),"Joined network");
+  assert.equal(helpStatus({...status,disconnected:true}),"Disconnected");
+});
 test("help leads setup and disconnected devices back to the everyday controls",()=>{
   assert.equal(advancedGuidance({...status,configured:false}).view,"devices");
   const paused=advancedGuidance({...status,disconnected:true,ready:true});
