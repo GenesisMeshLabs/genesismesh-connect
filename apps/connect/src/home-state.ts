@@ -36,13 +36,14 @@ export interface HomeSpace {
   own: boolean;
   kind: "folder" | "inbox" | "web" | "ssh" | "tcp";
   duplicate?: boolean;
+  destination?: string | null;
 }
 /** Where a shared folder lives, or whose inbox it is, in a few words. */
 export function isService(space: HomeSpace) { return ["web", "ssh", "tcp"].includes(space.kind); }
 export function spaceSummary(space: HomeSpace) {
   if (isService(space)) return `${space.kind === "web" ? "Web app" : space.kind === "ssh" ? "SSH" : "TCP service"} · ${space.own ? "Shared from this device" : `On ${space.host}`}`;
   if (space.kind === "inbox")
-    return space.own ? "Receiving files from your devices" : `Send files to ${space.host}`;
+    return space.own ? `Receiving files · Saved ${space.destination ? `in ${space.destination}` : "on this device"}` : `Send files to ${space.host}`;
   return space.own ? "Shared from this device · read-only" : `On ${space.host}`;
 }
 /** A send's progress in a few words. */
@@ -56,7 +57,7 @@ export function sendSummary(progress: { state: string; sent: number; total: numb
 export function filesEmptyText(status: HomeStatus) {
   if (!status.can_share) return "Nothing is shared with this device yet.";
   return status.devices.length
-    ? "Share a folder to make it available on your other devices."
+    ? (status.can_share_folder ? "Share a folder to make it available on your other devices." : "Share photos or a document with your other devices.")
     : "Add a device to start sharing.";
 }
 export type Connectivity = "public_relays" | "local_network";

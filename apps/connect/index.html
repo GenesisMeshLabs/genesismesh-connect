@@ -196,7 +196,7 @@
                 <button data-library-filter="all" aria-pressed="true">All</button>
                 <button data-library-filter="remote" aria-pressed="false">From devices</button>
                 <button data-library-filter="mine" aria-pressed="false">Shared by me</button>
-                <button data-library-filter="inbox" aria-pressed="false">Inboxes</button>
+                <button data-library-filter="inbox" aria-pressed="false">Send &amp; receive</button>
                 <button data-library-filter="services" aria-pressed="false">Apps & services</button>
               </div>
               <p id="library-count" class="home-muted" role="status"></p>
@@ -204,8 +204,8 @@
             </div>
             <dialog id="share-dialog" class="share-dialog">
               <form id="share-form">
-                <div class="share-heading"><h2>What would you like to share?</h2><button type="button" id="share-close" class="text-button" aria-label="Close sharing">Close</button></div>
-                <p>Choose something from this device, then who can use it.</p>
+                <div class="share-heading"><h2 id="share-title">What would you like to share?</h2><button type="button" id="share-close" class="text-button" aria-label="Close sharing">Close</button></div>
+                <p id="share-intro">Choose something from this device, then who can use it.</p>
                 <div id="share-kinds" class="share-kinds" role="radiogroup" aria-label="What to share"></div>
                 <div id="share-service-fields" hidden>
                   <label for="service-preset">What is running on this device?</label>
@@ -214,8 +214,9 @@
                   <details><summary>Connection details</summary><p class="home-muted">Connect forwards to this device’s local port. Enable the app or service first. Web apps use HTTP.</p><label for="service-port">Local port</label><input id="service-port" type="number" min="1" max="65535" value="8080" /></details>
                   <p class="home-muted">Keep Connect and the shared app running. Phones can host only while awake with Connect open.</p>
                 </div>
-                <fieldset id="share-recipients"><legend>Who can access it?</legend><div id="share-device-list"></div></fieldset>
-                <label id="share-inbox-label" for="share-inbox" hidden>Send to</label><select id="share-inbox" hidden></select>
+                <div id="share-receive-fields" hidden><label id="receive-location-label" for="receive-location">Save received files</label><select id="receive-location"></select><p id="receive-mobile-location" hidden>Saved in <strong>Connect → Received files</strong>.</p><p>On your other device: <strong>Send files → choose this device</strong>.</p></div>
+                <fieldset id="share-recipients"><legend id="share-recipients-title">Who can access it?</legend><div id="share-device-list"></div></fieldset>
+                <label id="share-inbox-label" for="share-inbox" hidden>Send to</label><select id="share-inbox" hidden></select><button id="share-refresh-targets" type="button" class="secondary" hidden>Refresh receiving devices</button>
                 <p id="share-description" class="home-muted"></p>
                 <p id="share-problem" role="alert" hidden></p>
                 <button id="share-confirm" type="submit">Choose file and share</button>

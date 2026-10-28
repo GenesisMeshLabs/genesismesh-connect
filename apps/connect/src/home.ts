@@ -495,12 +495,12 @@ function renderShortcuts(status: HomeStatus) {
   const stamp = JSON.stringify([choices, status.disconnected]);
   if (node.dataset.state === stamp) return;
   node.dataset.state = stamp; node.replaceChildren();
-  const hints = { service: "App or service", file: "Share a document", media: "Photos & videos", folder: "Share a folder", inbox: "Receive files", send: "Send a copy" };
+  const hints = { service: "App or service", file: "Share a document", media: "Photos & videos", folder: "Share a folder", inbox: "Receive files", send: "Send files" };
   for (const choice of choices) {
     const button = document.createElement("button"); button.className = "sharing-shortcut";
     button.dataset.shareKind = choice.kind; button.disabled = status.disconnected;
     const title = document.createElement("strong"); title.textContent = hints[choice.kind];
-    const detail = document.createElement("span"); detail.textContent = choice.kind === "inbox" ? "Let devices send to you" : choice.kind === "send" ? "To another device’s inbox" : "Choose who gets access";
+    const detail = document.createElement("span"); detail.textContent = choice.kind === "inbox" ? "Choose where files are saved" : choice.kind === "send" ? "Choose a receiving device" : "Choose who gets access";
     button.append(title, detail); node.append(button);
   }
 }
@@ -547,7 +547,7 @@ function renderSpaces(status: HomeStatus) {
     row.setAttribute("role", "listitem");
     const details = document.createElement("div");
     const name = document.createElement("h2");
-    name.textContent = space.name;
+    name.textContent = space.kind === "inbox" ? (space.own ? "Received files" : `Send files to ${space.host}`) : space.name;
     const where = document.createElement("p");
     where.textContent = spaceSummary(space);
     details.append(name, where);
@@ -559,9 +559,14 @@ function renderSpaces(status: HomeStatus) {
     const action = document.createElement("button");
     action.className = "secondary";
     if (space.own && space.kind === "inbox") {
-      const browse = document.createElement("button"); browse.textContent = "Open inbox"; browse.disabled = status.disconnected;
+      const browse = document.createElement("button"); browse.textContent = "Open received files";
       browse.addEventListener("click", () => void run(browse, () => openSpace(space)));
-      details.append(browse);
+      const how=document.createElement("p");how.textContent="To send here: on another device, choose Send files and select this device.";
+      details.append(how,browse);
+      if(status.can_share_folder) {
+        const folder=document.createElement("button");folder.className="secondary";folder.textContent="Show in folder";
+        folder.onclick=()=>void run(folder,()=>invoke("show_received_folder",{space:space.id}));details.append(folder);
+      }
       action.textContent = "Stop receiving";
       action.setAttribute("aria-label", "Stop receiving files");
       action.addEventListener("click", () => void run(action, async () => {
@@ -595,7 +600,7 @@ function renderSpaces(status: HomeStatus) {
     }
     action.disabled = status.disconnected;
     const badge = document.createElement("span"); badge.className = "resource-kind";
-    badge.textContent = isService(space) ? (space.kind === "web" ? "Web app" : space.kind === "ssh" ? "SSH" : "TCP service") : space.kind === "inbox" ? "Inbox" : space.own ? "Shared by you" : "Shared items";
+    badge.textContent = isService(space) ? (space.kind === "web" ? "Web app" : space.kind === "ssh" ? "SSH" : "TCP service") : space.kind === "inbox" ? (space.own ? "Receive on this device" : "Send to this device") : space.own ? "Shared by you" : "Shared items";
     details.prepend(badge);
     row.append(details);
     if (space.own) {
@@ -684,7 +689,7 @@ function renderFiles() {
     empty.className = "home-muted";
     empty.textContent = files.length
       ? "No matching files."
-      : "This folder is empty.";
+      : currentSpace?.own && currentSpace.kind==="inbox" ? "No files received yet. On your other device, choose Send files and select this device." : "This folder is empty.";
     list.append(empty);
   }
 }

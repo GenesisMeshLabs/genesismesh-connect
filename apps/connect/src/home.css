@@ -666,4 +666,6 @@
 .share-dialog fieldset { margin: 14px 0; padding: 8px 12px; }
 .share-dialog fieldset label { margin: 0; min-height: 44px; }
 .share-dialog details { padding: 0; }
+.space-row > div > button { margin: 12px 8px 0 0; }
+#share-refresh-targets { width: 100%; margin: 8px 0; }
 .share-dialog #share-confirm, .share-dialog #access-save { position: sticky; bottom: 0; width: 100%; margin-top: 12px; box-shadow: 0 0 0 8px #15241f; }

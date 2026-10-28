@@ -19,9 +19,27 @@ pub(crate) fn existing<'a>(
         .find(|s| s.kind == kind && same_directory(&s.directory, directory))
 }
 
+#[cfg(any(desktop, test))]
+pub(crate) fn default_receiving_directory(downloads: &Path) -> anyhow::Result<std::path::PathBuf> {
+    anyhow::ensure!(downloads.is_absolute(), "Missing Downloads folder");
+    let directory = downloads.join("Genesis Mesh");
+    std::fs::create_dir_all(&directory)?;
+    Ok(directory)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn default_receiving_folder_is_repeatable_and_preserves_received_files() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let directory = default_receiving_directory(root.path())?;
+        std::fs::write(directory.join("received.txt"), b"keep")?;
+        assert_eq!(default_receiving_directory(root.path())?, directory);
+        assert_eq!(std::fs::read(directory.join("received.txt"))?, b"keep");
+        assert!(default_receiving_directory(Path::new("relative")).is_err());
+        Ok(())
+    }
     #[test]
     fn directory_alias_reuses_the_share_but_names_and_kinds_do_not() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;

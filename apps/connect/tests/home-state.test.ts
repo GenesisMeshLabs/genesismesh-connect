@@ -52,7 +52,7 @@ test("shared folders say where they live and what to do when there are none", ()
   assert.match(filesEmptyText(blank), /Nothing is shared/);
   assert.match(filesEmptyText({ ...blank, can_share: true }), /Add a device/);
   const device = { id: "b", name: "Phone", selected: true, authority_connection: false, member: false };
-  assert.match(filesEmptyText({ ...blank, can_share: true, devices: [device] }), /Share a folder/);
+  assert.match(filesEmptyText({ ...blank, can_share: true, devices: [device] }), /Share photos/);
 });
 test("approval remains visible while a certificate is being installed", () => {
   assert.equal(primaryScreen(blank), "welcome");

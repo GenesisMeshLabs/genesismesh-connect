@@ -279,16 +279,23 @@ unshared.
 
 ## Send files
 
-A device can receive files into an **inbox**: on a Windows, macOS or Linux
-device, choose **Shared → Receive files** and pick the folder files should land
-in. The inbox is a Space of its own kind: the network computer issues a
-policy that lets the chosen devices (for now, every other device) write into
-it, and nothing else. An inbox is never browsed, and a shared folder never
-accepts files. **Stop receiving** works like stopping any Space.
+To receive on this device, choose **Shared → Receive files**. Computers offer
+**Downloads → Genesis Mesh** by default, with **Choose another folder** available.
+An existing receiving location is kept by default. Phones save in **Connect →
+Received files**. Choose which devices may send, then tap **Start receiving here**.
 
-Other devices see **Send files to Home PC** in Shared; **Send a file** opens
-the native picker and shows progress, then the name the file was saved under.
-The receiving device decides every step:
+On the sending device, choose **Send files**, select the receiving device, and
+choose a file. If none is ready, the dialog explains how to enable receiving on
+the other device and offers **Refresh receiving devices**. Keep Connect open on
+both devices. Open **Received files** on the receiving device to see the copies;
+computers also offer **Show in folder**. Local received files can be opened while
+this device is disconnected. Stopping receiving preserves files already saved.
+
+The underlying resource kind is `inbox`; everyday screens use **Send & receive**
+and **Received files**. It has its own authority policy, with only
+`connect.inbox.write` naming the allowed sender and collection. A sender cannot
+browse it; a shared read-only folder does not accept writes. No read permission
+is created by enabling receiving.
 
 - The sender declares the file's name, size and SHA-256. For each window of
   bytes the receiving device asks the authority whether that sender may write
@@ -394,9 +401,9 @@ preserved. Read access and receiving files remain separate permissions. Older
 duplicate folder entries are marked: review access on both, then stop the extra
 entry under Manage. Distinct folders with the same name remain separate.
 
-**Shared** combines files, inboxes and apps/services. Search by resource or
+**Shared** combines shared files, sending/receiving and apps/services. Search by resource or
 device name, filter by device, or choose **Apps & services**, **From devices**,
-**Shared by me** or **Inboxes**. Device cards can open that device's shared items.
+**Shared by me** or **Send & receive**. Device cards can open that device's shared items.
 Use **Manage** on your own resources to change access or stop sharing. See
 [service sharing and access policies](service-sharing.md).
 

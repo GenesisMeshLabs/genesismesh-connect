@@ -130,6 +130,7 @@ pub fn run() {
             consumer::browse_received,
             consumer::export_received,
             consumer::receive_files,
+            consumer::show_received_folder,
             sends::send_file,
             sends::send_status,
             sends::cancel_send,

@@ -37,6 +37,7 @@ pub struct HomeSpace {
     /// A folder to browse, or an inbox to send files into.
     kind: SpaceKind,
     duplicate: bool,
+    destination: Option<String>,
 }
 #[derive(Serialize)]
 pub struct HomeStatus {
@@ -163,6 +164,16 @@ fn home_spaces(status: &connect_core::device::DeviceStatus) -> Vec<HomeSpace> {
             host_id: status.node_public_key.clone(),
             own: true,
             kind: share.kind,
+            destination: (share.kind == SpaceKind::Inbox).then(|| {
+                if cfg!(mobile) {
+                    "Connect on this device".into()
+                } else {
+                    format!(
+                        "{} on this computer",
+                        crate::workflow::folder_name(&share.directory)
+                    )
+                }
+            }),
             duplicate: !share.kind.is_service()
                 && status.shares.iter().any(|other| {
                     other.collection_id != share.collection_id
@@ -184,6 +195,7 @@ fn home_spaces(status: &connect_core::device::DeviceStatus) -> Vec<HomeSpace> {
                 own: false,
                 kind: space.kind,
                 duplicate: false,
+                destination: None,
             }),
     );
     spaces
@@ -465,6 +477,8 @@ pub async fn share_folder(
 #[tauri::command]
 pub async fn receive_files(
     recipients: Option<Vec<String>>,
+    location: Option<String>,
+    app: tauri::AppHandle,
     state: tauri::State<'_, WorkflowState>,
     desktop: tauri::State<'_, DesktopState>,
 ) -> Result<bool, String> {
@@ -473,21 +487,44 @@ pub async fn receive_files(
         .clone()
         .try_read_owned()
         .map_err(|_| "This device is changing networks")?;
+    let location = location.as_deref().unwrap_or("current");
+    if !["current", "default", "choose"].contains(&location) {
+        return Err("Choose where to save received files".into());
+    }
     #[cfg(desktop)]
     let directory = {
-        let Some(folder) = rfd::AsyncFileDialog::new()
-            .set_title("Choose where received files are saved")
-            .pick_folder()
-            .await
-        else {
-            return Ok(false);
-        };
-        folder.path().to_owned()
+        let existing = desktop.display_status()?.device.as_ref().and_then(|d| {
+            d.shares
+                .iter()
+                .find(|s| s.kind == SpaceKind::Inbox)
+                .map(|s| s.directory.clone())
+        });
+        if let Some(directory) = existing.filter(|_| location == "current") {
+            directory
+        } else if location == "choose" {
+            let Some(folder) = rfd::AsyncFileDialog::new()
+                .set_title("Save received files in…")
+                .pick_folder()
+                .await
+            else {
+                return Ok(false);
+            };
+            folder.path().to_owned()
+        } else {
+            crate::resources::default_receiving_directory(
+                &app.path().download_dir().map_err(error)?,
+            )
+            .map_err(error)?
+        }
     };
     // A phone receives into Connect's private storage: no impossible folder
     // picker or filesystem path to type. Native open/export remains available.
     #[cfg(mobile)]
     let directory = {
+        let _ = &app;
+        if location == "choose" {
+            return Err("Received files are saved in Connect on this device".into());
+        }
         let path = desktop
             .profile
             .parent()
@@ -499,7 +536,7 @@ pub async fn receive_files(
     publish_directory(
         SpaceKind::Inbox,
         directory,
-        "Inbox".into(),
+        "Received files".into(),
         recipients,
         &state,
         &desktop,
@@ -902,7 +939,36 @@ fn own_inbox(
         .iter()
         .find(|s| s.collection_id == collection && s.kind == SpaceKind::Inbox)
         .map(|s| s.directory.clone())
-        .ok_or("Choose this device's inbox".into())
+        .ok_or("Choose this device's received files".into())
+}
+#[tauri::command]
+pub async fn show_received_folder(
+    space: String,
+    app: tauri::AppHandle,
+    desktop: tauri::State<'_, DesktopState>,
+) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        let root = {
+            let slot = desktop.slot.lock().await;
+            let status = slot
+                .controller
+                .as_ref()
+                .ok_or("Open this device first")?
+                .status()
+                .map_err(error)?;
+            own_inbox(&status, &space)?
+        };
+        app.opener()
+            .open_path(root.to_string_lossy().into_owned(), None::<&str>)
+            .map_err(error)
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (space, app, desktop);
+        Err("Open Received files in Connect, then select a file to save or share it".into())
+    }
 }
 #[tauri::command]
 pub async fn browse_received(
