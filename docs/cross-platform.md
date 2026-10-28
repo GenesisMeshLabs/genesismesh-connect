@@ -57,7 +57,7 @@ identity and authority decision boundary; see [service sharing](service-sharing.
 
 | Platform | Implemented | Validation boundary |
 | --- | --- | --- |
-| Windows | Native app, DPAPI, bundled owner, device picker, sharing | Latest sharing/service source built and launched on 2026-10-28 with the freshly packaged authority. The native Shared screen and existing device names were observed after network permission was allowed. Core tests: 69 passed, 7 ignored. App-unit test rebuilding was blocked by the running authority file lock; the complete Windows gate has not been rerun. Earlier Application Control 4551 failures are historical evidence, not the current desktop build result. |
+| Windows | Native app, DPAPI, bundled owner, device picker, sharing | Application source a510a15 built and ran on 2026-10-28. The later duplicate/media/receiving fixes (ab725e3) compile, with 18 app tests, 18 frontend tests and Clippy passing; Smart App Control blocks the new unsigned executable from launching (OS4551). Earlier core tests passed 69 with 7 ignored. The complete Windows gate has not been rerun. |
 | Linux | Native app, Secret Service, bundled owner, desktop pickers | Native compilation/build, real keyring, owner restart and integration tests run in Ubuntu 24.04 WSL. A general desktop distribution/installer and physical cross-device matrix remain pending. |
 | macOS | Keychain adapter, native authority packaging and desktop picker paths | Earlier source built a native app/authority and passed 36 core tests. Bundle-signature verification and interactive Keychain checks remain pending. The latest sharing/service source passes 69 core tests, 15 app tests, the real-authority service integration and Clippy on the Mac. Interactive validation of this update remains pending. |
 | Android | Keystore adapter, initialization script, join scheme, official icons, backup exclusion | Earlier debug APK installed and launched on Samsung SM-A176B (API 36) through Windows USB. The latest sharing/services update builds an ARM64 debug APK on the Mac; installation and service acceptance for this update remain pending. Android enrollment, persistence and file-workflow acceptance remain pending. Earlier Windows Android compilation was blocked by Application Control 4551; its policy was not changed. |
@@ -105,8 +105,9 @@ Full feature parity is not complete. Files/media copies, inbox send/receive,
 download resume, multiple resources, service tunnels and resource-policy editing
 are implemented. Mobile folder-tree hosting, broader service compatibility,
 installers, and physical acceptance of the latest picker/service workflows remain
-pending. The latest Windows desktop build runs, and iPhone build 11 is signed,
-installed and running. Installation does not establish physical acceptance of
+pending. The earlier Windows build and signed iPhone build 11 ran successfully. The
+subsequent sharing-fixes build is blocked by Windows Smart App Control, and its
+iOS changes need compilation and installation when the Mac is available. Installation does not establish physical acceptance of
 every new service, policy or picker workflow.
 Every device should eventually offer both sides of that workflow. Mobile
 foreground/background rules remain platform constraints; no always-on iPhone
@@ -137,3 +138,22 @@ installation and launch; physical service and file-picker acceptance is separate
 Detailed build logs, installation/launch JSON, executable SHA-256 hashes and
 source provenance are in ignored `temp/latest-platform-build.json` and the
 associated `temp/latest-*` reports.
+
+
+## Sharing fixes: 2026-10-28
+
+Application source `ab725e3` reuses existing folder shares, marks older duplicate
+entries for explicit cleanup, supports a batch of up to 100 media selections,
+aligns the iOS picker cache with Rust, and simplifies the receiving workflow.
+Validation: 18 Windows app tests, 18 frontend tests, TypeScript/Vite production
+build, Clippy with warnings denied, Android picker Kotlin compilation, and
+desktop/phone browser flows with mocked native commands. iOS source compilation
+and physical media/album selection are deferred while the Mac is unavailable.
+
+The Windows executable compiled successfully, but launch was blocked by Smart
+App Control (Code Integrity event 3077 and Smart App Control event 3118). It is
+unsigned, and this PC has no configured code-signing certificate. A trusted
+Windows signing identity is needed to follow Microsoft's
+[Smart App Control signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control).
+Security settings were not changed. Detailed test logs and the executable hash
+are in ignored `temp/sharing-fixes-results.json` and its associated logs.
