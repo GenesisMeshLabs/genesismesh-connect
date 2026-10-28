@@ -6,6 +6,7 @@ mod desktop;
 mod downloads;
 mod lifecycle;
 mod picking;
+mod resources;
 mod sends;
 mod services;
 mod workflow;

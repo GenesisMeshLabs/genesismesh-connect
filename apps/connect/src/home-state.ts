@@ -35,6 +35,7 @@ export interface HomeSpace {
   host_id: string;
   own: boolean;
   kind: "folder" | "inbox" | "web" | "ssh" | "tcp";
+  duplicate?: boolean;
 }
 /** Where a shared folder lives, or whose inbox it is, in a few words. */
 export function isService(space: HomeSpace) { return ["web", "ssh", "tcp"].includes(space.kind); }

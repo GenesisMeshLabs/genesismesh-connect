@@ -551,6 +551,11 @@ function renderSpaces(status: HomeStatus) {
     const where = document.createElement("p");
     where.textContent = spaceSummary(space);
     details.append(name, where);
+    if (space.duplicate) {
+      const warning = document.createElement("p");
+      warning.textContent = "This folder has another sharing entry. Check access on both, then stop the extra entry under Manage.";
+      details.append(warning);
+    }
     const action = document.createElement("button");
     action.className = "secondary";
     if (space.own && space.kind === "inbox") {

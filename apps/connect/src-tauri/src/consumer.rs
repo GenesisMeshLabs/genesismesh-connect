@@ -36,6 +36,7 @@ pub struct HomeSpace {
     own: bool,
     /// A folder to browse, or an inbox to send files into.
     kind: SpaceKind,
+    duplicate: bool,
 }
 #[derive(Serialize)]
 pub struct HomeStatus {
@@ -162,6 +163,12 @@ fn home_spaces(status: &connect_core::device::DeviceStatus) -> Vec<HomeSpace> {
             host_id: status.node_public_key.clone(),
             own: true,
             kind: share.kind,
+            duplicate: !share.kind.is_service()
+                && status.shares.iter().any(|other| {
+                    other.collection_id != share.collection_id
+                        && other.kind == share.kind
+                        && crate::resources::same_directory(&other.directory, &share.directory)
+                }),
         })
         .collect();
     spaces.extend(
@@ -176,6 +183,7 @@ fn home_spaces(status: &connect_core::device::DeviceStatus) -> Vec<HomeSpace> {
                 host_id: space.host.clone(),
                 own: false,
                 kind: space.kind,
+                duplicate: false,
             }),
     );
     spaces
@@ -591,13 +599,18 @@ async fn publish_directory(
     let available = recipients_for(&status);
     let recipients = chosen.unwrap_or_else(|| available.clone());
     let recipients = validate_recipients(recipients, &available)?;
+    // Selecting the same resource edits its existing grant, preserving custom
+    // rules through the owner's versioned policy-update path. Existing older
+    // duplicates keep their independent grants until explicitly stopped.
+    let existing = crate::resources::existing(&status.shares, &directory, kind)
+        .map(|share| share.collection_id.clone());
     match owner.runtime.as_mut() {
         // The network computer issues its own Spaces directly.
         Some(runtime) => {
             let subject = status
                 .sharing_subject
                 .ok_or("This device has no sharing identity")?;
-            let collection = uuid::Uuid::new_v4().to_string();
+            let collection = existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             let space = runtime
                 .space_share(
                     &status.node_public_key,
@@ -621,7 +634,7 @@ async fn publish_directory(
         None => {
             drop(owner);
             device
-                .share_space(None, directory, name, recipients, kind)
+                .share_space(existing, directory, name, recipients, kind)
                 .await
                 .map_err(error)?;
         }

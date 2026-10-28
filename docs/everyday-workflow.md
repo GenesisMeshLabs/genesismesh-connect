@@ -380,6 +380,12 @@ The network computer cannot leave through this action: its authority and other d
 
 ## Shared library and larger files
 
+Choosing a folder that is already shared updates its existing share and allowed
+devices instead of creating another entry; custom policy limits and rules are
+preserved. Read access and receiving files remain separate permissions. Older
+duplicate folder entries are marked: review access on both, then stop the extra
+entry under Manage. Distinct folders with the same name remain separate.
+
 **Shared** combines files, inboxes and apps/services. Search by resource or
 device name, filter by device, or choose **Apps & services**, **From devices**,
 **Shared by me** or **Inboxes**. Device cards can open that device's shared items.
