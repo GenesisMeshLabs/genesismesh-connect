@@ -57,11 +57,11 @@ identity and authority decision boundary; see [service sharing](service-sharing.
 
 | Platform | Implemented | Validation boundary |
 | --- | --- | --- |
-| Windows | Native app, DPAPI, bundled owner, device picker, sharing | Builds and native startup checked. Some newly compiled test harnesses are blocked by Application Control 4551. The complete Windows gate is not green. |
+| Windows | Native app, DPAPI, bundled owner, device picker, sharing | Latest sharing/service source built and launched on 2026-10-28 with the freshly packaged authority. The native Shared screen and existing device names were observed after network permission was allowed. Core tests: 69 passed, 7 ignored. App-unit test rebuilding was blocked by the running authority file lock; the complete Windows gate has not been rerun. Earlier Application Control 4551 failures are historical evidence, not the current desktop build result. |
 | Linux | Native app, Secret Service, bundled owner, desktop pickers | Native compilation/build, real keyring, owner restart and integration tests run in Ubuntu 24.04 WSL. A general desktop distribution/installer and physical cross-device matrix remain pending. |
 | macOS | Keychain adapter, native authority packaging and desktop picker paths | Earlier source built a native app/authority and passed 36 core tests. Bundle-signature verification and interactive Keychain checks remain pending. The latest sharing/service source passes 69 core tests, 15 app tests, the real-authority service integration and Clippy on the Mac. Interactive validation of this update remains pending. |
 | Android | Keystore adapter, initialization script, join scheme, official icons, backup exclusion | Earlier debug APK installed and launched on Samsung SM-A176B (API 36) through Windows USB. The latest sharing/services update builds an ARM64 debug APK on the Mac; installation and service acceptance for this update remain pending. Android enrollment, persistence and file-workflow acceptance remain pending. Earlier Windows Android compilation was blocked by Application Control 4551; its policy was not changed. |
-| iOS | Existing Tauri shell and device-only Keychain format retained | Build 6 with subfolder navigation and nested downloads is signed, installed and launched. Signature, profile and 18 icon sizes verified. User confirmed the retained network and build 6 folders appearing/opening on the physical iPhone. Nested download/export acceptance remains pending. |
+| iOS | Existing Tauri shell and device-only Keychain format retained | Build 11 from source a510a15 is signed, installed and launched on the physical iPhone (2026-10-28). Strict bundle signature verification passed; device inventory reports bundle version 11, and the app process remained running after launch. The latest service/picker workflows still need physical acceptance. Earlier build 6 folder navigation was confirmed by the user. |
 
 ## Build hosts
 
@@ -105,8 +105,9 @@ Full feature parity is not complete. Files/media copies, inbox send/receive,
 download resume, multiple resources, service tunnels and resource-policy editing
 are implemented. Mobile folder-tree hosting, broader service compatibility,
 installers, and physical acceptance of the latest picker/service workflows remain
-pending. Windows native rebuilds are blocked by Application Control 4551. The
-latest iOS Rust library compiles; signed installation remains a separate gate.
+pending. The latest Windows desktop build runs, and iPhone build 11 is signed,
+installed and running. Installation does not establish physical acceptance of
+every new service, policy or picker workflow.
 Every device should eventually offer both sides of that workflow. Mobile
 foreground/background rules remain platform constraints; no always-on iPhone
 service, transparent VPN, or authority-on-every-phone claim is made.
@@ -117,3 +118,22 @@ folder. Every path component rejects links/junctions. Nested downloads bind thei
 directory to the signed request and token. Legacy 64-KiB list/read
 remains compatible. Re-share explicitly to issue a larger-file permission. No upload/write
 permission is implied by pairing, enrollment or read access.
+
+
+## Build record: 2026-10-28
+
+Windows and iPhone build 11 use application source `a510a15`. Windows was built
+with the committed frontend and freshly packaged authority. The first attempt
+could not replace the running sidecar; closing Connect released the file and
+the native build completed without changing security policy. The updated native
+sharing dialog lists the existing iPhone and Android device names.
+
+The iOS archive was compiled on the Mac, signed after the user unlocked the
+keychain locally, verified with `codesign --verify --deep --strict`, installed
+with `devicectl`, and launched successfully. Device inventory and a later process
+query confirmed bundle version 11 was installed and running. This records build,
+installation and launch; physical service and file-picker acceptance is separate.
+
+Detailed build logs, installation/launch JSON, executable SHA-256 hashes and
+source provenance are in ignored `temp/latest-platform-build.json` and the
+associated `temp/latest-*` reports.
