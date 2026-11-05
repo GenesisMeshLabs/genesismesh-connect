@@ -19,6 +19,20 @@ build with a runner-local development signing identity, not a store release. Upd
 requires compatible package/signing identity; do not automatically uninstall a
 user's app or erase its data after a signature mismatch.
 
+On the Windows development computer, install a downloaded qualification APK with:
+
+```powershell
+./scripts/install-android-test.ps1 -Apk <downloaded-test.apk>
+```
+
+The installer checks the exact test package, native alignment and APK signature,
+then signs a local copy with the existing standard Android debug key and updates
+the connected phone in place. It refuses other package IDs, unauthorized devices
+and failed signatures. It never uninstalls or clears data. Supply `-Python` if
+Python is not on PATH, and `-DeviceSerial` when multiple phones are connected.
+Its local JSON record distinguishes installation from visual/hosting acceptance.
+This script uses only the standard development key, never a production identity.
+
 Caches reuse compiler/dependency work; a newer push cancels older work for the
 same ref. Actions are pinned to commits, workflow permissions are read-only,
 and no user network, account key, mobile signing secret or deployment credential
