@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "repository": "GenesisMeshLabs/genesismesh",
+  "release": "v1.9.1",
+  "revision": "a54b2d81f205c9b0203158f846f7ad44dc677063",
+  "file": "contract/public-surface.json",
+  "sha256": "2c6b23036e5584d0bae53369143be73877d16552f8c43ac32e1a217207f25806",
+  "reviewed_on": "2026-11-05",
+  "scope": "Public declaration inventory, not complete request/response schemas or product acceptance"
+}

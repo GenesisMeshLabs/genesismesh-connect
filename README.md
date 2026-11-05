@@ -4,6 +4,13 @@ A separate device application built around Genesis Mesh trust, Iroh connectivity
 
 Current implementation: **guided network setup, approved devices, files, inboxes and policy-controlled TCP services**. Shared resources have an access editor for recipients, expiry, limits and additional Genesis Mesh rules. Native file/media pickers support phone sharing; desktop folders remain available. See the [everyday workflow](docs/everyday-workflow.md), [service sharing](docs/service-sharing.md) and [platform status](docs/cross-platform.md). Builds and automated tests are separate from physical-device acceptance; newly implemented mobile workflows still need device validation.
 
+The broader implementation programme tracks every public core declaration in a
+[reviewed capability inventory](docs/capability-coverage.md). It distinguishes
+existing narrow workflows from missing general journeys, and manual from assisted
+acceptance. Classification is not full feature parity. See the
+[workflow and authority boundaries](docs/workflow-architecture.md) and
+[dependency qualification](docs/release-qualification.md).
+
 ## Structure
 
 The normal navigation is **Shared**, **Devices** and **Settings**. Technical
