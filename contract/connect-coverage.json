@@ -32,7 +32,7 @@
       "status": "partial",
       "manual": "partial",
       "assisted": "planned",
-      "scope_note": "Desktop setup exists; phone-originated host setup and custody review are incomplete.",
+      "scope_note": "Both hosting profiles are required: Android independently creates and runs the genuine authority; NAS/server is an optional always-on host. Desktop setup exists. Independent Android hosting is not implemented; iOS hosting is separately gated.",
       "execution_locations": [
         "authority-host",
         "this-device"
@@ -70,6 +70,11 @@
         "accepted": false
       },
       "acceptance_gaps": [
+        "Fresh Android app creates a genuine authority without a desktop, NAS/server or remote authority",
+        "Same authority and membership identity survive restart, with safe recovery and Android Keystore custody",
+        "Phone authority enrolls a second device and makes real allowed/refused decisions with no other authority running",
+        "Foreground, sleep, lock, force-stop, reboot and background availability qualified and explained",
+        "Optional NAS/server host setup and phone administration qualified separately; independent iOS hosting remains unqualified",
         "Typed operation schemas and prerequisites",
         "Manual/assisted authorization parity",
         "Denial, interruption and uncertain-outcome recovery",

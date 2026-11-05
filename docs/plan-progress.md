@@ -31,7 +31,33 @@ succession/HA and exit. The [complete journey mapping](../contract/connect-journ
 retains their scope and acceptance gaps. Core remains responsible for trust and
 policy semantics; Connect supplies the usable workflows and fixed adapters.
 
-## Next user-visible acceptance milestone
+## Independent phone hosting requirement — 5 November 2026
+
+The user requires **both** a genuine authority hosted by the Android phone and
+an optional always-on NAS/server host. The NAS/server is not a prerequisite or a
+substitute for phone creation. This supersedes earlier desktop-host-only scope.
+Android is first; embedded iOS authority hosting needs separate qualification.
+
+`network.setup` must let a fresh Android installation create its own network,
+retain the same authority and membership identity after restart, recover safely,
+enroll a second device and perform real allowed/refused authority decisions with
+no desktop authority, NAS/server or remote authority running. This outcome is
+**not implemented or accepted**. Neither an Android client APK nor delegated
+phone administration demonstrates independent hosting.
+
+The first implementation gate is packaging the unchanged pinned Python core,
+including its native dependencies, with Android Keystore-backed owner custody.
+Missing compatible wheels are a dependency build/qualification task, not a
+reason to downgrade the core or replace its policy/trust engine. Initial hosting
+is foreground-only. Sleep, termination, reboot, lock and background restrictions
+must be tested and explained before claiming continuous availability.
+
+## Next user-visible acceptance milestones
+
+**“Create and run my network on this Android phone.”** The independent-phone
+proof above is required alongside the optional server profile. Native dependency
+qualification and lifecycle work remain open; no unsupported Create button is
+enabled by the plan update.
 
 **“Use my phone to review and approve a new device joining my network.”**
 
