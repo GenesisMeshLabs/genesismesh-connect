@@ -99,6 +99,9 @@ jobs:
           test "${#wheels[@]}" -gt 0
           for wheel in "${wheels[@]}"; do
             python scripts/android_authority_sources.py check "$wheel"
+            if test "$PACKAGE" = cryptography; then
+              python scripts/android_authority_link.py "$wheel"
+            fi
           done
       - name: Keep source provenance, wheel and diagnostics
         if: always()

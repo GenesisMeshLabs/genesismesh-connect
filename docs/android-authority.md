@@ -79,6 +79,11 @@ symbols in the abi3 extension when Python was embedded in Android's local loader
 namespace. It changes linkage rather than loading libraries globally. Both
 patches are separately hash-locked. Runtime qualification remains a separate gate.
 
+CI also checks the cryptography extension's ELF dynamic dependencies. The new
+check was verified against both actual artifacts: it refuses the original
+device-failing wheel and accepts the corrected build. It is a necessary linkage
+check, not a replacement for loading and exercising the extension on a phone.
+
 PyNaCl builds its complete bundled libsodium source as a static target library.
 CFFI builds the separately hash-locked libffi source in
 `scripts/android-authority-native.lock.json`, also statically. Both builds refuse

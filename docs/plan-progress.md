@@ -56,9 +56,27 @@ Dependency build evidence on 5 November 2026: all four missing native bindings
 were built and checked for Android arm64/API24, CPython 3.13 ABI and 16 KiB
 alignment. The unchanged core requirements resolved with 28 reachable packages
 under Android target markers. The repeatable source-build/closure gate is in
-draft PR #20. This removes the missing-wheel obstacle; it does not establish
+merged PR #20. This removes the missing-wheel obstacle; it does not establish
 embedded-core execution, owner custody, independent Create, persistent hosted
 identity or second-device enrollment on the phone.
+
+Runtime evidence on 6 November 2026: the isolated engine-check APK built in
+hosted CI run `42129762152` from head `5be515a` (tested merge source
+`4f66e1f7576be7e77076275ad980b35bc1019fd0`). On the physical Samsung SM-A176B,
+Android API 36, embedded Python 3.13.16 and core 1.9.1 passed all seven checks:
+real core loading, signatures including refusal cases, native FFI, authenticated
+encryption and tamper refusal, model validation, SQLite close/reopen and temporary
+loopback HTTP. The passed screen was verified separately from installation.
+The first device runs exposed the build-time/device API distinction and missing
+shared Python linkage; both were fixed without changing core or crypto versions.
+Process-wide execution and unique run IDs prevent stale activity results;
+a deterministic Java regression covers overlapping runs and delayed UI updates.
+Physical recreation/process-death tests remain separate and unperformed.
+
+The harness creates no network or owner identity. This does not qualify authority
+creation, owner custody, persisted hosted identity, actual authority decisions,
+second-device enrollment/revocation, production library support, or lifecycle
+availability. The full Create workflow remains disabled until those gates pass.
 
 ## Next user-visible acceptance milestones
 
