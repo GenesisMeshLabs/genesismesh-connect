@@ -25,7 +25,8 @@ from packaging.utils import canonicalize_name, parse_wheel_filename
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "scripts/android-authority-sources.lock.json"
 PACKAGES = ("pydantic-core", "cryptography", "PyNaCl", "cffi")
-PATCHES = {"cryptography": ["scripts/android-authority-patches/cryptography-android-include.patch"]}
+PATCHES = {"cryptography": ["scripts/android-authority-patches/cryptography-android-include.patch",
+                            "scripts/android-authority-patches/cryptography-android-python-link.patch"]}
 
 
 def pin():

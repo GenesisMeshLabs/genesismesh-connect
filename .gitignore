@@ -10,6 +10,9 @@
 # Generated build output
 /target/
 /apps/connect/src-tauri/binaries/
+/spikes/android-authority/build/
+/spikes/android-authority/.gradle/
+/spikes/android-authority/local.properties
 **/__pycache__/
 /vendor/*/target/
 /vendor/tauri-plugin-view/android/build/

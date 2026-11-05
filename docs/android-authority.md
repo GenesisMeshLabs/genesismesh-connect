@@ -68,12 +68,21 @@ and rerun qualification. The source lock deliberately refuses an unreviewed
 release change. It currently covers four missing native dependencies,
 not the full transitive wheel closure or a production software bill of materials.
 
-Cryptography's Android build currently needs one narrowly scoped build patch:
+Cryptography's Android build uses two narrowly scoped build patches:
 its CFFI build script assumes a different Python SDK header layout. The recorded
 patch queries the cross environment's target `INCLUDEPY` on Android and checks
 for `Python.h`. The original sdist and patch are separately hash-locked and
 reported. It changes header discovery, not cryptographic operations or core
-policy/identity semantics. Runtime and linked-library qualification remain open.
+policy/identity semantics. The second declares an explicit dependency on the
+target shared Python runtime: the physical engine check found unresolved Python
+symbols in the abi3 extension when Python was embedded in Android's local loader
+namespace. It changes linkage rather than loading libraries globally. Both
+patches are separately hash-locked. Runtime qualification remains a separate gate.
+
+CI also checks the cryptography extension's ELF dynamic dependencies. The new
+check was verified against both actual artifacts: it refuses the original
+device-failing wheel and accepts the corrected build. It is a necessary linkage
+check, not a replacement for loading and exercising the extension on a phone.
 
 PyNaCl builds its complete bundled libsodium source as a static target library.
 CFFI builds the separately hash-locked libffi source in
@@ -105,6 +114,9 @@ conflicting diamond constraint. Graph validity alone is not a qualified bundle.
 2. Package embedded CPython (Chaquopy is the first candidate) and the exact
    resolved closure. On the physical phone, import the core and exercise real
    signing, verification, model parsing, SQLite and HTTP operations.
+   The isolated `spikes/android-authority` engine-check APK now supplies this
+   fixed test harness. CI packaging and physical execution must pass before
+   treating the runtime as qualified; it does not enable authority creation.
 3. Adapt the existing fixed owner runtime to a serialized native-local embedded
    boundary. No generic Python execution, command/path dispatch or admin listener
    belongs in frontend IPC. Keep owner secrets in Android Keystore-backed storage

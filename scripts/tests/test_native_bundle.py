@@ -118,6 +118,29 @@ class BundleTests(unittest.TestCase):
             self.assertEqual(result["status"], "available")
             self.assertFalse(result["hosting_accepted"])
 
+    def test_freeze_requires_bound_artifacts_and_preserves_existing_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "wheels"
+            root.mkdir()
+            manifest = self.bound_fixture(root)
+            self.wheel(root, "unused-package")
+            output = root.parent / "requirements.txt"
+            bundle.freeze(root, manifest, output)
+            lines = output.read_text().splitlines()
+            expected = sorted(f"{r['name']}=={r['version']} --hash=sha256:{r['sha256']}"
+                              for r in bundle.verify(root, manifest)["packages"])
+            self.assertEqual(lines, expected)
+            self.assertFalse(any("unused-package" in line for line in lines))
+            with self.assertRaises(FileExistsError):
+                bundle.freeze(root, manifest, output)
+            self.assertEqual(output.read_text().splitlines(), expected)
+            with zipfile.ZipFile(next(root.glob("cffi-*.whl")), "a") as wheel:
+                wheel.writestr("modified.txt", "unreviewed")
+            refused = root.parent / "refused.txt"
+            with self.assertRaisesRegex(ValueError, "native artifact differs"):
+                bundle.freeze(root, manifest, refused)
+            self.assertFalse(refused.exists())
+
     def test_compatible_but_unreviewed_native_version_is_refused(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "wheels"
