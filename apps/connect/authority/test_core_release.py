@@ -21,8 +21,8 @@ class CoreReleaseTests(unittest.TestCase):
     def test_ranges_extra_dependencies_and_install_options_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "requirements.txt"
-            for invalid in ("genesis-mesh>=1.0.0", "genesis-mesh==1.0.0\nrequests",
-                            "--index-url https://example.com", "genesis-mesh==1.0.0rc1", ""):
+            for invalid in ("genesis-mesh>=1.0.0", "genesis-mesh==1.9.1\nrequests",
+                            "--index-url https://example.com", "genesis-mesh==1.9.1rc1", ""):
                 with self.subTest(invalid=invalid):
                     path.write_text(invalid, encoding="utf-8")
                     with self.assertRaises(ValueError):
