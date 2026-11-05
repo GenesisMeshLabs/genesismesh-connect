@@ -106,6 +106,10 @@ def run(expected_version):
         report["status"] = "passed"
     except Exception as error:
         report.update(status="failed", stage=stage, exception_type=type(error).__name__)
+        # These fixed imports precede encryption keys or any user/network data.
+        # Preserve the bounded loader diagnostic locally to identify missing symbols/libraries.
+        if isinstance(error, ImportError) and stage in ("Core loading", "Native calls", "Encryption"):
+            report["import_diagnostic"] = str(error)[:1024]
         missing = getattr(error, "name", None)
         if isinstance(missing, str) and all(c.isalnum() or c in "_." for c in missing):
             report["missing_module"] = missing
