@@ -744,6 +744,18 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
         client.spaces(identity(&f), f.trust()?).await.is_err(),
         "A computer without an owner runtime shares nothing for devices"
     );
+    assert!(
+        client
+            .resource_capabilities(
+                identity(&f),
+                f.trust()?,
+                &pin(&f),
+                uuid::Uuid::new_v4().to_string()
+            )
+            .await
+            .is_err(),
+        "Unavailable discovery does not fall back to assumed access-management support"
+    );
     // A stand-in owner runtime that keeps the calls it receives.
     let (owner, mut requests) = tokio::sync::mpsc::channel::<crate::owner::OwnerRequest>(8);
     bridge.serve_owner(owner);
@@ -775,6 +787,9 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
     let runtime = tokio::spawn(async move {
         while let Some(request) = requests.recv().await {
             let result = match &request.call {
+                crate::owner::OwnerCall::ResourceCapabilities { .. } => {
+                    Err(anyhow::anyhow!("Not configured in this fixture"))
+                }
                 crate::owner::OwnerCall::Share {
                     host,
                     collection,

@@ -11,6 +11,40 @@ from genesis_mesh.crypto import generate_keypair
 
 
 class OwnerTests(unittest.TestCase):
+    def test_resource_capabilities_require_current_host_and_actual_managed_prerequisites(self):
+        import uuid
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            owner=Owner(Path(directory)/"owner")
+            try:
+                info=owner.create("Resource readiness")
+                host,phone,other=[generate_keypair().public_key_b64 for _ in range(3)]
+                collection=str(uuid.uuid4())
+                owner.space_share(host,collection,"Photos",[phone])
+                result=owner.resource_capabilities(host,collection)
+                self.assertEqual((result["pin"],result["actor"],result["collection"]),(info["pin"],host,collection))
+                self.assertEqual((result["profile"],result["policy_version"]),("connect_managed",1))
+                self.assertIn("connect.access.update.v1",result["operations"])
+                with self.assertRaises(Refused): owner.resource_capabilities(phone,collection)
+                with self.assertRaises(Refused): owner.resource_capabilities(other,str(uuid.uuid4()))
+                with patch.object(owner.service,"boundary_policy_enforcement","optional"):
+                    restricted=owner.resource_capabilities(host,collection)
+                    self.assertEqual(restricted["profile"],"connect_restricted")
+                    self.assertNotIn("connect.access.update.v1",restricted["operations"])
+                with patch.dict(owner.service.operator_key_tiers,{owner.config["operator"]["key_id"]:"standard"}):
+                    self.assertNotIn("connect.access.update.v1",owner.resource_capabilities(host,collection)["operations"])
+                # The adapter cannot claim a separate process's version/flags
+                # from its own installed Python package metadata.
+                with patch.object(owner,"service",None):
+                    external=owner.resource_capabilities(host,collection)
+                    self.assertEqual(external["profile"],"external_unverified")
+                    self.assertIsNone(external["core_version"])
+                    self.assertNotIn("connect.access.update.v1",external["operations"])
+                self.assertEqual(owner.access_get(host,collection)["version"],1,"Discovery changed no policy")
+                owner.space_remove(host,collection)
+                with self.assertRaises(Refused): owner.resource_capabilities(host,collection)
+            finally: owner.close()
+
     def test_runtime_capabilities_are_scoped_to_open_network_and_matching_release(self):
         from unittest.mock import patch
         from core_release import required_core_version

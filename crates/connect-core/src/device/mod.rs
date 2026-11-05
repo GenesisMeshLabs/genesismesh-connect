@@ -675,6 +675,33 @@ impl DeviceController {
         self.set_space(config.clone()).await?;
         Ok(config)
     }
+    pub async fn resource_capabilities(
+        &mut self,
+        collection: String,
+    ) -> Result<crate::operations::ResourceCapabilities> {
+        self.require_connected()?;
+        ensure!(
+            self.vault
+                .saved_shares()
+                .iter()
+                .any(|s| s.collection_id == collection),
+            "Only the sharing device can manage access"
+        );
+        let client = self
+            .bridge_client
+            .clone()
+            .context("Manage access on the network computer")?;
+        let identity = self
+            .device
+            .as_ref()
+            .context("Join first")?
+            .session_identity()?;
+        let trust = client.refresh(&mut self.trust).await?;
+        client
+            .resource_capabilities(identity, trust, self.vault.pin(), collection)
+            .await
+    }
+
     pub async fn access_policy(
         &mut self,
         collection: String,

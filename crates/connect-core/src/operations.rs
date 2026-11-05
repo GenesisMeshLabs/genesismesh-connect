@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum OperationId {
+    #[serde(rename = "connect.resource.capabilities.v1")]
+    ResourceCapabilities,
     #[serde(rename = "connect.access.inspect.v1")]
     InspectAccess,
     #[serde(rename = "connect.access.update.v1")]
@@ -18,6 +20,7 @@ pub enum OperationId {
 impl OperationId {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ResourceCapabilities => "connect.resource.capabilities.v1",
             Self::InspectAccess => "connect.access.inspect.v1",
             Self::UpdateAccess => crate::access_workflow::OPERATION,
         }
@@ -62,8 +65,25 @@ pub struct OperationDescriptor {
     pub assisted: bool,
 }
 
-pub fn registry() -> [OperationDescriptor; 2] {
+pub fn registry() -> [OperationDescriptor; 3] {
     [
+        OperationDescriptor {
+            id: OperationId::ResourceCapabilities,
+            title: "Check this item's available features",
+            class: OperationClass::Read,
+            actor: "authenticated_resource_host",
+            key_tier: "member_device",
+            execution: "authority_host_via_fixed_adapter",
+            approval: Approval::None,
+            retry: Retry::FreshRead,
+            evidence: "Authenticated, current resource-scoped adapter metadata; not a grant or signed core evidence",
+            input_schema: "#/schemas/resource_query",
+            review_schema: None,
+            commit_schema: None,
+            output_schema: "#/schemas/resource_capabilities",
+            manual: true,
+            assisted: false,
+        },
         OperationDescriptor {
             id: OperationId::InspectAccess,
             title: "Inspect this item's access",
@@ -162,6 +182,8 @@ impl AccessCommitInput {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "operation", content = "input", deny_unknown_fields)]
 pub enum OperationRequest {
+    #[serde(rename = "connect.resource.capabilities.v1")]
+    ResourceCapabilities(ResourceQuery),
     #[serde(rename = "connect.access.inspect.v1")]
     InspectAccess(ResourceQuery),
     #[serde(rename = "connect.access.update.v1")]
@@ -172,6 +194,7 @@ impl OperationRequest {
         ensure!(text.len() <= 24 * 1024, "Operation request is too large");
         let request: Self = serde_json::from_value(genesis_mesh_sdk::parse_strict_json(text)?)?;
         match &request {
+            Self::ResourceCapabilities(input) => input.validate()?,
             Self::InspectAccess(input) => input.validate()?,
             Self::UpdateAccess(input) => input.validate()?,
         }
@@ -179,9 +202,85 @@ impl OperationRequest {
     }
     pub fn id(&self) -> OperationId {
         match self {
+            Self::ResourceCapabilities(_) => OperationId::ResourceCapabilities,
             Self::InspectAccess(_) => OperationId::InspectAccess,
             Self::UpdateAccess(_) => OperationId::UpdateAccess,
         }
+    }
+}
+
+#[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceProfile {
+    ConnectManaged,
+    ConnectRestricted,
+    ExternalUnverified,
+}
+
+/// A fresh authenticated snapshot for one resource host. It is NOT a bearer
+/// capability: every mutation rechecks it and still needs core authorization.
+#[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceCapabilities {
+    pub schema: u8,
+    pub pin: crate::authority::TrustPin,
+    pub actor: String,
+    pub collection: String,
+    pub core_version: Option<String>,
+    pub profile: ResourceProfile,
+    pub policy_version: u64,
+    pub operations: Vec<OperationId>,
+}
+impl ResourceCapabilities {
+    pub fn require(
+        &self,
+        pin: &crate::authority::TrustPin,
+        actor: &str,
+        collection: &str,
+        operation: OperationId,
+    ) -> Result<()> {
+        ensure!(
+            self.schema == 1,
+            "Update Connect on the network computer to check this feature"
+        );
+        ensure!(
+            &self.pin == pin && self.actor == actor && self.collection == collection,
+            "Resource prerequisites answered for a different network, device or item"
+        );
+        ensure!(
+            self.policy_version > 0 && self.policy_version < (1 << 53),
+            "Invalid resource policy version"
+        );
+        if self.profile != ResourceProfile::ExternalUnverified {
+            ensure!(
+                self.core_version.as_deref() == Some(crate::owner::required_core_version()?),
+                "Update Connect on the network computer: incompatible Genesis Mesh release"
+            );
+        }
+        if operation == OperationId::UpdateAccess {
+            ensure!(
+                self.profile == ResourceProfile::ConnectManaged,
+                "Access is read-only here: the authority deployment and policy enforcement must be verified on the network computer"
+            );
+        }
+        ensure!(
+            self.operations.len() <= registry().len()
+                && self
+                    .operations
+                    .iter()
+                    .enumerate()
+                    .all(|(i, id)| !self.operations[..i].contains(id))
+                && self
+                    .operations
+                    .iter()
+                    .filter(|id| **id == operation)
+                    .count()
+                    == 1,
+            "This network computer has not enabled this operation for this resource"
+        );
+        Ok(())
     }
 }
 
@@ -213,6 +312,7 @@ pub mod schemas {
             "access_policy":schemars::schema_for!(AccessPolicy),
             "access_review":schemars::schema_for!(AccessRecord),
             "access_outcome":schemars::schema_for!(AccessOutcome)
+                ,"resource_capabilities":schemars::schema_for!(ResourceCapabilities)
         }})
     }
     fn sorted(value: Value) -> Value {

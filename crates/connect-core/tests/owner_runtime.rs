@@ -11,6 +11,46 @@ mod desktop {
             .context("Set CONNECT_OWNER_BINARY to the packaged authority")
     }
 
+    #[test]
+    #[ignore = "Requires the packaged, standalone owner runtime"]
+    fn packaged_resource_readiness_checks_real_ownership_and_bundled_release() -> Result<()> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        use connect_core::{operations::OperationId, session::sharing::SpaceKind};
+        let directory = tempfile::tempdir()?;
+        let mut owner = OwnerRuntime::start(&binary()?, &directory.path().join("owner"))?;
+        let info = owner.create("Packaged readiness")?;
+        let node = |seed| {
+            STANDARD.encode(
+                ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+                    .verifying_key()
+                    .to_bytes(),
+            )
+        };
+        let host = node(21);
+        let phone = node(22);
+        let collection = uuid::Uuid::new_v4().to_string();
+        owner.space_share(
+            &host,
+            &collection,
+            "Photos",
+            &[phone.clone()],
+            None,
+            SpaceKind::Folder,
+        )?;
+        let capabilities = owner.resource_capabilities(&host, &collection)?;
+        assert_eq!(
+            capabilities.operations,
+            connect_core::operations::registry()
+                .iter()
+                .map(|d| d.id)
+                .collect::<Vec<_>>()
+        );
+        capabilities.require(&info.pin, &host, &collection, OperationId::UpdateAccess)?;
+        assert!(owner.resource_capabilities(&phone, &collection).is_err());
+        assert_eq!(owner.access_get(&host, &collection)?.version, 1);
+        Ok(())
+    }
+
     #[tokio::test]
     #[ignore = "Requires the packaged, standalone owner runtime"]
     async fn create_enroll_reopen_and_rebind_preserve_the_same_network() -> Result<()> {

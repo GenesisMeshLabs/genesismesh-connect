@@ -15,6 +15,16 @@ export interface AccessRecord {
   authorization:"not_evaluated"|"core_accepted"|"unknown";
 }
 export interface AccessOutcome { record:AccessRecord; local_applied:boolean; problem:string|null }
+export interface ResourceCapabilities {
+  profile:"connect_managed"|"connect_restricted"|"external_unverified";
+  operations:string[];
+}
+export function accessPrerequisiteText(capabilities:ResourceCapabilities):string {
+  if(capabilities.profile==="external_unverified")return "You can view access here. Changes are read-only until your network computer can verify the external authority’s version and settings.";
+  if(capabilities.profile!=="connect_managed")return "You can view access here. On your network computer, check that policy enforcement is required and its operator can manage policies.";
+  if(!capabilities.operations.includes("connect.access.update.v1"))return "Your network computer has not enabled access changes for this item. Review its setup there.";
+  return "";
+}
 export function needsAccessCheck(outcome:AccessOutcome|null):boolean {
   return !!outcome && (outcome.record.stage==="unknown" || outcome.record.stage==="submitted" || (outcome.record.stage==="state_observed" && !outcome.local_applied));
 }

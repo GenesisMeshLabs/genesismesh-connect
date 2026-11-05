@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { el, input } from "./ui";
 import { isService, friendlyProblem, formatBytes, type HomeStatus, type HomeSpace } from "./home-state";
-import { accessOutcomeText, accessReviewLines, needsAccessCheck, type AccessPolicy, type AccessRecord, type AccessOutcome } from "./access-state";
+import { accessOutcomeText, accessReviewLines, accessPrerequisiteText, needsAccessCheck, type ResourceCapabilities, type AccessPolicy, type AccessRecord, type AccessOutcome } from "./access-state";
 export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Promise<void>, message:(s:string)=>void) {
   const dialog=el<HTMLDialogElement>("access-dialog");
   let editing:HomeSpace|null=null, policy:AccessPolicy|null=null, saving=false, originalExpiry="";
   let review:AccessRecord|null=null, outcome:AccessOutcome|null=null;
+  let prerequisite="";
   function problem(value:string) {el("access-problem").textContent=value;el("access-problem").hidden=!value;}
   function selectCurrent(id:string,value:number,label:string) {
     const select=el<HTMLSelectElement>(id);
@@ -14,11 +15,12 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
     select.value=String(value);
   }
   async function access(space:HomeSpace) {
+    const capabilities=await invoke<ResourceCapabilities>("get_resource_capabilities",{request:{collection:space.id}});
+    prerequisite=accessPrerequisiteText(capabilities);
     const result=await invoke<AccessPolicy>("get_access_policy",{request:{collection:space.id}});
     policy=result;editing=space;review=null;problem("");
     outcome=await invoke<AccessOutcome|null>("access_workflow_status",{collection:space.id,check:false});
     if(outcome?.record.stage==="conflict")outcome=null; // Settings above are freshly read.
-    render();
     el("access-title").textContent=`Access to ${space.name}`;
     el("access-version").textContent=`Policy version ${result.version} · Changes are enforced by your network authority.`;
     const list=el("access-devices");list.replaceChildren();
@@ -38,16 +40,20 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
     selectCurrent("access-duration",result.max_seconds,`Current limit: ${result.max_seconds} seconds`);
     el("access-duration-field").hidden=!isService(space);
     input("access-extra").value=JSON.stringify(result.extra_gates,null,2);
+    render();
     if(!dialog.open)dialog.showModal();
   }
   function render() {
+    el("access-prerequisite").textContent=prerequisite;el("access-prerequisite").hidden=!prerequisite;
+    el("access-description").textContent=prerequisite ? "View this item’s current access settings." : "Choose who can use this item. You’ll review the change before it is saved.";
+    el("access-choices").querySelectorAll<HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement>("input,textarea,select").forEach(field=>{field.disabled=!!prerequisite;});
     el("access-choices").hidden=!!review||needsAccessCheck(outcome);
     el("access-review").hidden=!review;
     el("access-outcome").hidden=!outcome;
     el("access-outcome-text").textContent=outcome ? accessOutcomeText(outcome) : "";
     el<HTMLButtonElement>("access-check").hidden=!outcome || outcome.record.stage==="conflict";
     el<HTMLButtonElement>("access-reload").hidden=!outcome || needsAccessCheck(outcome);
-    el<HTMLButtonElement>("access-save").disabled=saving||needsAccessCheck(outcome)||outcome?.record.stage==="conflict";
+    el<HTMLButtonElement>("access-save").disabled=saving||!!prerequisite||needsAccessCheck(outcome)||outcome?.record.stage==="conflict";
     el<HTMLButtonElement>("access-save").textContent=review ? "Confirm access change" : "Review change";
     el<HTMLButtonElement>("access-back").disabled=saving;
     el<HTMLButtonElement>("access-check").disabled=saving;
@@ -79,7 +85,7 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
   el("access-reload").addEventListener("click",()=>{if(!saving&&editing)void access(editing).catch(e=>problem(friendlyProblem(String(e))));});
   dialog.addEventListener("cancel",e=>{if(saving)e.preventDefault();else void cancelReview().catch(()=>{});});
   el("access-form").addEventListener("submit",async e=>{
-    e.preventDefault();if(saving||!editing||!policy||needsAccessCheck(outcome))return;problem("");
+    e.preventDefault();if(saving||prerequisite||!editing||!policy||needsAccessCheck(outcome))return;problem("");
     if(review) {
       const approved=review;saving=true;render();
       try {

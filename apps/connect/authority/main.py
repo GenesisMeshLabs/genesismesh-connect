@@ -24,6 +24,7 @@ def main():
                 request=json.loads(line)
                 op=request.get("op")
                 if op=="capabilities" and set(request)=={"op"}: result=owner.capabilities()
+                elif op=="resource_capabilities" and set(request)=={"op","host","collection"}: result=owner.resource_capabilities(request["host"],request["collection"])
                 elif op=="create" and set(request)=={"op","name"}: result=owner.create(request["name"])
                 elif op=="open" and set(request)=={"op"}: result=owner.open()
                 elif op=="attach" and set(request)=={"op","config"}: result=owner.attach(request["config"])

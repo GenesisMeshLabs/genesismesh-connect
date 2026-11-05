@@ -284,6 +284,30 @@ impl BridgeAuthority {
         .await
     }
 
+    /// Resource-scoped discovery over a mutually authenticated bridge. Unknown
+    /// or legacy protocol support is an unmet prerequisite, never a fallback.
+    pub async fn resource_capabilities(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+        pin: &crate::authority::TrustPin,
+        collection: String,
+    ) -> Result<crate::operations::ResourceCapabilities> {
+        let request = crate::operations::ResourceQuery { collection };
+        request.validate()?;
+        let actor = identity.public_key();
+        let value = self.retried(identity, trust, Operation::ResourceCapabilities, || Ok(serde_json::to_value(&request)?))
+            .await.context("Could not verify resource prerequisites. Keep the network computer awake and update Connect there if necessary")?;
+        let capabilities: crate::operations::ResourceCapabilities = serde_json::from_value(value)?;
+        capabilities.require(
+            pin,
+            &actor,
+            &request.collection,
+            crate::operations::OperationId::ResourceCapabilities,
+        )?;
+        Ok(capabilities)
+    }
+
     /// Stop one of this device's Spaces. False if the computer had none.
     pub async fn unshare_space(
         &self,

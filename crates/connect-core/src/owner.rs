@@ -30,12 +30,15 @@ pub struct RuntimeCapabilities {
     pub transport: String,
     pub operations: Vec<String>,
 }
+pub(crate) fn required_core_version() -> Result<&'static str> {
+    include_str!("../../../apps/connect/authority/core-requirements.txt")
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("genesis-mesh=="))
+        .context("Missing packaged authority version")
+}
 impl RuntimeCapabilities {
     pub fn require_access_update(&self, pin: &crate::authority::TrustPin) -> Result<()> {
-        let expected = include_str!("../../../apps/connect/authority/core-requirements.txt")
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("genesis-mesh=="))
-            .context("Missing packaged authority version")?;
+        let expected = required_core_version()?;
         ensure!(
             self.schema == 1 && self.transport == "local_inherited_pipe",
             "Update the network computer: its Connect adapter is incompatible"
@@ -167,6 +170,10 @@ pub fn orphaned(
 /// a device's behalf. The host is always the authenticated device.
 #[derive(Debug)]
 pub enum OwnerCall {
+    ResourceCapabilities {
+        host: String,
+        collection: String,
+    },
     /// Create or change a Space for `host`; never adopts an existing policy.
     Share {
         host: String,
@@ -204,6 +211,15 @@ pub struct OwnerRuntime {
     awaiting: bool,
 }
 impl OwnerRuntime {
+    pub fn resource_capabilities(
+        &mut self,
+        host: &str,
+        collection: &str,
+    ) -> Result<crate::operations::ResourceCapabilities> {
+        Ok(serde_json::from_value(self.request(
+            json!({"op":"resource_capabilities","host":host,"collection":collection}),
+        )?)?)
+    }
     pub fn capabilities(&mut self) -> Result<RuntimeCapabilities> {
         Ok(serde_json::from_value(
             self.request(json!({"op":"capabilities"}))?,
@@ -498,6 +514,9 @@ impl OwnerRuntime {
     /// Answer one bridge request.
     pub fn answer(&mut self, call: OwnerCall) -> Result<Value> {
         Ok(match call {
+            OwnerCall::ResourceCapabilities { host, collection } => {
+                serde_json::to_value(self.resource_capabilities(&host, &collection)?)?
+            }
             OwnerCall::Share {
                 host,
                 collection,

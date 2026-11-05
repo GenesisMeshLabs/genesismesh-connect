@@ -10,7 +10,10 @@ use connect_core::{
     access_workflow::{AccessContext, AccessJournal, AccessRecord, Stage},
     authority::TrustPin,
     device::{DeviceController, DeviceStatus},
-    operations::{AccessCommitInput, AccessOutcome, AccessReviewInput},
+    operations::{
+        AccessCommitInput, AccessOutcome, AccessReviewInput, OperationId, ResourceCapabilities,
+        ResourceQuery,
+    },
     owner::{AccessPolicy, AccessUpdate},
 };
 use tauri::Manager;
@@ -77,18 +80,61 @@ async fn read(
             .map_err(error),
     }
 }
-fn readiness(owner: &mut OwnerSlot, context: &AccessContext) -> Result<(), String> {
-    if let Some(runtime) = owner.runtime.as_mut() {
-        runtime
-            .capabilities()
-            .map_err(error)?
-            .require_access_update(&context.pin)
-            .map_err(error)?;
+async fn capabilities(
+    owner: &mut OwnerSlot,
+    device: &mut DeviceController,
+    collection: &str,
+) -> Result<ResourceCapabilities, String> {
+    let status = device.status().map_err(error)?;
+    let context = context(&status)?;
+    if !status.shares.iter().any(|s| s.collection_id == collection) {
+        return Err("Only the sharing device can manage access.".into());
     }
-    // Remote devices use the fixed authenticated resource-host bridge, NOT a
-    // remote-owner route. A successful fresh policy read establishes only that
-    // narrow adapter's availability. It does not discover all core flags/roles.
-    Ok(())
+    let result = match owner.runtime.as_mut() {
+        Some(runtime) => runtime
+            .resource_capabilities(&context.actor, collection)
+            .map_err(error)?,
+        None => device
+            .resource_capabilities(collection.into())
+            .await
+            .map_err(|e| format!("{e:#}"))?,
+    };
+    result
+        .require(
+            &context.pin,
+            &context.actor,
+            collection,
+            OperationId::ResourceCapabilities,
+        )
+        .map_err(error)?;
+    result
+        .require(
+            &context.pin,
+            &context.actor,
+            collection,
+            OperationId::InspectAccess,
+        )
+        .map_err(error)?;
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn get_resource_capabilities(
+    request: ResourceQuery,
+    app: tauri::AppHandle,
+) -> Result<ResourceCapabilities, String> {
+    request.validate().map_err(error)?;
+    let desktop = app.state::<DesktopState>();
+    let workflow = app.state::<WorkflowState>();
+    let _idle = desktop
+        .transfers
+        .try_read()
+        .map_err(|_| "Wait for the network change to finish.")?;
+    let mut owner = workflow.slot.lock().await;
+    let mut slot = desktop.slot.lock().await;
+    let device = slot.controller.as_mut().ok_or("Join your network first.")?;
+    device.refresh().await.map_err(error)?;
+    capabilities(&mut owner, device, &request.collection).await
 }
 
 async fn refresh_projection(
@@ -172,8 +218,14 @@ pub async fn review_access_policy(
         settings.recipients.clone(),
         &consumer::recipients_for(&status),
     )?;
-    readiness(&mut owner, &context)?;
+    let available = capabilities(&mut owner, device, &id).await?;
+    available
+        .require(&context.pin, &context.actor, &id, OperationId::UpdateAccess)
+        .map_err(error)?;
     let current = read(&mut owner, device, &id).await?;
+    if available.policy_version != current.version {
+        return Err("Access changed while checking features. Reload its settings.".into());
+    }
     journal(&desktop)?
         .prepare(
             context,
@@ -221,8 +273,19 @@ pub async fn commit_access_policy(
         review.intent.after.recipients.clone(),
         &consumer::recipients_for(&status),
     )?;
-    readiness(&mut owner, &context)?;
+    let available = capabilities(&mut owner, device, collection).await?;
+    available
+        .require(
+            &context.pin,
+            &context.actor,
+            collection,
+            OperationId::UpdateAccess,
+        )
+        .map_err(error)?;
     let current = read(&mut owner, device, collection).await?;
+    if available.policy_version != current.version {
+        return Err("Access changed while checking features. Reload its settings.".into());
+    }
     journal
         .submit(
             &id,

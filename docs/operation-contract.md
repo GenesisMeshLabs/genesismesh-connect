@@ -6,8 +6,8 @@ member-device key tier, execution location, approval, retry and evidence limits.
 It does not accept arbitrary core routes, administrator URLs, key paths or shell
 commands. It does not enable an assistant or give membership administrative power.
 
-The initial entries inspect a resource's access and review/commit an access
-change. The live Tauri handlers consume the registry's `ResourceQuery`,
+The initial entries discover a resource's prerequisites, inspect its access and
+review/commit an access change. The live Tauri handlers consume the registry's `ResourceQuery`,
 `AccessReviewInput` and `AccessCommitInput` types. Commit receives only a stored
 review ID and digest; the [access workflow](access-workflow.md) resolves current
 identity, policy and approval context separately. A future assisted entry point

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { accessOutcomeText, accessReviewLines, needsAccessCheck, type AccessRecord, type AccessOutcome } from "../src/access-state.ts";
+import { accessOutcomeText, accessReviewLines, accessPrerequisiteText, needsAccessCheck, type AccessRecord, type AccessOutcome } from "../src/access-state.ts";
 
 const record:AccessRecord={
   intent:{id:"review",collection:"folder",name:"Family photos",context:{pin:{network_name:"My home",root_public_key:"root"},actor:"desktop",audience:"desktop"},
@@ -8,6 +8,12 @@ const record:AccessRecord={
     after:{version:1,recipients:["phone-a","phone-b"],expires_at:null,max_bytes:2048,max_seconds:300,extra_gates:[]},expires_at:"2026-11-05T12:05:00Z"},
   digest:"bound",stage:"prepared",authorization:"not_evaluated",
 };
+test("read-only prerequisites distinguish unknown external deployment, restricted host and missing operation",()=>{
+  assert.equal(accessPrerequisiteText({profile:"connect_managed",operations:["connect.access.update.v1"]}),"");
+  assert.match(accessPrerequisiteText({profile:"external_unverified",operations:[]}),/external authority/);
+  assert.match(accessPrerequisiteText({profile:"connect_restricted",operations:[]}),/policy enforcement/);
+  assert.match(accessPrerequisiteText({profile:"connect_managed",operations:[]}),/not enabled/);
+});
 test("review names exact network, item, allowed and removed devices, limits and expiry",()=>{
   const lines=new Map(accessReviewLines(record,[{id:"phone-a",name:"Phone"},{id:"phone-b",name:"Phone"},{id:"tablet",name:"iPad"}],true));
   assert.equal(lines.get("Network"),"My home");assert.equal(lines.get("Shared item"),"Family photos");

@@ -6,6 +6,23 @@
       "assisted": false,
       "class": "read",
       "commit_schema": null,
+      "evidence": "Authenticated, current resource-scoped adapter metadata; not a grant or signed core evidence",
+      "execution": "authority_host_via_fixed_adapter",
+      "id": "connect.resource.capabilities.v1",
+      "input_schema": "#/schemas/resource_query",
+      "key_tier": "member_device",
+      "manual": true,
+      "output_schema": "#/schemas/resource_capabilities",
+      "retry": "fresh_read",
+      "review_schema": null,
+      "title": "Check this item's available features"
+    },
+    {
+      "actor": "authenticated_resource_host",
+      "approval": "none",
+      "assisted": false,
+      "class": "read",
+      "commit_schema": null,
       "evidence": "Current authority state; not signed audit evidence",
       "execution": "authority_host_via_fixed_adapter",
       "id": "connect.access.inspect.v1",
@@ -714,6 +731,23 @@
               "$ref": "#/$defs/ResourceQuery"
             },
             "operation": {
+              "const": "connect.resource.capabilities.v1",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "input"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/ResourceQuery"
+            },
+            "operation": {
               "const": "connect.access.inspect.v1",
               "type": "string"
             }
@@ -743,6 +777,94 @@
         }
       ],
       "title": "OperationRequest"
+    },
+    "resource_capabilities": {
+      "$defs": {
+        "OperationId": {
+          "enum": [
+            "connect.resource.capabilities.v1",
+            "connect.access.inspect.v1",
+            "connect.access.update.v1"
+          ],
+          "type": "string"
+        },
+        "ResourceProfile": {
+          "enum": [
+            "connect_managed",
+            "connect_restricted",
+            "external_unverified"
+          ],
+          "type": "string"
+        },
+        "TrustPin": {
+          "additionalProperties": false,
+          "description": "Provisioned out of band. Never construct this from an untrusted HTTP reply.",
+          "properties": {
+            "network_name": {
+              "type": "string"
+            },
+            "root_public_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "root_public_key",
+            "network_name"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "A fresh authenticated snapshot for one resource host. It is NOT a bearer\ncapability: every mutation rechecks it and still needs core authorization.",
+      "properties": {
+        "actor": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "core_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/OperationId"
+          },
+          "type": "array"
+        },
+        "pin": {
+          "$ref": "#/$defs/TrustPin"
+        },
+        "policy_version": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "profile": {
+          "$ref": "#/$defs/ResourceProfile"
+        },
+        "schema": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema",
+        "pin",
+        "actor",
+        "collection",
+        "profile",
+        "policy_version",
+        "operations"
+      ],
+      "title": "ResourceCapabilities",
+      "type": "object"
     },
     "resource_query": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

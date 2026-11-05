@@ -111,6 +111,10 @@ export function formatBytes(bytes: number) {
   return `${(bytes / 1024 ** power).toFixed(1)} ${units[power - 1]}`;
 }
 export function friendlyProblem(value: string) {
+  if (/could not verify resource prerequisites|resource prerequisites.*unavailable/i.test(value)) return "Couldn’t check this item’s features. Keep Connect open on your network computer, and update it if needed. No access change was sent.";
+  if (/prerequisites answered for a different/i.test(value)) return "The feature check did not match this device, network and item. Reconnect to your network computer and reopen access settings.";
+  if (/access changed while checking features/i.test(value)) return "Access changed during the check. Reload the current settings before saving.";
+  if (/access is read-only here/i.test(value)) return "These settings are read-only here. Review the authority’s deployment and policy enforcement on your network computer.";
   if (/review expired|review expiry/i.test(value)) return "This review expired. Choose Change choices, then review the current settings again.";
   if (/access changed since|shared item changed|no longer shared|policy changed/i.test(value)) return "This item changed elsewhere. Reload its access settings before saving.";
   if (/workflow history is full|workflow journal is full/i.test(value)) return "Access history has reached this preview’s storage limit. Your settings are unchanged; use the network computer to review the history.";

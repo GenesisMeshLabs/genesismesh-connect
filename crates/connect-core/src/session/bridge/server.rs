@@ -379,6 +379,7 @@ async fn exchange(
         | Operation::Inboxes
         | Operation::Services
         | Operation::AccessPolicy
+        | Operation::ResourceCapabilities
         | Operation::ShareSpace
         | Operation::UnshareSpace => {
             let peer = authenticate_for(
@@ -410,8 +411,10 @@ async fn exchange(
                     Operation::Settings => &budgets.settings,
                     Operation::Members => &budgets.members,
                     Operation::Spaces | Operation::Inboxes | Operation::Services => &budgets.spaces,
-                    Operation::ShareSpace | Operation::UnshareSpace | Operation::AccessPolicy =>
-                        &budgets.space_changes,
+                    Operation::ShareSpace
+                    | Operation::UnshareSpace
+                    | Operation::AccessPolicy
+                    | Operation::ResourceCapabilities => &budgets.space_changes,
                     _ => &budgets.collections,
                 })
                 .lock()
@@ -481,6 +484,7 @@ async fn exchange(
                 | Operation::Inboxes
                 | Operation::Services
                 | Operation::AccessPolicy
+                | Operation::ResourceCapabilities
                 | Operation::ShareSpace
                 | Operation::UnshareSpace => {
                     credentials
@@ -622,6 +626,26 @@ async fn spaces(
                     .filter_map(|space| SpaceView::of(space, node))
                     .collect(),
             })?)
+        }
+        Operation::ResourceCapabilities => {
+            // Actor is the mutually authenticated peer, never a supplied host.
+            let request: crate::operations::ResourceQuery = serde_json::from_value(request)?;
+            request.validate()?;
+            let response = ask(
+                &owner,
+                crate::owner::OwnerCall::ResourceCapabilities {
+                    host: node.into(),
+                    collection: request.collection.clone(),
+                },
+            )
+            .await?;
+            let capabilities: crate::operations::ResourceCapabilities =
+                serde_json::from_value(response.clone())?;
+            ensure!(
+                capabilities.actor == node && capabilities.collection == request.collection,
+                "Invalid resource prerequisite scope"
+            );
+            Ok(response)
         }
         Operation::AccessPolicy => {
             let request: super::AccessRequest = serde_json::from_value(request)?;

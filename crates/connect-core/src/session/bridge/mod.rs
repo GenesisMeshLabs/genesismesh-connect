@@ -79,6 +79,7 @@ enum Operation {
     Inboxes,
     Services,
     AccessPolicy,
+    ResourceCapabilities,
 }
 
 /// A Space as a device learns it from its network computer: another device's

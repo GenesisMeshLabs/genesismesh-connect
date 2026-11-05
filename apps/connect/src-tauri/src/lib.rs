@@ -121,6 +121,7 @@ pub fn run() {
             consumer::pair_join,
             services::share_service,
             services::get_access_policy,
+            access::get_resource_capabilities,
             access::operation_registry,
             access::review_access_policy,
             access::commit_access_policy,

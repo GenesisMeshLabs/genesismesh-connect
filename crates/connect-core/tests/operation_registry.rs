@@ -12,7 +12,7 @@ fn review() -> serde_json::Value {
 #[test]
 fn registry_keeps_read_write_actor_approval_and_retry_contracts_distinct() -> Result<()> {
     let specs = registry();
-    assert_eq!(specs.len(), 2);
+    assert_eq!(specs.len(), 3);
     let read = specs
         .iter()
         .find(|s| s.id == OperationId::InspectAccess)
@@ -63,6 +63,13 @@ fn closed_inputs_reject_arbitrary_dispatch_context_and_duplicate_json() -> Resul
     assert!(OperationRequest::parse(&changed.to_string()).is_err());
     assert!(OperationRequest::parse(r#"{"operation":"connect.access.inspect.v1","operation":"connect.access.update.v1","input":{}}"#).is_err());
     assert!(OperationRequest::parse(&" ".repeat(24 * 1024 + 1)).is_err());
+    assert!(
+        serde_json::from_value::<connect_core::operations::ResourceQuery>(
+            json!({"collection":uuid::Uuid::new_v4().to_string(),"host":"someone-else"})
+        )
+        .is_err(),
+        "Discovery cannot supply an actor override on the wire"
+    );
     Ok(())
 }
 
@@ -99,6 +106,92 @@ fn structural_decode_does_not_replace_runtime_semantic_checks() -> Result<()> {
         .validate()
         .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn resource_metadata_is_bound_to_context_and_never_substitutes_for_permissions() -> Result<()> {
+    use connect_core::{
+        authority::TrustPin,
+        operations::{ResourceCapabilities, ResourceProfile},
+    };
+    let pin = TrustPin {
+        root_public_key: STANDARD.encode([1; 32]),
+        network_name: "Home".into(),
+    };
+    let actor = STANDARD.encode([2; 32]);
+    let collection = uuid::Uuid::new_v4().to_string();
+    let version = include_str!("../../../apps/connect/authority/core-requirements.txt")
+        .lines()
+        .find_map(|line| line.strip_prefix("genesis-mesh=="))
+        .unwrap();
+    let valid = ResourceCapabilities {
+        schema: 1,
+        pin: pin.clone(),
+        actor: actor.clone(),
+        collection: collection.clone(),
+        core_version: Some(version.into()),
+        profile: ResourceProfile::ConnectManaged,
+        policy_version: 1,
+        operations: registry().iter().map(|d| d.id).collect(),
+    };
+    valid.require(&pin, &actor, &collection, OperationId::UpdateAccess)?;
+    for field in [
+        "pin",
+        "actor",
+        "collection",
+        "core_version",
+        "schema",
+        "profile",
+        "operations",
+        "policy_version",
+    ] {
+        let mut changed = valid.clone();
+        match field {
+            "pin" => changed.pin.network_name = "Other".into(),
+            "actor" => changed.actor = "other".into(),
+            "collection" => changed.collection = uuid::Uuid::new_v4().to_string(),
+            "core_version" => changed.core_version = Some("0.0.0".into()),
+            "schema" => changed.schema = 2,
+            "profile" => changed.profile = ResourceProfile::ConnectRestricted,
+            "operations" => changed.operations = vec![OperationId::InspectAccess],
+            "policy_version" => changed.policy_version = 0,
+            _ => unreachable!(),
+        }
+        assert!(
+            changed
+                .require(&pin, &actor, &collection, OperationId::UpdateAccess)
+                .is_err(),
+            "{field}"
+        );
+    }
+    let mut unverified = valid.clone();
+    unverified.profile = ResourceProfile::ExternalUnverified;
+    unverified.core_version = None;
+    unverified.operations = vec![
+        OperationId::ResourceCapabilities,
+        OperationId::InspectAccess,
+    ];
+    unverified.require(&pin, &actor, &collection, OperationId::InspectAccess)?;
+    assert!(
+        unverified
+            .require(&pin, &actor, &collection, OperationId::UpdateAccess)
+            .is_err()
+    );
+    let mut repeated = valid.clone();
+    repeated.operations = vec![
+        OperationId::ResourceCapabilities,
+        OperationId::UpdateAccess,
+        OperationId::UpdateAccess,
+    ];
+    assert!(
+        repeated
+            .require(&pin, &actor, &collection, OperationId::ResourceCapabilities)
+            .is_err()
+    );
+    let mut extra = serde_json::to_value(valid)?;
+    extra["admin_token"] = json!("not accepted");
+    assert!(serde_json::from_value::<ResourceCapabilities>(extra).is_err());
     Ok(())
 }
 

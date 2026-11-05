@@ -247,6 +247,27 @@ class Owner:
                 "pin": self.info()["pin"], "transport": "local_inherited_pipe",
                 "operations": ["connect.access.update.v1"]}
 
+    def resource_capabilities(self, host_node, collection_id):
+        """Only the current resource host gets adapter prerequisites. This is
+        a fresh snapshot, never permission to skip core authorization.
+
+        Attached external services have no authenticated general feature/version
+        discovery contract yet. Keep them inspectable but do not guess their
+        deployment flags or advertise verified mutations.
+        """
+        settings = self.access_get(host_node, collection_id)
+        runtime = self.capabilities()
+        operations = ["connect.resource.capabilities.v1", "connect.access.inspect.v1"]
+        managed = self.service is not None and self.server is not None
+        enabled = (managed and self.service.boundary_policy_enforcement == "required"
+                   and self.service.operator_key_tiers.get(self.config["operator"]["key_id"]) == "privileged")
+        if enabled:
+            operations.append("connect.access.update.v1")
+        return {"schema": 1, "pin": runtime["pin"], "actor": node(host_node),
+                "collection": collection_id, "core_version": runtime["core_version"] if managed else None,
+                "profile": "connect_managed" if enabled else "connect_restricted" if managed else "external_unverified",
+                "policy_version": settings["version"], "operations": operations}
+
     def admin(self, path, body):
         if not self.config:
             raise Refused("Open the network first.")

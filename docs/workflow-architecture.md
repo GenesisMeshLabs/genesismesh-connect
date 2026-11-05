@@ -128,7 +128,7 @@ pins, identify missing history and fence old hosts before claiming continuity.
 | Dependency qualification | Real-core Windows owner tests and Linux QUIC/authority checks pass; full Windows native gate blocked by Application Control; other platforms remain separate |
 | CONNECT-02 typed operation registry and exact-intent preview | Closed resource operation registry, generated value schemas and access review/commit implemented; broad core operations and assisted coverage remain planned |
 | CONNECT-03 durable journal | Access-update dispatch/crash/readback journal implemented; enrollment, recovery and general workflows remain planned |
-| CONNECT-04 runtime prerequisite discovery | Fixed local adapter release/network/operation readiness implemented; general authenticated remote flags/actor discovery remains planned |
+| CONNECT-04 runtime prerequisite discovery | Authenticated local/remote resource-host release/profile/ownership/operation discovery implemented; arbitrary external authorities and general owner/agent roles remain planned |
 | Later phases | All agents, policies, federation, oversight, evidence, offline and operations outcomes remain visible in the reviewed mapping |
 
 For every implemented slice, retain denial, expiry, replay, changed intent,

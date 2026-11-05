@@ -62,10 +62,12 @@ advertises only this implemented access adapter. Rust verifies those fields
 before local mutation. This is not remote-owner enrollment, general feature-flag
 discovery or a list of core permissions.
 
-Remote resource hosts retain the existing authenticated Iroh access bridge and
-host-only authority checks. A successful current policy read establishes only
-that narrow bridge operation's availability. Full authenticated version/flag/
-actor discovery across arbitrary remote deployments remains CONNECT-04 work.
+Remote resource hosts now use [resource-scoped prerequisite discovery](resource-prerequisites.md)
+over the authenticated Iroh bridge, with host-only authority checks. The response
+binds root/network, actor, item, actual managed release, deployment profile,
+policy version and supported resource operations. Native review/commit recheck
+these requirements; a cached response is not a grant. Full discovery across
+arbitrary external deployments and general owner/agent roles remains CONNECT-04 work.
 
 Connect checks stale state immediately before dispatch and uses the existing
 adapter's version refusal. This is **not** an atomic cross-process compare-and-swap
@@ -73,9 +75,10 @@ against concurrent independent administrator writes: the adapter performs a
 multi-step core mutation. General conflict fencing and exactly-once execution
 need operation-specific core support. No core protocol or root custody changed.
 
-This implements one manual typed operation. It is not the complete operation
-registry, general visual policy editor, assisted workflow, independent approval,
-remote-owner Requests protocol, or enrollment/recovery journal.
+The [typed resource registry](operation-contract.md) includes inspection, update
+and prerequisite discovery. It does not complete the general core registry,
+visual policy editor, assisted workflow, independent approval, remote-owner
+Requests protocol, or enrollment/recovery journal.
 
 ## Verification record — 5 November 2026
 
