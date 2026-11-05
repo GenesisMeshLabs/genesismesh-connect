@@ -26,10 +26,10 @@ android {
         buildConfigField("String", "SOURCE_COMMIT", "\"${System.getenv("GITHUB_SHA") ?: "local"}\"")
     }
     buildFeatures { buildConfig = true }
-    sourceSets.getByName("main").res.srcDir(layout.buildDirectory.dir("generated/brand"))
+    sourceSets.getByName("main").res.srcDir(layout.buildDirectory.dir("generated/brand").get().asFile)
 }
 
-val prepareBrand by tasks.registering(Copy::class) {
+val prepareBrand = tasks.register<Copy>("prepareBrand") {
     from(repository.resolve("apps/connect/src-tauri/icons/icon.png"))
     into(layout.buildDirectory.dir("generated/brand/drawable"))
     rename { "genesis_mesh.png" }

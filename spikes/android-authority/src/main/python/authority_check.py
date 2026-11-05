@@ -1,5 +1,6 @@
 """Fixed real-core runtime checks. No console, owner keys or network creation."""
 import importlib.metadata
+from contextlib import closing
 import json
 import os
 from pathlib import Path
@@ -72,10 +73,11 @@ def run(expected_version):
         stage = "Local storage"
         with tempfile.TemporaryDirectory(prefix="gm-engine-check-") as folder:
             path = Path(folder) / "check.db"
-            with sqlite3.connect(path) as database:
+            with closing(sqlite3.connect(path)) as database:
                 database.execute("create table runtime (value integer)")
                 database.execute("insert into runtime values (42)")
-            with sqlite3.connect(path) as database:
+                database.commit()
+            with closing(sqlite3.connect(path)) as database:
                 assert database.execute("select value from runtime").fetchone() == (42,)
         report["checks"].append({"name": stage, "passed": True})
 
