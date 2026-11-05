@@ -1,0 +1,240 @@
+"""Prepare hash-locked upstream authority dependencies and check Android wheels.
+
+Build products remain unaccepted for device use until real runtime tests pass.
+"""
+import argparse
+from email.parser import BytesParser
+import hashlib
+import importlib.metadata as metadata
+import importlib.util
+import json
+from pathlib import Path
+import struct
+import subprocess
+import tarfile
+import tomllib
+import urllib.parse
+import urllib.request
+import zipfile
+
+from packaging.requirements import Requirement
+from packaging.markers import default_environment
+from packaging.tags import compatible_tags, cpython_tags, parse_tag
+from packaging.utils import canonicalize_name, parse_wheel_filename
+
+ROOT = Path(__file__).resolve().parents[1]
+LOCK = ROOT / "scripts/android-authority-sources.lock.json"
+PACKAGES = ("pydantic-core", "cryptography", "PyNaCl", "cffi")
+PATCHES = {"cryptography": ["scripts/android-authority-patches/cryptography-android-include.patch"]}
+
+
+def pin():
+    lines = [s.split("#", 1)[0].strip() for s in (ROOT / "apps/connect/authority/core-requirements.txt").read_text().splitlines()]
+    entries = [s for s in lines if s]
+    if len(entries) != 1:
+        raise ValueError("Expected one authority release pin")
+    requirement = Requirement(entries[0])
+    exact(requirement)
+    if requirement.name != "genesis-mesh":
+        raise ValueError("Unexpected authority package")
+    return requirement
+
+
+def exact(requirement):
+    specs = list(requirement.specifier)
+    if len(specs) != 1 or specs[0].operator != "==" or "*" in specs[0].version or requirement.url or requirement.marker:
+        raise ValueError("An exact, unconditional dependency is required")
+    return specs[0].version
+
+
+def dependency(parent, name):
+    matches = [Requirement(r) for r in metadata.requires(parent) or [] if canonicalize_name(Requirement(r).name) == canonicalize_name(name)]
+    if len(matches) != 1:
+        raise ValueError("Dependency is missing or ambiguous")
+    version = exact(matches[0])
+    if metadata.version(name) != version:
+        raise ValueError("Installed dependency differs from the authority requirement")
+    return version
+
+
+def versions():
+    requirement = pin()
+    if metadata.version(requirement.name) != exact(requirement):
+        raise ValueError("Install the pinned authority before preparing its dependencies")
+    dependency("genesis-mesh", "pydantic")
+    return {"pydantic-core": dependency("pydantic", "pydantic-core"),
+            "cryptography": dependency("genesis-mesh", "cryptography"),
+            "PyNaCl": dependency("genesis-mesh", "PyNaCl"), "cffi": cffi_version()}
+
+
+def android_environment():
+    return {**default_environment(), "python_version": "3.13", "python_full_version": "3.13.0",
+                   "sys_platform": "android", "os_name": "posix", "platform_system": "Android",
+                   "platform_machine": "aarch64", "platform_python_implementation": "CPython", "extra": "",
+                   "platform_release": "7.0", "platform_version": "24", "implementation_name": "cpython", "implementation_version": "3.13.0"}
+
+
+def cffi_version():
+    environment = android_environment()
+    version = metadata.version("cffi")
+    for parent in ("cryptography", "PyNaCl"):
+        requirements = [Requirement(r) for r in metadata.requires(parent) or []]
+        active = [r for r in requirements if canonicalize_name(r.name) == "cffi" and (not r.marker or r.marker.evaluate(environment))]
+        if not active or any(not r.specifier.contains(version) for r in active):
+            raise ValueError("CFFI does not satisfy the Android authority dependencies")
+    return version
+
+
+def fetch(url, limit, hosts=("pypi.org", "files.pythonhosted.org")):
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname not in hosts or parsed.username or parsed.password:
+        raise ValueError("Only official HTTPS Python package sources are permitted")
+    with urllib.request.urlopen(url, timeout=60) as response:
+        redirected = urllib.parse.urlsplit(response.url)
+        if redirected.scheme != "https" or redirected.hostname not in hosts or redirected.username or redirected.password:
+            raise ValueError("Unexpected source redirect")
+        data = response.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("Package source exceeds the bounded download size")
+    return data
+
+
+def refresh_lock():
+    sources = {}
+    for name, version in versions().items():
+        info = json.loads(fetch(f"https://pypi.org/pypi/{name}/{version}/json", 2_000_000))
+        files = [f for f in info["urls"] if f["packagetype"] == "sdist"]
+        if len(files) != 1:
+            raise ValueError("Expected a single upstream source archive")
+        sources[name] = {"version": version, "url": files[0]["url"], "sha256": files[0]["digests"]["sha256"]}
+        sources[name]["patches"] = [{"path": p, "sha256": hashlib.sha256((ROOT / p).read_bytes()).hexdigest()} for p in PATCHES.get(name, [])]
+    LOCK.write_text(json.dumps({"schema": 1, "authority_pin_sha256": hashlib.sha256(str(pin()).encode()).hexdigest(),
+                                "packages": sources}, indent=2) + "\n", encoding="utf-8")
+
+
+def verified_source(name):
+    lock = json.loads(LOCK.read_text())
+    expected = versions()
+    if lock["schema"] != 1 or lock["authority_pin_sha256"] != hashlib.sha256(str(pin()).encode()).hexdigest():
+        raise ValueError("Authority release changed; refresh and review source qualification")
+    source = lock["packages"][name]
+    if source["version"] != expected[name]:
+        raise ValueError("Source lock differs from the pinned authority dependency")
+    data = fetch(source["url"], 100_000_000)
+    if hashlib.sha256(data).hexdigest() != source["sha256"]:
+        raise ValueError("Source archive hash mismatch; nothing may be built")
+    return source, data
+
+
+def unpack(archive, output):
+    output.mkdir(parents=True, exist_ok=False)
+    with tarfile.open(archive) as source:
+        members = source.getmembers()
+        if len(members) > 50_000 or sum(m.size for m in members) > 500_000_000:
+            raise ValueError("Source archive exceeds extraction limits")
+        source.extractall(output, filter="data")
+    roots = list(output.iterdir())
+    if len(roots) != 1 or not roots[0].is_dir():
+        raise ValueError("Expected a single source directory")
+    return roots[0]
+
+
+def prepare(name, output):
+    for parent in output.resolve().parents:
+        manifest = parent / "Cargo.toml"
+        if manifest.is_file() and "workspace" in tomllib.loads(manifest.read_text()):
+            raise ValueError("Prepare sources outside the enclosing Cargo workspace")
+    source, data = verified_source(name)
+    output.mkdir(parents=True, exist_ok=False)
+    archive = output / "upstream.tar.gz"
+    archive.write_bytes(data)
+    project = unpack(archive, output / "extracted")
+    destination = output / "project"
+    if not project.resolve().is_relative_to(output.resolve()) or not destination.resolve().is_relative_to(output.resolve()):
+        raise ValueError("Source move escapes the build workspace")
+    project.rename(destination)
+    patches = source.get("patches", [])
+    if [p["path"] for p in patches] != PATCHES.get(name, []):
+        raise ValueError("Build patch qualification changed; refresh the source lock")
+    for patch in patches:
+        path = (ROOT / patch["path"]).resolve()
+        if not path.is_relative_to((ROOT / "scripts/android-authority-patches").resolve()) or hashlib.sha256(path.read_bytes()).hexdigest() != patch["sha256"]:
+            raise ValueError("Build patch hash or location mismatch")
+        subprocess.run(["patch", "--batch", "--forward", "-p1", "-i", str(path)], cwd=destination, check=True)
+    (output / "source-report.json").write_text(json.dumps({"package": name, **source, "device_runtime": "unverified"}, indent=2) + "\n")
+
+
+def inspect_wheel(path):
+    name, version, _, tags = parse_wheel_filename(path.name)
+    platforms = [f"android_{api}_arm64_v8a" for api in range(24, 20, -1)] + ["any"]
+    supported = set(cpython_tags((3, 13), ["cp313"], platforms)) | set(compatible_tags((3, 13), "cp313", platforms))
+    if not tags.intersection(supported):
+        raise ValueError("Wheel interpreter or ABI is incompatible with CPython 3.13")
+    spec = importlib.util.spec_from_file_location("alignment", ROOT / "scripts/check-android-apk.py")
+    alignment = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(alignment)
+    libraries = []
+    with zipfile.ZipFile(path) as wheel:
+        manifests = [e for e in wheel.infolist() if e.filename.endswith(".dist-info/METADATA")]
+        if len(manifests) != 1 or manifests[0].file_size > 1_000_000:
+            raise ValueError("Missing or oversized wheel metadata")
+        manifest = BytesParser().parsebytes(wheel.read(manifests[0]))
+        if canonicalize_name(manifest.get("Name", "")) != name or manifest.get("Version") != str(version):
+            raise ValueError("Wheel contents disagree with its name/version")
+        declarations = [e for e in wheel.infolist() if e.filename.endswith(".dist-info/WHEEL")]
+        if len(declarations) != 1 or declarations[0].file_size > 1_000_000:
+            raise ValueError("Missing or oversized WHEEL metadata")
+        if Path(declarations[0].filename).parent != Path(manifests[0].filename).parent:
+            raise ValueError("WHEEL and package metadata belong to different distributions")
+        declared = BytesParser().parsebytes(wheel.read(declarations[0]))
+        declared_tags = set()
+        for tag in declared.get_all("Tag", []):
+            declared_tags.update(parse_tag(tag))
+        if declared_tags != tags:
+            raise ValueError("WHEEL tags disagree with the filename")
+        for entry in wheel.infolist():
+            if entry.filename.endswith((".dll", ".pyd", ".dylib")):
+                raise ValueError("Non-Android native library in wheel")
+            if ".so" not in Path(entry.filename).name:
+                continue
+            with wheel.open(entry) as library:
+                header = library.read(20)
+                if len(header) < 20 or struct.unpack_from("<H", header, 18)[0] != 183:
+                    raise ValueError("Native library is not Android arm64")
+                library.seek(0)
+                alignment.check_elf(library, entry.file_size)
+                libraries.append(entry.filename)
+    if libraries and any(t.platform == "any" for t in tags):
+        raise ValueError("Native code cannot use a platform-independent wheel tag")
+    return {"name": name, "version": str(version), "wheel": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "libraries": libraries, "elf_16k_alignment": "passed" if libraries else "not_applicable", "python_target": "CPython3.13",
+            "tags": sorted(map(str, tags)), "requires_python": manifest.get("Requires-Python", ""),
+            "requires_dist": manifest.get_all("Requires-Dist", []), "device_runtime": "unverified"}
+
+
+def check_wheel(path):
+    name, version, _, tags = parse_wheel_filename(path.name)
+    sources = json.loads(LOCK.read_text())["packages"]
+    expected = next((v for k, v in sources.items() if canonicalize_name(k) == name), None)
+    if not expected or str(version) != expected["version"] or not all(t.platform == "android_24_arm64_v8a" for t in tags):
+        raise ValueError("Wheel name, version or Android target differs from the source qualification")
+    report = inspect_wheel(path)
+    if not report["libraries"]:
+        raise ValueError("Expected native libraries in the wheel")
+    path.with_suffix(".qualification.json").write_text(json.dumps(report, indent=2) + "\n")
+    return report
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("lock")
+    prep = commands.add_parser("prepare")
+    prep.add_argument("--package", choices=PACKAGES, required=True)
+    prep.add_argument("--output", type=Path, required=True)
+    check = commands.add_parser("check")
+    check.add_argument("wheel", type=Path)
+    args = parser.parse_args()
+    if args.command == "lock": refresh_lock()
+    elif args.command == "prepare": prepare(args.package, args.output)
+    else: check_wheel(args.wheel)

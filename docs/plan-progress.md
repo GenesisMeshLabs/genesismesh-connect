@@ -52,6 +52,14 @@ reason to downgrade the core or replace its policy/trust engine. Initial hosting
 is foreground-only. Sleep, termination, reboot, lock and background restrictions
 must be tested and explained before claiming continuous availability.
 
+Dependency build evidence on 5 November 2026: all four missing native bindings
+were built and checked for Android arm64/API24, CPython 3.13 ABI and 16 KiB
+alignment. The unchanged core requirements resolved with 28 reachable packages
+under Android target markers. The repeatable source-build/closure gate is in
+draft PR #20. This removes the missing-wheel obstacle; it does not establish
+embedded-core execution, owner custody, independent Create, persistent hosted
+identity or second-device enrollment on the phone.
+
 ## Next user-visible acceptance milestones
 
 **“Create and run my network on this Android phone.”** The independent-phone
