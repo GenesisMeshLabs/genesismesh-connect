@@ -8,7 +8,7 @@ on:
       - 'scripts/android_authority*'
       - 'scripts/android-authority-patches/**'
       - '.gitattributes'
-      - 'scripts/tests/test_native_sources.py'
+      - 'scripts/tests/test_native_*.py'
       - 'scripts/tests/test_android_apk.py'
       - 'scripts/check-android-apk.py'
       - 'apps/connect/authority/core-requirements.txt'
@@ -51,8 +51,12 @@ jobs:
           native_build_root="$RUNNER_TEMP/connect-native-source"
           echo "BUILD_ROOT=$native_build_root" >> "$GITHUB_ENV"
           python scripts/android_authority_sources.py prepare --package "$PACKAGE" --output "$native_build_root"
+          if test "$PACKAGE" = PyNaCl; then
+            printf 'CIBW_ENVIRONMENT=%s SODIUM_INSTALL=system\n' "$CIBW_ENVIRONMENT" >> "$GITHUB_ENV"
+            echo "CIBW_BEFORE_BUILD=python \"$GITHUB_WORKSPACE/scripts/android_authority_native.py\" \"{package}\"" >> "$GITHUB_ENV"
+          fi
       - name: Source and target refusal tests
-        run: python -m unittest discover -s scripts/tests -p test_native_sources.py -v
+        run: python -m unittest discover -s scripts/tests -p 'test_native_*.py' -v
       - name: Install declared Rust and Android target
         run: rustup toolchain install 1.98.0 --profile minimal --target aarch64-linux-android
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -80,6 +84,7 @@ jobs:
           name: Android-authority-${{ env.PACKAGE }}-${{ github.sha }}
           path: |
             ${{ env.BUILD_ROOT }}/source-report.json
+            ${{ env.BUILD_ROOT }}/project/connect-native-report.json
             ${{ env.BUILD_ROOT }}/build.log
             ${{ env.BUILD_ROOT }}/wheels/
           if-no-files-found: warn
