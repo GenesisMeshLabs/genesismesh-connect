@@ -390,7 +390,7 @@ class OwnerTests(unittest.TestCase):
                 owner.invite(node)
                 staged=owner.backup()
                 staging=Path(staged["staging"])
-                self.assertEqual(staging.parent,first)
+                self.assertEqual(staging.parent.resolve(),first.resolve())
                 # Owner keys travel only in the reply, never as files.
                 self.assertFalse(list(staging.rglob("*.key")))
                 self.assertTrue((staging/"network"/"na.db").is_file())
