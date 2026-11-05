@@ -15,7 +15,7 @@ manual/assisted/platform acceptance gate; no parity percentage is claimed.
 | CONNECT-02 typed operations | Closed resource/local-history registry, generated schemas, exact access review | General core outcome schemas and manual/assisted parity |
 | CONNECT-03 durable workflows | Access dispatch/readback journal, archives; owner nonce reservations | Durable join/renewal/recovery/admin enrollment and operation-specific reconciliation |
 | CONNECT-04 prerequisites | Authenticated resource-host release/profile/ownership discovery | General feature, verifier, actor and deployment discovery |
-| CONNECT-05 owner Requests | Explicit pairing-only enrollment/signature/replay contract; separate native key custody and controller preparation | Owner transport, fixed core/target dispatch, explicit enrollment/revocation UI, usable phone Requests and recovery |
+| CONNECT-05 owner Requests | Pairing-only signature/replay contract; separate native key custody; authenticated transport and bounded durable enrollment/result records | Fixed core/target dispatch, explicit enrollment/revocation UI, usable phone Requests and recovery; default host still refuses unsupported control |
 | CONNECT-06 lifecycle | Existing disconnect/reconnect/leave; administrative native-store refusal and cleanup | Physical lock/suspend/force-quit/reboot/network switching and user-presence handling |
 | CONNECT-07 distribution/hosting | Existing Tauri packaging and headless Linux server | Signed fresh-machine installer/update/service/uninstall acceptance and guided host setup |
 | CONNECT-08 continuity | Existing encrypted recovery and server restore | Checkpoints, missing-history reconciliation, restricted restore and old-host fencing |

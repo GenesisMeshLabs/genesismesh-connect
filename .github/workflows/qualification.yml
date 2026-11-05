@@ -34,7 +34,7 @@ jobs:
       - run: npx vite build
       - name: Android packaging refusal checks
         working-directory: .
-        run: python3 -m unittest discover -s scripts/tests -p 'test_android_apk.py'
+        run: python3 -m unittest discover -s scripts/tests -p 'test_android*.py'
 
   core:
     name: Core (${{ matrix.os }})
