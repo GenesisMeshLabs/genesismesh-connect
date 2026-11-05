@@ -10,8 +10,11 @@ import com.chaquo.python.android.AndroidPlatform;
 import org.json.JSONObject;
 import org.json.JSONArray;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.Executors;
 
 public final class AuthorityCheckActivity extends Activity {
+    private static final EngineCheckRunner<JSONObject> ENGINE =
+        new EngineCheckRunner<>(Executors.newSingleThreadExecutor());
     private TextView status;
 
     @Override public void onCreate(Bundle saved) {
@@ -30,9 +33,7 @@ public final class AuthorityCheckActivity extends Activity {
         status.setText("Genesis Mesh\n\nChecking the network engine on this phone…");
         root.addView(status);
         setContentView(root);
-        try { save(new JSONObject().put("status", "running").put("source_commit", BuildConfig.SOURCE_COMMIT)); }
-        catch (Exception error) { status.setText("Could not save the test status."); return; }
-        new Thread(() -> {
+        try { ENGINE.start(() -> {
             JSONObject report;
             try {
                 if (!Python.isStarted()) Python.start(new AndroidPlatform(getApplicationContext()));
@@ -46,11 +47,26 @@ public final class AuthorityCheckActivity extends Activity {
                     .put("exception_type", error.getClass().getSimpleName()).put("source_commit", BuildConfig.SOURCE_COMMIT); }
                 catch (Exception ignored) { }
             }
-            final JSONObject result = report;
-            try { save(result); }
-            catch (Exception error) { runOnUiThread(() -> status.setText("Could not save the test result.")); return; }
-            runOnUiThread(() -> show(result));
-        }, "gm-engine-check").start();
+            return report;
+        }, new EngineCheckRunner.Listener<JSONObject>() {
+            @Override public void started(String runId) {
+                try { save(new JSONObject().put("status", "running").put("run_id", runId)
+                    .put("source_commit", BuildConfig.SOURCE_COMMIT)); }
+                catch (Exception error) { throw new IllegalStateException("Could not save the test status."); }
+            }
+
+            @Override public void completed(String runId, JSONObject result) {
+                try { result.put("run_id", runId); save(result); }
+                catch (Exception error) {
+                    runOnUiThread(() -> ENGINE.publishIfActive(runId,
+                        () -> status.setText("Could not save the test result.")));
+                    return;
+                }
+                runOnUiThread(() -> ENGINE.publishIfActive(runId, () -> show(result)));
+            }
+        }); } catch (RuntimeException error) {
+            status.setText("Could not start the test or save its status.");
+        }
     }
 
     private void save(JSONObject report) throws Exception {

@@ -14,6 +14,7 @@ on:
       - 'scripts/probe-android-authority.py'
       - 'scripts/tests/test_android_authority_probe.py'
       - 'scripts/tests/test_android_engine_check.py'
+      - 'scripts/tests/test_android_engine_lifecycle.py'
       - 'apps/connect/authority/core-requirements.txt'
       - 'apps/connect/src-tauri/icons/icon.png'
       - 'spikes/android-authority/**'
