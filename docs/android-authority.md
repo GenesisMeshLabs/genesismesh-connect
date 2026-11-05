@@ -41,10 +41,12 @@ can be supplied with `--wheelhouse`; the requirements still constrain versions.
 
 ## Implementation sequence and acceptance
 
-The **Android authority source wheels** manual GitHub workflow builds one of
-the missing packages using pinned cibuildwheel tooling. Start with
-`pydantic-core`; cryptography, PyNaCl and CFFI have additional native library
-requirements. This is a build spike, not a complete embedded authority.
+The **Android authority source wheels** GitHub workflow builds all four native
+packages and resolves the complete binary dependency set on relevant pull
+requests. It can also build one package manually for diagnosis. The collected
+artifacts must match the source lock and pass the original core requirement
+resolver plus an Android-specific dependency graph check. This is a build
+qualification gate, not a complete embedded authority.
 The workflow verifies the exact installed dependency against the core pin,
 downloads the hash-locked upstream sdist, cross-builds arm64/API24/CPython3.13,
 and checks CPython 3.13 interpreter/ABI compatibility, matching expanded filename
@@ -81,10 +83,14 @@ Android native tests on the x86 runner. CFFI's selected version must satisfy the
 active Android requirements of both cryptography and PyNaCl; it is locked as a
 build constraint so later host resolution cannot silently change the binding.
 
-Build records on 5 November 2026: the required pydantic-core, cryptography and
-PyNaCl wheels passed Android arm64/API24, CPython 3.13 ABI/metadata and 16 KiB
-checks. CFFI/libffi qualification, complete binary dependency resolution and
-physical embedded-core execution remain open. No phone authority is enabled.
+Build records on 5 November 2026: pydantic-core, cryptography, PyNaCl and CFFI
+source wheels passed Android arm64/API24, CPython 3.13 ABI/metadata and 16 KiB
+checks. The unchanged core requirements resolved, and target-marker validation
+found 28 reachable packages. This check uses Android and CPython 3.13 markers,
+including transitive extras, instead of trusting pip's build-host marker
+evaluation. The minimum marker profile is recorded in its report; it is not a
+device execution result. Physical embedded-core, linked-library and hosting
+lifecycle qualification remain open. No phone authority is enabled.
 
 1. Build missing wheels reproducibly from verified upstream sources. Keep source
    digests, compiler/NDK/ABI/API versions, linkage, licenses and vulnerability

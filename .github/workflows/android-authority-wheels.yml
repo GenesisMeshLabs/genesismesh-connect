@@ -17,19 +17,28 @@ on:
       package:
         description: Native package to qualify (external library recipes may still be required)
         required: true
-        default: pydantic-core
+        default: all
         type: choice
-        options: [pydantic-core, cryptography, PyNaCl, cffi]
+        options: [all, pydantic-core, cryptography, PyNaCl, cffi]
 
 permissions:
   contents: read
+  actions: read
+
+concurrency:
+  group: android-source-${{ github.ref }}-${{ inputs.package || 'all' }}
+  cancel-in-progress: true
 
 jobs:
   wheel:
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(inputs.package == 'pydantic-core' && '["pydantic-core"]' || inputs.package == 'cryptography' && '["cryptography"]' || inputs.package == 'PyNaCl' && '["PyNaCl"]' || inputs.package == 'cffi' && '["cffi"]' || '["pydantic-core","cryptography","PyNaCl","cffi"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
-      PACKAGE: ${{ inputs.package || 'pydantic-core' }}
+      PACKAGE: ${{ matrix.package }}
       RUSTUP_TOOLCHAIN: 1.98.0
       ANDROID_API_LEVEL: '24'
       CIBW_BUILD: cp313-android_arm64_v8a
@@ -93,5 +102,38 @@ jobs:
             ${{ env.BUILD_ROOT }}/project/connect-native-report.json
             ${{ env.BUILD_ROOT }}/build.log
             ${{ env.BUILD_ROOT }}/wheels/
+          if-no-files-found: warn
+          retention-days: 7
+
+  closure:
+    name: Complete Android dependency closure
+    needs: wheel
+    if: github.event_name == 'pull_request' || inputs.package == 'all'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r scripts/android-authority-build-requirements.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: Android-authority-*
+          path: temp/native-input
+      - name: Collect exactly the reviewed source-wheel set
+        run: python scripts/android_authority_bundle.py collect --input temp/native-input --output temp/native-wheelhouse
+      - name: Resolve the unchanged core and complete binary dependencies
+        run: python scripts/probe-android-authority.py --wheelhouse temp/native-wheelhouse --output temp/native-closure
+      - name: Verify target markers, Python requirements, metadata and native alignment
+        run: python scripts/android_authority_bundle.py verify temp/native-closure/wheels
+      - name: Preserve complete closure and reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Complete-Android-authority-dependencies-${{ github.sha }}
+          path: |
+            temp/native-closure/
+            temp/native-wheelhouse/
           if-no-files-found: warn
           retention-days: 7

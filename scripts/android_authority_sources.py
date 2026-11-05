@@ -67,10 +67,15 @@ def versions():
             "PyNaCl": dependency("genesis-mesh", "PyNaCl"), "cffi": cffi_version()}
 
 
-def cffi_version():
-    environment = {**default_environment(), "python_version": "3.13", "python_full_version": "3.13.0",
+def android_environment():
+    return {**default_environment(), "python_version": "3.13", "python_full_version": "3.13.0",
                    "sys_platform": "android", "os_name": "posix", "platform_system": "Android",
-                   "platform_machine": "aarch64", "platform_python_implementation": "CPython", "extra": ""}
+                   "platform_machine": "aarch64", "platform_python_implementation": "CPython", "extra": "",
+                   "platform_release": "7.0", "platform_version": "24", "implementation_name": "cpython", "implementation_version": "3.13.0"}
+
+
+def cffi_version():
+    environment = android_environment()
     version = metadata.version("cffi")
     for parent in ("cryptography", "PyNaCl"):
         requirements = [Requirement(r) for r in metadata.requires(parent) or []]
@@ -159,15 +164,11 @@ def prepare(name, output):
     (output / "source-report.json").write_text(json.dumps({"package": name, **source, "device_runtime": "unverified"}, indent=2) + "\n")
 
 
-def check_wheel(path):
+def inspect_wheel(path):
     name, version, _, tags = parse_wheel_filename(path.name)
-    sources = json.loads(LOCK.read_text())["packages"]
-    expected = next((v for k, v in sources.items() if canonicalize_name(k) == name), None)
-    if not expected or str(version) != expected["version"] or not all(t.platform == "android_24_arm64_v8a" for t in tags):
-        raise ValueError("Wheel name, version or Android target differs from the source qualification")
-    platforms = ["android_24_arm64_v8a"]
+    platforms = [f"android_{api}_arm64_v8a" for api in range(24, 20, -1)] + ["any"]
     supported = set(cpython_tags((3, 13), ["cp313"], platforms)) | set(compatible_tags((3, 13), "cp313", platforms))
-    if not tags.issubset(supported):
+    if not tags.intersection(supported):
         raise ValueError("Wheel interpreter or ABI is incompatible with CPython 3.13")
     spec = importlib.util.spec_from_file_location("alignment", ROOT / "scripts/check-android-apk.py")
     alignment = importlib.util.module_from_spec(spec)
@@ -192,6 +193,8 @@ def check_wheel(path):
         if declared_tags != tags:
             raise ValueError("WHEEL tags disagree with the filename")
         for entry in wheel.infolist():
+            if entry.filename.endswith((".dll", ".pyd", ".dylib")):
+                raise ValueError("Non-Android native library in wheel")
             if ".so" not in Path(entry.filename).name:
                 continue
             with wheel.open(entry) as library:
@@ -201,11 +204,23 @@ def check_wheel(path):
                 library.seek(0)
                 alignment.check_elf(library, entry.file_size)
                 libraries.append(entry.filename)
-    if not libraries:
+    if libraries and any(t.platform == "any" for t in tags):
+        raise ValueError("Native code cannot use a platform-independent wheel tag")
+    return {"name": name, "version": str(version), "wheel": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "libraries": libraries, "elf_16k_alignment": "passed" if libraries else "not_applicable", "python_target": "CPython3.13",
+            "tags": sorted(map(str, tags)), "requires_python": manifest.get("Requires-Python", ""),
+            "requires_dist": manifest.get_all("Requires-Dist", []), "device_runtime": "unverified"}
+
+
+def check_wheel(path):
+    name, version, _, tags = parse_wheel_filename(path.name)
+    sources = json.loads(LOCK.read_text())["packages"]
+    expected = next((v for k, v in sources.items() if canonicalize_name(k) == name), None)
+    if not expected or str(version) != expected["version"] or not all(t.platform == "android_24_arm64_v8a" for t in tags):
+        raise ValueError("Wheel name, version or Android target differs from the source qualification")
+    report = inspect_wheel(path)
+    if not report["libraries"]:
         raise ValueError("Expected native libraries in the wheel")
-    report = {"wheel": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-              "libraries": libraries, "elf_16k_alignment": "passed", "python_target": "CPython3.13",
-              "tags": sorted(map(str, tags)), "device_runtime": "unverified"}
     path.with_suffix(".qualification.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
