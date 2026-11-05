@@ -19,6 +19,45 @@ pub struct OwnerInfo {
     pub managed: bool,
 }
 
+/// Readiness of the fixed adapter reached over our inherited local pipe.
+/// This does not describe remote-owner enrollment, all core flags, or permission.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeCapabilities {
+    pub schema: u8,
+    pub core_version: String,
+    pub pin: crate::authority::TrustPin,
+    pub transport: String,
+    pub operations: Vec<String>,
+}
+impl RuntimeCapabilities {
+    pub fn require_access_update(&self, pin: &crate::authority::TrustPin) -> Result<()> {
+        let expected = include_str!("../../../apps/connect/authority/core-requirements.txt")
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("genesis-mesh=="))
+            .context("Missing packaged authority version")?;
+        ensure!(
+            self.schema == 1 && self.transport == "local_inherited_pipe",
+            "Update the network computer: its Connect adapter is incompatible"
+        );
+        ensure!(
+            self.core_version == expected,
+            "Update the network computer: its Genesis Mesh version is incompatible"
+        );
+        ensure!(
+            &self.pin == pin,
+            "The network computer belongs to a different network"
+        );
+        ensure!(
+            self.operations
+                .iter()
+                .any(|op| op == "connect.access.update.v1"),
+            "Update the network computer to manage access"
+        );
+        Ok(())
+    }
+}
+
 /// A staged network: the owner keys (plaintext, held only in memory) and the
 /// staging directory holding the database snapshot and public files.
 #[derive(Deserialize)]
@@ -147,6 +186,11 @@ pub struct OwnerRuntime {
     awaiting: bool,
 }
 impl OwnerRuntime {
+    pub fn capabilities(&mut self) -> Result<RuntimeCapabilities> {
+        Ok(serde_json::from_value(
+            self.request(json!({"op":"capabilities"}))?,
+        )?)
+    }
     pub fn start(executable: &Path, directory: &Path) -> Result<Self> {
         ensure!(
             executable.is_absolute() && directory.is_absolute(),
@@ -499,6 +543,43 @@ impl Drop for OwnerRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readiness_is_not_inferred_from_an_operation_name_or_version_alone() -> Result<()> {
+        let pin = crate::authority::TrustPin {
+            root_public_key: "root".into(),
+            network_name: "Home".into(),
+        };
+        let version = include_str!("../../../apps/connect/authority/core-requirements.txt")
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("genesis-mesh=="))
+            .unwrap();
+        let valid = json!({"schema":1,"core_version":version,"pin":pin,"transport":"local_inherited_pipe","operations":["connect.access.update.v1"]});
+        serde_json::from_value::<RuntimeCapabilities>(valid.clone())?
+            .require_access_update(&pin)?;
+        for (field, value) in [
+            ("schema", json!(2)),
+            ("core_version", json!("0.0.0")),
+            ("transport", json!("remote")),
+            ("operations", json!([])),
+            (
+                "pin",
+                json!({"network_name":"Other","root_public_key":"other"}),
+            ),
+        ] {
+            let mut changed = valid.clone();
+            changed[field] = value;
+            assert!(
+                serde_json::from_value::<RuntimeCapabilities>(changed)?
+                    .require_access_update(&pin)
+                    .is_err()
+            );
+        }
+        let mut untyped = valid;
+        untyped["admin_url"] = json!("https://untrusted.invalid");
+        assert!(serde_json::from_value::<RuntimeCapabilities>(untyped).is_err());
+        Ok(())
+    }
 
     #[test]
     fn only_spaces_the_host_no_longer_saves_are_orphaned() {

@@ -32,6 +32,7 @@ from genesis_mesh.na_service.rate_limit import RateLimits
 from genesis_mesh.na_service.server import NetworkAuthorityService
 
 from protection import discard, protect, unprotect, ready
+from core_release import require_installed_core_version
 
 
 MAX_FILE_BYTES = (1 << 53) - 1  # Exact byte counts in signed JSON and JavaScript.
@@ -228,6 +229,20 @@ class Owner:
 
     def info(self):
         return {"url":self.origin,"pin":{"root_public_key":self.genesis.root_public_key,"network_name":self.genesis.network_name},"managed":self.server is not None}
+
+    def capabilities(self):
+        """Local-pipe readiness, not a grant of remote owner privileges.
+
+        Only advertise the fixed Connect adapter operation actually implemented
+        here. Core's public inventory is not a runtime permission list.
+        """
+        if not self.config:
+            raise Refused("Open your network before checking its features.")
+        require_installed_core_version()
+        from core_release import required_core_version
+        return {"schema": 1, "core_version": required_core_version(),
+                "pin": self.info()["pin"], "transport": "local_inherited_pipe",
+                "operations": ["connect.access.update.v1"]}
 
     def admin(self, path, body):
         if not self.config:

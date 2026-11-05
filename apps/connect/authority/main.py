@@ -23,7 +23,8 @@ def main():
             try:
                 request=json.loads(line)
                 op=request.get("op")
-                if op=="create" and set(request)=={"op","name"}: result=owner.create(request["name"])
+                if op=="capabilities" and set(request)=={"op"}: result=owner.capabilities()
+                elif op=="create" and set(request)=={"op","name"}: result=owner.create(request["name"])
                 elif op=="open" and set(request)=={"op"}: result=owner.open()
                 elif op=="attach" and set(request)=={"op","config"}: result=owner.attach(request["config"])
                 elif op=="invite" and set(request)=={"op","node","host"} and type(request["host"]) is bool: result=owner.invite(request["node"],request["host"])

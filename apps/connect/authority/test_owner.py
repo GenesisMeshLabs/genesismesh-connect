@@ -11,6 +11,22 @@ from genesis_mesh.crypto import generate_keypair
 
 
 class OwnerTests(unittest.TestCase):
+    def test_runtime_capabilities_are_scoped_to_open_network_and_matching_release(self):
+        from unittest.mock import patch
+        from core_release import required_core_version
+        with tempfile.TemporaryDirectory() as directory:
+            owner = Owner(Path(directory)/"owner")
+            try:
+                with self.assertRaises(Refused): owner.capabilities()
+                info = owner.create("Readiness")
+                result = owner.capabilities()
+                self.assertEqual(result["pin"], info["pin"])
+                self.assertEqual(result["core_version"], required_core_version())
+                self.assertEqual(result["operations"], ["connect.access.update.v1"])
+                self.assertNotIn("key", json.dumps(result).replace("root_public_key", ""))
+                with patch("owner.require_installed_core_version", side_effect=RuntimeError("wrong release")):
+                    with self.assertRaises(RuntimeError): owner.capabilities()
+            finally: owner.close()
     def test_service_access_editor_versions_limits_expiry_and_preserves_extra_rules(self):
         import uuid
         from datetime import datetime, timezone, timedelta
