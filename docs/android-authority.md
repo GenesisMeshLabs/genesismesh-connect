@@ -68,12 +68,16 @@ and rerun qualification. The source lock deliberately refuses an unreviewed
 release change. It currently covers four missing native dependencies,
 not the full transitive wheel closure or a production software bill of materials.
 
-Cryptography's Android build currently needs one narrowly scoped build patch:
+Cryptography's Android build uses two narrowly scoped build patches:
 its CFFI build script assumes a different Python SDK header layout. The recorded
 patch queries the cross environment's target `INCLUDEPY` on Android and checks
 for `Python.h`. The original sdist and patch are separately hash-locked and
 reported. It changes header discovery, not cryptographic operations or core
-policy/identity semantics. Runtime and linked-library qualification remain open.
+policy/identity semantics. The second declares an explicit dependency on the
+target shared Python runtime: the physical engine check found unresolved Python
+symbols in the abi3 extension when Python was embedded in Android's local loader
+namespace. It changes linkage rather than loading libraries globally. Both
+patches are separately hash-locked. Runtime qualification remains a separate gate.
 
 PyNaCl builds its complete bundled libsodium source as a static target library.
 CFFI builds the separately hash-locked libffi source in

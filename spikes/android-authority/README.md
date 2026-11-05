@@ -20,7 +20,10 @@ to the development host with:
 adb -s <serial> exec-out run-as org.genesismesh.connect.authoritycheck cat files/authority-runtime-report.json
 ```
 
-Confirm the report's source commit, core version, actual device API and all
-checks. A passing report qualifies these runtime operations only. Authority
+Confirm the report's source commit, unique run ID, core version, actual device
+API and all checks. Activity restarts use serialized process-wide execution;
+stale completions cannot publish reports or update a newer screen. Python's
+build-time API marker is recorded separately from the actual device API.
+A passing report qualifies these runtime operations only. Authority
 creation, protected owner custody, persisted identity, enrollment, revocation,
 transport integration and foreground/background lifecycle are separate gates.

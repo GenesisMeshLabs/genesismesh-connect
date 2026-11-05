@@ -16,6 +16,10 @@
         {
           "path": "scripts/android-authority-patches/cryptography-android-include.patch",
           "sha256": "932ee1068ad73c7ed53b062b651ead58246316653c3291ffb4e04d334e4e5215"
+        },
+        {
+          "path": "scripts/android-authority-patches/cryptography-android-python-link.patch",
+          "sha256": "11dbb9f6a16252a4d7443e628274531e5bc87d9b264d518440400ade4402a0f4"
         }
       ]
     },

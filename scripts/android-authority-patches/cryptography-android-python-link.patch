@@ -1,0 +1,19 @@
+--- a/src/rust/build.rs
++++ b/src/rust/build.rs
+@@ -15,6 +15,16 @@
+     println!("cargo:rerun-if-env-changed=CRYPTOGRAPHY_BUILD_OPENSSL_NO_LEGACY");
+ 
+     pyo3_build_config::use_pyo3_cfgs();
++    // Android embeds Python in a local loader namespace. Declare the shared
++    // runtime dependency explicitly so abi3 symbols resolve without global loads.
++    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
++        let library = env::var("PYO3_CROSS_LIB_DIR").expect("Android target Python library");
++        assert!(std::path::Path::new(&library).join("libpython3.13.so").is_file());
++        println!("cargo:rerun-if-env-changed=PYO3_CROSS_LIB_DIR");
++        println!("cargo:rustc-link-search=native={library}");
++        println!("cargo:rustc-link-lib=dylib=python3.13");
++    }
++
+ 
+     if let Ok(version) = env::var("DEP_OPENSSL_VERSION_NUMBER") {
+         let version = u64::from_str_radix(&version, 16).unwrap();
