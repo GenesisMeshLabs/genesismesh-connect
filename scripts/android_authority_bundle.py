@@ -113,6 +113,14 @@ def verify(root, native_manifest):
     return result
 
 
+def freeze(root, native_manifest, output):
+    result = verify(root, native_manifest)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("x", encoding="utf-8", newline="\n") as stream:
+        for report in sorted(result["packages"], key=lambda r: r["name"]):
+            stream.write(f"{report['name']}=={report['version']} --hash=sha256:{report['sha256']}\n")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -122,6 +130,11 @@ if __name__ == "__main__":
     closure = commands.add_parser("verify")
     closure.add_argument("wheels", type=Path)
     closure.add_argument("--native-manifest", type=Path, required=True)
+    frozen = commands.add_parser("freeze")
+    frozen.add_argument("wheels", type=Path)
+    frozen.add_argument("--native-manifest", type=Path, required=True)
+    frozen.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "collect": collect(args.input, args.output)
+    elif args.command == "freeze": freeze(args.wheels, args.native_manifest, args.output)
     else: print(f"Android target closure: {len(verify(args.wheels, args.native_manifest)['packages'])} reachable packages; runtime unverified")

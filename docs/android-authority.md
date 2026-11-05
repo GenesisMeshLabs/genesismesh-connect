@@ -105,6 +105,9 @@ conflicting diamond constraint. Graph validity alone is not a qualified bundle.
 2. Package embedded CPython (Chaquopy is the first candidate) and the exact
    resolved closure. On the physical phone, import the core and exercise real
    signing, verification, model parsing, SQLite and HTTP operations.
+   The isolated `spikes/android-authority` engine-check APK now supplies this
+   fixed test harness. CI packaging and physical execution must pass before
+   treating the runtime as qualified; it does not enable authority creation.
 3. Adapt the existing fixed owner runtime to a serialized native-local embedded
    boundary. No generic Python execution, command/path dispatch or admin listener
    belongs in frontend IPC. Keep owner secrets in Android Keystore-backed storage

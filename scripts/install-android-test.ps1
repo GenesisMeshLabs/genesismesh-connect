@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Apk,
+    [ValidateSet('Connect', 'EngineCheck')][string]$AppKind = 'Connect',
     [string]$DeviceSerial,
     [string]$SdkRoot = "$env:LOCALAPPDATA\Android\Sdk",
     [string]$JavaHome = 'C:\Program Files\Android\Android Studio\jbr',
@@ -10,7 +11,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $connectRoot = Split-Path -Parent $PSScriptRoot
-$package = 'org.genesismesh.connect.qualification'
+$package = if ($AppKind -eq 'EngineCheck') { 'org.genesismesh.connect.authoritycheck' } else { 'org.genesismesh.connect.qualification' }
 $apkPath = (Resolve-Path -LiteralPath $Apk).Path
 if (-not (Test-Path -LiteralPath $apkPath -PathType Leaf)) { throw 'Provide an APK file.' }
 $adb = Join-Path $SdkRoot 'platform-tools\adb.exe'
@@ -30,7 +31,7 @@ function Invoke-Checked {
 # Read the manifest rather than trusting a filename or a caller-supplied package.
 $badging = Invoke-Checked $aapt @('dump', 'badging', $apkPath)
 if (@($badging | Where-Object { $_ -match "^package: name='$([regex]::Escape($package))' " }).Count -ne 1) {
-    throw 'Refusing APK: only the isolated Genesis Mesh Connect Test package may be installed by this script.'
+    throw 'Refusing APK: it does not match the selected Genesis Mesh development package.'
 }
 $devices = Invoke-Checked $adb @('devices')
 $ready = @($devices | ForEach-Object { if ($_ -match '^(\S+)\s+device$') { $Matches[1] } })
@@ -68,7 +69,7 @@ try {
         visual_acceptance = 'not_verified_by_installer'
         authority_hosting_accepted = $false
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $directory 'install.json') -Encoding utf8
-    Write-Host "Installed Connect Test in place. Verify the phone UI separately. Record: $directory\install.json"
+    Write-Host "Installed $AppKind in place. Verify the phone UI separately. Record: $directory\install.json"
 } finally {
     $env:JAVA_HOME = $savedJavaHome
 }
