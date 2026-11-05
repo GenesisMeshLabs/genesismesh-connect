@@ -6,7 +6,12 @@ on:
       - '.github/workflows/android-authority-wheels.yml'
       - 'scripts/android-authority*'
       - 'scripts/android_authority*'
+      - 'scripts/android-authority-patches/**'
+      - '.gitattributes'
       - 'scripts/tests/test_native_sources.py'
+      - 'scripts/tests/test_android_apk.py'
+      - 'scripts/check-android-apk.py'
+      - 'apps/connect/authority/core-requirements.txt'
   workflow_dispatch:
     inputs:
       package:

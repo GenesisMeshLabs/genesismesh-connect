@@ -1,0 +1,22 @@
+--- a/src/rust/cryptography-cffi/build.rs
++++ b/src/rust/cryptography-cffi/build.rs
+@@ -70,7 +70,18 @@
+     // interpreter's setuptools, which returns host headers (e.g.
+     // /usr/include/python3.x) and breaks the cross build whenever the host
+     // happens to have same-version Python development headers installed.
+-    let python_includes = if let Ok(lib_dir) = env::var("PYO3_CROSS_LIB_DIR") {
++    let python_includes = if target.contains("android") {
++        // cibuildwheel localizes INCLUDEPY to the Android SDK's headers.
++        // PYO3_CROSS_LIB_DIR points at prefix/lib, not lib/python3.x.
++        run_python_script(
++            &python,
++            "import pathlib, sysconfig; \
++             p = pathlib.Path(sysconfig.get_config_var('INCLUDEPY')); \
++             assert (p / 'Python.h').is_file(); \
++             print(p, end='')",
++        )
++        .unwrap()
++    } else if let Ok(lib_dir) = env::var("PYO3_CROSS_LIB_DIR") {
+         let lib = Path::new(&lib_dir);
+         let py_ver = lib
+             .file_name()

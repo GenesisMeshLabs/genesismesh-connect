@@ -10,6 +10,7 @@ import importlib.util
 import json
 from pathlib import Path
 import struct
+import subprocess
 import tarfile
 import tomllib
 import urllib.parse
@@ -17,11 +18,13 @@ import urllib.request
 import zipfile
 
 from packaging.requirements import Requirement
+from packaging.tags import compatible_tags, cpython_tags, parse_tag
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "scripts/android-authority-sources.lock.json"
 PACKAGES = ("pydantic-core", "cryptography", "PyNaCl")
+PATCHES = {"cryptography": ["scripts/android-authority-patches/cryptography-android-include.patch"]}
 
 
 def pin():
@@ -84,6 +87,7 @@ def refresh_lock():
         if len(files) != 1:
             raise ValueError("Expected a single upstream source archive")
         sources[name] = {"version": version, "url": files[0]["url"], "sha256": files[0]["digests"]["sha256"]}
+        sources[name]["patches"] = [{"path": p, "sha256": hashlib.sha256((ROOT / p).read_bytes()).hexdigest()} for p in PATCHES.get(name, [])]
     LOCK.write_text(json.dumps({"schema": 1, "authority_pin_sha256": hashlib.sha256(str(pin()).encode()).hexdigest(),
                                 "packages": sources}, indent=2) + "\n", encoding="utf-8")
 
@@ -129,6 +133,14 @@ def prepare(name, output):
     if not project.resolve().is_relative_to(output.resolve()) or not destination.resolve().is_relative_to(output.resolve()):
         raise ValueError("Source move escapes the build workspace")
     project.rename(destination)
+    patches = source.get("patches", [])
+    if [p["path"] for p in patches] != PATCHES.get(name, []):
+        raise ValueError("Build patch qualification changed; refresh the source lock")
+    for patch in patches:
+        path = (ROOT / patch["path"]).resolve()
+        if not path.is_relative_to((ROOT / "scripts/android-authority-patches").resolve()) or hashlib.sha256(path.read_bytes()).hexdigest() != patch["sha256"]:
+            raise ValueError("Build patch hash or location mismatch")
+        subprocess.run(["patch", "--batch", "--forward", "-p1", "-i", str(path)], cwd=destination, check=True)
     (output / "source-report.json").write_text(json.dumps({"package": name, **source, "device_runtime": "unverified"}, indent=2) + "\n")
 
 
@@ -138,6 +150,10 @@ def check_wheel(path):
     expected = next((v for k, v in sources.items() if canonicalize_name(k) == name), None)
     if not expected or str(version) != expected["version"] or not all(t.platform == "android_24_arm64_v8a" for t in tags):
         raise ValueError("Wheel name, version or Android target differs from the source qualification")
+    platforms = ["android_24_arm64_v8a"]
+    supported = set(cpython_tags((3, 13), ["cp313"], platforms)) | set(compatible_tags((3, 13), "cp313", platforms))
+    if not tags.issubset(supported):
+        raise ValueError("Wheel interpreter or ABI is incompatible with CPython 3.13")
     spec = importlib.util.spec_from_file_location("alignment", ROOT / "scripts/check-android-apk.py")
     alignment = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(alignment)
@@ -149,6 +165,17 @@ def check_wheel(path):
         manifest = BytesParser().parsebytes(wheel.read(manifests[0]))
         if canonicalize_name(manifest.get("Name", "")) != name or manifest.get("Version") != str(version):
             raise ValueError("Wheel contents disagree with its name/version")
+        declarations = [e for e in wheel.infolist() if e.filename.endswith(".dist-info/WHEEL")]
+        if len(declarations) != 1 or declarations[0].file_size > 1_000_000:
+            raise ValueError("Missing or oversized WHEEL metadata")
+        if Path(declarations[0].filename).parent != Path(manifests[0].filename).parent:
+            raise ValueError("WHEEL and package metadata belong to different distributions")
+        declared = BytesParser().parsebytes(wheel.read(declarations[0]))
+        declared_tags = set()
+        for tag in declared.get_all("Tag", []):
+            declared_tags.update(parse_tag(tag))
+        if declared_tags != tags:
+            raise ValueError("WHEEL tags disagree with the filename")
         for entry in wheel.infolist():
             if ".so" not in Path(entry.filename).name:
                 continue
@@ -162,7 +189,8 @@ def check_wheel(path):
     if not libraries:
         raise ValueError("Expected native libraries in the wheel")
     report = {"wheel": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-              "libraries": libraries, "elf_16k_alignment": "passed", "device_runtime": "unverified"}
+              "libraries": libraries, "elf_16k_alignment": "passed", "python_target": "CPython3.13",
+              "tags": sorted(map(str, tags)), "device_runtime": "unverified"}
     path.with_suffix(".qualification.json").write_text(json.dumps(report, indent=2) + "\n")
 
 

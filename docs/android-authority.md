@@ -47,7 +47,9 @@ the missing packages using pinned cibuildwheel tooling. Start with
 recipes qualified. This is a build spike, not a complete embedded authority.
 The workflow verifies the exact installed dependency against the core pin,
 downloads the hash-locked upstream sdist, cross-builds arm64/API24/CPython3.13,
-and checks wheel metadata, native architecture and 16 KiB ELF alignment. It
+and checks CPython 3.13 interpreter/ABI compatibility, matching expanded filename
+and WHEEL tags, native architecture and 16 KiB ELF alignment. Older compatible
+CPython abi3 wheels remain valid. It
 retains source provenance, compiler diagnostics and produced wheels. On x86
 runners, arm64 execution is untested and remains a physical-device gate.
 
@@ -63,6 +65,13 @@ it does not introduce another core release pin. Review the new source hashes
 and rerun qualification. The source lock deliberately refuses an unreviewed
 release change. It currently covers the three missing native dependencies,
 not the full transitive wheel closure or a production software bill of materials.
+
+Cryptography's Android build currently needs one narrowly scoped build patch:
+its CFFI build script assumes a different Python SDK header layout. The recorded
+patch queries the cross environment's target `INCLUDEPY` on Android and checks
+for `Python.h`. The original sdist and patch are separately hash-locked and
+reported. It changes header discovery, not cryptographic operations or core
+policy/identity semantics. Runtime and linked-library qualification remain open.
 
 1. Build missing wheels reproducibly from verified upstream sources. Keep source
    digests, compiler/NDK/ABI/API versions, linkage, licenses and vulnerability

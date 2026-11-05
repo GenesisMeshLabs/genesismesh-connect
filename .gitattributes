@@ -1,5 +1,6 @@
 *.sh text eol=lf
 *.command text eol=lf
+scripts/android-authority-patches/*.patch text eol=lf
 # The reviewed upstream digest and generated reports must survive Windows checkout.
 contract/*.json text eol=lf
 docs/capability-coverage.md text eol=lf
