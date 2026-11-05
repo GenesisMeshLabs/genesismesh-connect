@@ -8,11 +8,13 @@ export interface AccessRecord {
   intent: {
     id:string; collection:string; name:string;
     context:{pin:{network_name:string;root_public_key:string};actor:string;audience:string};
-    before:AccessPolicy; after:AccessPolicy; expires_at:string;
+    before:AccessPolicy; after:AccessPolicy; created_at:string; expires_at:string;
   };
   digest:string;
   stage:"prepared"|"submitted"|"unknown"|"state_observed"|"conflict"|"cancelled";
   authorization:"not_evaluated"|"core_accepted"|"unknown";
+  observed:AccessPolicy|null;
+  updated_at:string;
 }
 export interface AccessOutcome { record:AccessRecord; local_applied:boolean; problem:string|null }
 export interface ResourceCapabilities {

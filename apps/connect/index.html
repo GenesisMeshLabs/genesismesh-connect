@@ -165,6 +165,7 @@
           <nav class="home-navigation" aria-label="Main navigation">
             <button data-view="files" aria-pressed="true">Shared</button
             ><button data-view="devices" aria-pressed="false">Devices</button
+            ><button data-view="activity" aria-pressed="false">Activity</button
             ><button data-view="settings" aria-pressed="false">Settings</button>
           </nav>
           <div id="view-files">
@@ -323,6 +324,31 @@
             <p id="devices-note" class="home-muted" hidden>
               To add or remove a device, open Devices on your network computer.
             </p>
+          </div>
+          <div id="view-activity" hidden>
+            <div class="home-page-heading"><div><h1>Access activity</h1><p>Access changes saved on this device, including older records.</p></div><button id="activity-refresh" class="secondary">Refresh</button></div>
+            <section class="home-card activity-overview" aria-label="Access change status">
+              <h2 id="activity-attention-text">Saved access history on this device</h2>
+              <p>Check an unconfirmed result or review the settings you chose. Checking status never sends the change again.</p>
+              <button id="activity-review-attention" class="secondary" hidden>Review changes needing attention</button>
+            </section>
+            <div class="library-filters" aria-label="Activity filters"><button data-activity-filter="all" aria-pressed="true">All changes</button><button data-activity-filter="needs_attention" aria-pressed="false">Needs attention</button></div>
+            <p class="home-muted">This is local workflow history, not your authority’s signed audit ledger or proof that a file or service was used.</p>
+            <p id="activity-incomplete" class="activity-notice" role="status" hidden>Some older history could not be loaded or exceeded the reading limits. These results may be incomplete. Your existing records have been preserved.</p>
+            <p id="activity-problem" role="alert" hidden></p><p id="activity-loading" role="status" hidden>Loading saved activity…</p>
+            <div id="activity-empty" class="home-empty" hidden><h2 id="activity-empty-title">Your access changes will appear here</h2><p id="activity-empty-text">When you review or change access to a shared item, Connect keeps a local record here.</p></div>
+            <ol id="activity-list-main" class="access-activity-list"></ol><button id="activity-more" class="secondary" hidden>Load older changes</button>
+            <dialog id="activity-detail" class="share-dialog">
+              <div class="share-heading"><h2 id="activity-detail-title">Access record</h2><button id="activity-detail-close" class="text-button" type="button">Close</button></div>
+              <h3 id="activity-detail-status"></h3><p id="activity-detail-explanation"></p>
+              <p id="activity-detail-recovery" class="home-muted"></p>
+              <h3>Reviewed settings</h3><dl id="activity-detail-fields"></dl>
+              <p class="home-muted">Saved on this device. This record is unsigned and does not prove resource use.</p>
+              <details><summary>Exact local record</summary><pre id="activity-detail-exact"></pre></details>
+              <p id="activity-detail-problem" role="alert" hidden></p>
+              <p id="activity-detail-message" class="home-muted" role="status"></p>
+              <div class="button-row activity-detail-actions"><button id="activity-detail-check" type="button" hidden>Check status</button><button id="activity-detail-manage" type="button" class="secondary" hidden>Manage current access</button><button id="activity-detail-save" type="button" class="secondary">Save record</button></div>
+            </dialog>
           </div>
           <div id="view-settings" hidden>
             <div class="home-page-heading">

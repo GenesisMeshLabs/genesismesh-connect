@@ -5,8 +5,8 @@ import { accessOutcomeText, accessReviewLines, accessPrerequisiteText, needsAcce
 const record:AccessRecord={
   intent:{id:"review",collection:"folder",name:"Family photos",context:{pin:{network_name:"My home",root_public_key:"root"},actor:"desktop",audience:"desktop"},
     before:{version:1,recipients:["phone-a","tablet"],expires_at:null,max_bytes:4096,max_seconds:3600,extra_gates:[]},
-    after:{version:1,recipients:["phone-a","phone-b"],expires_at:null,max_bytes:2048,max_seconds:300,extra_gates:[]},expires_at:"2026-11-05T12:05:00Z"},
-  digest:"bound",stage:"prepared",authorization:"not_evaluated",
+    after:{version:1,recipients:["phone-a","phone-b"],expires_at:null,max_bytes:2048,max_seconds:300,extra_gates:[]},created_at:"2026-11-05T12:00:00Z",expires_at:"2026-11-05T12:05:00Z"},
+  digest:"bound",stage:"prepared",authorization:"not_evaluated",observed:null,updated_at:"2026-11-05T12:00:00Z",
 };
 test("read-only prerequisites distinguish unknown external deployment, restricted host and missing operation",()=>{
   assert.equal(accessPrerequisiteText({profile:"connect_managed",operations:["connect.access.update.v1"]}),"");

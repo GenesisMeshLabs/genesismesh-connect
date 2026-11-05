@@ -54,14 +54,14 @@ fn context(status: &DeviceStatus) -> Result<AccessContext, String> {
     })
 }
 fn journal(desktop: &DesktopState) -> Result<AccessJournal, String> {
-    AccessJournal::open(
-        &desktop
-            .profile
-            .parent()
-            .ok_or("Missing application directory")?
-            .join("access-workflows.json"),
-    )
-    .map_err(error)
+    AccessJournal::open(&journal_path(desktop)?).map_err(error)
+}
+pub(crate) fn journal_path(desktop: &DesktopState) -> Result<std::path::PathBuf, String> {
+    Ok(desktop
+        .profile
+        .parent()
+        .ok_or("Missing application directory")?
+        .join("access-workflows.json"))
 }
 async fn read(
     owner: &mut OwnerSlot,

@@ -17,8 +17,10 @@ can be submitted; it is never retried automatically.
 
 ## Structure
 
-The normal navigation is **Shared**, **Devices** and **Settings**. Technical
-enrollment, trust details, activity and connection diagnostics remain under
+The normal navigation is **Shared**, **Devices**, **Activity** and **Settings**.
+[Activity](docs/local-access-history.md) shows this device’s access-change history,
+unconfirmed results, read-only status checks and local record export. Technical
+enrollment, trust details, technical activity and connection diagnostics remain under
 Settings → Advanced tools. Existing technical profiles are preserved.
 
 - `crates/connect-core`: portable Rust library; transport module and headless diagnostic example.

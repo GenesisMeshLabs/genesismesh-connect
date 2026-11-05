@@ -1,4 +1,5 @@
 import { setupServices } from "./services";
+import { setupActivity } from "./access-activity";
 import { visibleSpaces, sortedFiles, type LibraryFilter } from "./library-state";
 import { setupSharing } from "./sharing";
 import { sharingChoices } from "./sharing-state";
@@ -25,6 +26,7 @@ import {
 } from "./home-state";
 
 let current: HomeStatus | null = null;
+let currentView="files";
 let libraryFilter: LibraryFilter = "all";
 let statusProblem: string | null = null;
 let screen = "welcome",
@@ -84,10 +86,12 @@ function show(next: string) {
 function selectView(next: string) {
   // An unsaved connection choice is dropped when leaving Settings.
   if (next !== "settings") connectionDirty = false;
-  for (const name of ["files", "devices", "settings"])
+  currentView=next;
+  for (const name of ["files", "devices", "activity", "settings"])
     visible(`view-${name}`, name === next);
   for (const button of document.querySelectorAll<HTMLElement>("[data-view]"))
     button.setAttribute("aria-pressed", String(button.dataset.view === next));
+  if(next==="activity")void activity.open();else activity.close();
 }
 async function run(button: HTMLButtonElement, action: () => Promise<void>) {
   if (busy) return;
@@ -112,6 +116,7 @@ function render(status: HomeStatus) {
   const oldPeer = current?.peer;
   const oldDevice = current?.selected_device;
   current = status;
+  activity.changed(status);
   advanced.render();
   visible("disconnected-banner", status.disconnected);
   visible("leave-retry", status.leaving);
@@ -1006,6 +1011,7 @@ if (isTauri()) {
 }
 
 const services = setupServices(() => current, refresh, message);
+const activity = setupActivity(()=>current,()=>currentView==="activity",refresh,message,services.access);
 setupSharing(() => current, refresh, message, sendTo);
 
 const advanced = setupAdvanced(()=>current,refresh,(view,anchor)=>{

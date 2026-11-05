@@ -40,10 +40,7 @@ mod desktop {
         let capabilities = owner.resource_capabilities(&host, &collection)?;
         assert_eq!(
             capabilities.operations,
-            connect_core::operations::registry()
-                .iter()
-                .map(|d| d.id)
-                .collect::<Vec<_>>()
+            connect_core::operations::resource_operation_ids()
         );
         capabilities.require(&info.pin, &host, &collection, OperationId::UpdateAccess)?;
         assert!(owner.resource_capabilities(&phone, &collection).is_err());

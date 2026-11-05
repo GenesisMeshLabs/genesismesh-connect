@@ -1,6 +1,57 @@
 {
   "operations": [
     {
+      "actor": "current_device_profile",
+      "approval": "none",
+      "assisted": false,
+      "class": "read",
+      "commit_schema": null,
+      "evidence": "Unsigned local workflow history, including settled archives; not authority audit evidence",
+      "execution": "this_device",
+      "id": "connect.history.list.v1",
+      "input_schema": "#/schemas/history_query",
+      "key_tier": "local_profile",
+      "manual": true,
+      "output_schema": "#/schemas/history_page",
+      "retry": "fresh_read",
+      "review_schema": null,
+      "title": "View this device's access activity"
+    },
+    {
+      "actor": "current_device_profile",
+      "approval": "none",
+      "assisted": false,
+      "class": "read",
+      "commit_schema": null,
+      "evidence": "Original local intent and observations; not an authority signature",
+      "execution": "this_device",
+      "id": "connect.history.record.v1",
+      "input_schema": "#/schemas/local_record_query",
+      "key_tier": "local_profile",
+      "manual": true,
+      "output_schema": "#/schemas/local_access_record",
+      "retry": "fresh_read",
+      "review_schema": null,
+      "title": "Inspect a saved local access record"
+    },
+    {
+      "actor": "current_device_profile",
+      "approval": "native_save_destination",
+      "assisted": false,
+      "class": "write",
+      "commit_schema": null,
+      "evidence": "Local metadata export only; opening a mobile share sheet does not prove external saving",
+      "execution": "this_device",
+      "id": "connect.history.export.v1",
+      "input_schema": "#/schemas/local_record_query",
+      "key_tier": "local_profile",
+      "manual": true,
+      "output_schema": "#/schemas/record_export",
+      "retry": "fresh_read",
+      "review_schema": null,
+      "title": "Save a local access record"
+    },
+    {
       "actor": "authenticated_resource_host",
       "approval": "none",
       "assisted": false,
@@ -637,6 +688,511 @@
       "title": "AccessReviewInput",
       "type": "object"
     },
+    "history_page": {
+      "$defs": {
+        "ActivitySummary": {
+          "additionalProperties": false,
+          "properties": {
+            "archived": {
+              "type": "boolean"
+            },
+            "authorization": {
+              "$ref": "#/$defs/Authorization"
+            },
+            "collection": {
+              "type": "string"
+            },
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "needs_attention": {
+              "type": "boolean"
+            },
+            "policy_before": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "policy_observed": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "recipients_after": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "recipients_before": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "recovery": {
+              "$ref": "#/$defs/RecoveryHint"
+            },
+            "stage": {
+              "$ref": "#/$defs/Stage"
+            },
+            "updated_at": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "collection",
+            "name",
+            "created_at",
+            "updated_at",
+            "stage",
+            "authorization",
+            "policy_before",
+            "recipients_before",
+            "recipients_after",
+            "archived",
+            "needs_attention",
+            "recovery"
+          ],
+          "type": "object"
+        },
+        "Authorization": {
+          "enum": [
+            "not_evaluated",
+            "core_accepted",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "HistoryCursor": {
+          "additionalProperties": false,
+          "properties": {
+            "before_created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "before_id": {
+              "type": "string"
+            },
+            "filter": {
+              "$ref": "#/$defs/HistoryFilter"
+            },
+            "scope_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scope_id",
+            "filter",
+            "before_created_at",
+            "before_id"
+          ],
+          "type": "object"
+        },
+        "HistoryFilter": {
+          "enum": [
+            "all",
+            "needs_attention"
+          ],
+          "type": "string"
+        },
+        "RecoveryHint": {
+          "enum": [
+            "check_status",
+            "disconnected",
+            "previous_host",
+            "item_stopped",
+            "archived",
+            "settled"
+          ],
+          "type": "string"
+        },
+        "Stage": {
+          "enum": [
+            "prepared",
+            "submitted",
+            "unknown",
+            "state_observed",
+            "conflict",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "attention_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/ActivitySummary"
+          },
+          "type": "array"
+        },
+        "incomplete": {
+          "type": "boolean"
+        },
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HistoryCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope_id",
+        "entries",
+        "attention_count",
+        "incomplete"
+      ],
+      "title": "HistoryPage",
+      "type": "object"
+    },
+    "history_query": {
+      "$defs": {
+        "HistoryCursor": {
+          "additionalProperties": false,
+          "properties": {
+            "before_created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "before_id": {
+              "type": "string"
+            },
+            "filter": {
+              "$ref": "#/$defs/HistoryFilter"
+            },
+            "scope_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scope_id",
+            "filter",
+            "before_created_at",
+            "before_id"
+          ],
+          "type": "object"
+        },
+        "HistoryFilter": {
+          "enum": [
+            "all",
+            "needs_attention"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HistoryCursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "filter": {
+          "$ref": "#/$defs/HistoryFilter",
+          "default": "all"
+        },
+        "limit": {
+          "default": 20,
+          "format": "uint8",
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "title": "HistoryQuery",
+      "type": "object"
+    },
+    "local_access_record": {
+      "$defs": {
+        "AccessContext": {
+          "additionalProperties": false,
+          "description": "Native verified context, never accepted as authority from the web UI/model.",
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "audience": {
+              "type": "string"
+            },
+            "pin": {
+              "$ref": "#/$defs/TrustPin"
+            }
+          },
+          "required": [
+            "pin",
+            "actor",
+            "audience"
+          ],
+          "type": "object"
+        },
+        "AccessIntent": {
+          "additionalProperties": false,
+          "properties": {
+            "after": {
+              "$ref": "#/$defs/AccessPolicy"
+            },
+            "before": {
+              "$ref": "#/$defs/AccessPolicy"
+            },
+            "collection": {
+              "type": "string"
+            },
+            "context": {
+              "$ref": "#/$defs/AccessContext"
+            },
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "expires_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "operation": {
+              "pattern": "^connect\\.access\\.update\\.v1$",
+              "type": "string"
+            },
+            "schema": {
+              "format": "uint8",
+              "maximum": 1,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "schema",
+            "operation",
+            "id",
+            "context",
+            "collection",
+            "name",
+            "before",
+            "after",
+            "created_at",
+            "expires_at"
+          ],
+          "type": "object"
+        },
+        "AccessPolicy": {
+          "additionalProperties": false,
+          "properties": {
+            "expires_at": {
+              "format": "date-time",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "extra_gates": {
+              "description": "Core validates gate types and semantics. Native code also bounds encoded\nrule bytes and checks reserved/duplicate IDs; JSON Schema alone cannot.",
+              "items": true,
+              "maxItems": 24,
+              "type": "array"
+            },
+            "max_bytes": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "max_seconds": {
+              "format": "uint32",
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "recipients": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 31,
+              "minItems": 1,
+              "type": "array"
+            },
+            "version": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "version",
+            "recipients",
+            "max_bytes",
+            "max_seconds",
+            "extra_gates"
+          ],
+          "type": "object"
+        },
+        "AccessRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "authorization": {
+              "$ref": "#/$defs/Authorization"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "intent": {
+              "$ref": "#/$defs/AccessIntent"
+            },
+            "observed": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AccessPolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Readback is a state observation, not attribution or a signed receipt."
+            },
+            "stage": {
+              "$ref": "#/$defs/Stage"
+            },
+            "updated_at": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          "required": [
+            "intent",
+            "digest",
+            "stage",
+            "authorization",
+            "updated_at"
+          ],
+          "type": "object"
+        },
+        "Authorization": {
+          "enum": [
+            "not_evaluated",
+            "core_accepted",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "Stage": {
+          "enum": [
+            "prepared",
+            "submitted",
+            "unknown",
+            "state_observed",
+            "conflict",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        "TrustPin": {
+          "additionalProperties": false,
+          "description": "Provisioned out of band. Never construct this from an untrusted HTTP reply.",
+          "properties": {
+            "network_name": {
+              "type": "string"
+            },
+            "root_public_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "root_public_key",
+            "network_name"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "type": "boolean"
+        },
+        "evidence_class": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "record": {
+          "$ref": "#/$defs/AccessRecord"
+        },
+        "signed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "format",
+        "evidence_class",
+        "signed",
+        "archived",
+        "record"
+      ],
+      "title": "LocalAccessRecord",
+      "type": "object"
+    },
+    "local_record_query": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "LocalRecordQuery",
+      "type": "object"
+    },
+    "record_export": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "enum": [
+        "saved",
+        "cancelled",
+        "share_sheet_opened"
+      ],
+      "title": "RecordExport",
+      "type": "string"
+    },
     "request": {
       "$defs": {
         "AccessPolicy": {
@@ -708,6 +1264,79 @@
           ],
           "type": "object"
         },
+        "HistoryCursor": {
+          "additionalProperties": false,
+          "properties": {
+            "before_created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "before_id": {
+              "type": "string"
+            },
+            "filter": {
+              "$ref": "#/$defs/HistoryFilter"
+            },
+            "scope_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scope_id",
+            "filter",
+            "before_created_at",
+            "before_id"
+          ],
+          "type": "object"
+        },
+        "HistoryFilter": {
+          "enum": [
+            "all",
+            "needs_attention"
+          ],
+          "type": "string"
+        },
+        "HistoryQuery": {
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HistoryCursor"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "filter": {
+              "$ref": "#/$defs/HistoryFilter",
+              "default": "all"
+            },
+            "limit": {
+              "default": 20,
+              "format": "uint8",
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "LocalRecordQuery": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
         "ResourceQuery": {
           "additionalProperties": false,
           "properties": {
@@ -724,6 +1353,57 @@
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/HistoryQuery"
+            },
+            "operation": {
+              "const": "connect.history.list.v1",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "input"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/LocalRecordQuery"
+            },
+            "operation": {
+              "const": "connect.history.record.v1",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "input"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/LocalRecordQuery"
+            },
+            "operation": {
+              "const": "connect.history.export.v1",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "input"
+          ],
+          "type": "object"
+        },
         {
           "additionalProperties": false,
           "properties": {
@@ -782,6 +1462,9 @@
       "$defs": {
         "OperationId": {
           "enum": [
+            "connect.history.list.v1",
+            "connect.history.record.v1",
+            "connect.history.export.v1",
             "connect.resource.capabilities.v1",
             "connect.access.inspect.v1",
             "connect.access.update.v1"

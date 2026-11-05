@@ -674,3 +674,14 @@
 #access-review dd { overflow-wrap: anywhere; }
 #access-review-exact { white-space: pre-wrap; overflow-wrap: anywhere; }
 #access-outcome { margin-block: 1rem; padding: 0.8rem; border: 1px solid var(--border, #4d654a); border-radius: 12px; }
+.access-activity-list { list-style:none; padding:0; display:grid; gap:16px; margin-block:24px; }
+.activity-overview h2, .activity-entry h2 { font-size:1.2rem; margin:0; }
+.activity-entry-heading { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.activity-entry p { line-height:1.65; }
+.activity-status { border:1px solid #446044; border-radius:24px; padding:6px 11px; color:#cbe5b7; font-size:0.78rem; }
+.activity-status.attention { border-color:#856f3b; color:#edd6a0; }
+.activity-notice { border-left:3px solid #b7964e; padding:12px 16px; background:#29291c; border-radius:8px; }
+#activity-detail-fields dd { overflow-wrap:anywhere; }
+#activity-detail-exact { white-space:pre-wrap; overflow-wrap:anywhere; }
+.activity-detail-actions { position:sticky; bottom:0; background:#15241f; padding-block:12px; flex-wrap:wrap; }
+@media (max-width:650px) { .home-navigation button { padding-inline:8px; min-width:0; } .activity-detail-actions button { flex:1 1 100%; } }

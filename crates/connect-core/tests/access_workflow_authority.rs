@@ -89,6 +89,21 @@ fn real_authority_commit_lost_reply_restart_readback_and_stale_denial() -> Resul
         journal.get(&review.intent.id, &context)?.stage,
         Stage::Unknown
     );
+    let history_context = connect_core::access_workflow::history::HistoryContext {
+        scope: connect_core::access_workflow::history::HistoryScope {
+            pin: context.pin.clone(),
+            actor: context.actor.clone(),
+        },
+        audience: Some(context.audience.clone()),
+        owned: [collection.clone()].into_iter().collect(),
+        disconnected: true,
+    };
+    let offline = journal.history_page(&history_context, &Default::default())?;
+    assert_eq!(offline.attention_count, 1);
+    assert_eq!(
+        offline.entries[0].recovery,
+        connect_core::access_workflow::history::RecoveryHint::Disconnected
+    );
     let observed = owner.access_get(&host, &collection)?;
     let record = journal.observe(&review.intent.id, observed.clone())?;
     assert_eq!(record.stage, Stage::StateObserved);
@@ -96,6 +111,16 @@ fn real_authority_commit_lost_reply_restart_readback_and_stale_denial() -> Resul
         record.authorization,
         Authorization::Unknown,
         "Readback is not a signed authorization receipt"
+    );
+    let saved = journal.history_record(&history_context.scope, &review.intent.id)?;
+    assert!(!saved.signed);
+    assert_eq!(saved.record.digest, review.digest);
+    assert_eq!(saved.record.authorization, Authorization::Unknown);
+    assert_eq!(
+        journal
+            .history_page(&history_context, &Default::default())?
+            .attention_count,
+        0
     );
     assert!(
         journal

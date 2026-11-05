@@ -203,9 +203,18 @@ network computer refreshes every 30 seconds, so a busy network computer never
 holds up their file operations. There are no remote path fields in the normal
 UI.
 
-The everyday interface has Shared, Devices and Settings, with bottom navigation
+The everyday interface has Shared, Devices, Activity and Settings, with bottom navigation
 on phones. Choose a device by name to browse its files. Technical controls and
 error details stay in Settings > Advanced.
+
+**Activity** keeps access changes saved on this device, including older records.
+Choose **Needs attention** to find unconfirmed results, then **View record** to
+review the intended devices and limits. Eligible **Check status** actions read
+current settings without resending the change. Disconnected devices can still
+read their local history. **Save record** opens the native destination picker on
+desktop or the phone’s share sheet. A share sheet does not confirm the file was
+saved elsewhere. These records are unsigned local metadata, not the authority’s
+signed audit ledger or proof of file/service use. See [local access history](local-access-history.md).
 
 **Open advanced tools** now starts with guided connection help, access help and
 recent technical activity. Choose a saved device directly for a connection check;

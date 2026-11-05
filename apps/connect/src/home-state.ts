@@ -5,6 +5,8 @@ export interface HomeStatus {
   owner: boolean;
   configured: boolean;
   network: string | null;
+  /** Local history scope, derived natively from pinned network and this device. */
+  activity_scope?: string | null;
   peer: string | null;
   devices: {
     id: string;
@@ -111,6 +113,7 @@ export function formatBytes(bytes: number) {
   return `${(bytes / 1024 ** power).toFixed(1)} ${units[power - 1]}`;
 }
 export function friendlyProblem(value: string) {
+  if (/history context changed|local record.*unavailable|historical record cannot|record no longer belongs/i.test(value)) return "This saved record cannot be checked in the current context. Refresh Activity, or review it on the network computer that handled it.";
   if (/could not verify resource prerequisites|resource prerequisites.*unavailable/i.test(value)) return "Couldn’t check this item’s features. Keep Connect open on your network computer, and update it if needed. No access change was sent.";
   if (/prerequisites answered for a different/i.test(value)) return "The feature check did not match this device, network and item. Reconnect to your network computer and reopen access settings.";
   if (/access changed while checking features/i.test(value)) return "Access changed during the check. Reload the current settings before saving.";

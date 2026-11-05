@@ -342,7 +342,7 @@
       "status": "partial",
       "manual": "partial",
       "assisted": "planned",
-      "scope_note": "Resource access has typed inspection/update/discovery operations, generated schemas, exact review, durable dispatch/readback, and authenticated resource-host deployment prerequisites. General policies, arbitrary external deployment discovery and assisted workflows remain incomplete.",
+      "scope_note": "Resource access has typed inspection/update/discovery operations, generated schemas, exact review, durable dispatch/readback, and authenticated resource-host deployment prerequisites. General policies, arbitrary external deployment discovery and assisted workflows remain incomplete. Ordinary Activity now reads scoped active/archived access history and exports unsigned local records; it is not general signed evidence coverage.",
       "execution_locations": [
         "authority-host",
         "this-device"
@@ -387,7 +387,9 @@
           "crates/connect-core/tests/access_workflow_authority.rs",
           "apps/connect/tests/access-state.test.ts",
           "apps/connect/tests/access-errors.test.ts",
-          "crates/connect-core/tests/operation_registry.rs"
+          "crates/connect-core/tests/operation_registry.rs",
+          "crates/connect-core/tests/access_history.rs",
+          "apps/connect/tests/activity-state.test.ts"
         ],
         "physical": [],
         "accepted": false
@@ -662,7 +664,7 @@
       "status": "planned",
       "manual": "planned",
       "assisted": "planned",
-      "scope_note": "No accepted general-purpose guided journey; core support is not Connect product coverage.",
+      "scope_note": "General signed evidence inspection, audit-pack export and independent verification remain planned. Activity implements only device-local unsigned access workflow history and JSON export; it does not satisfy this outcome.",
       "execution_locations": [
         "requires-adapter-review"
       ],

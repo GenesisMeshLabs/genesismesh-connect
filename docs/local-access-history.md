@@ -1,5 +1,24 @@
 # Local access history
 
+Open **Activity** from normal navigation. **All changes** includes reviews,
+cancelled changes, checked results and settled archives. **Needs attention**
+focuses on unconfirmed or conflicting dispatched changes. Open **View record**
+for the reviewed devices, removed recipients, limits and observed policy version.
+Exact JSON stays collapsed by default. History belongs to this device’s current
+network and identity; it is cleared from the screen when that scope changes.
+
+**Check status** is a read-only reconciliation through the existing access
+workflow. Native checks resolve the current root, actor, resource host and owned
+item again. Older archives, previous hosts, stopped items and disconnected
+devices cannot use that action. Matching state after a lost reply does not prove
+which request applied it, and never triggers an automatic resend.
+
+**Save record** reads the scoped record again and asks for a native destination.
+Desktop export atomically writes JSON to the chosen path. Mobile export places
+JSON in Connect’s private export cache and opens the OS share sheet; opening that
+sheet is not confirmation of an external save. The caller supplies only a record
+ID, never a path. Exported records are not imports or execution approvals.
+
 `access_workflow::history` reads the current access journal and settled archives.
 It is device-local workflow metadata, **not signed core evidence**, a network-wide
 ledger or proof that a file/service was used. Reading it makes no authority call
@@ -41,3 +60,12 @@ Automated tests cover root/actor isolation, cursor and filter mismatch, concurre
 insertion, old conflicts, unknown recovery hints, duplicate archive copies,
 corruption preservation, scan limits, link refusal and unsigned exports. Existing
 real-compaction tests also read archived records back through this API.
+
+Qualification for this slice includes Linux core/native-shell checks, real-core
+lost-response/restart readback, packaged Linux authority checks and frontend
+state tests. Chrome mocked-IPC checks exercised filtering, details, readback,
+export feedback, offline/partial history and mismatched-scope clearing at desktop
+and 390×844 phone widths. This is not an installed Windows/mobile acceptance
+test. Windows Application Control remains an unresolved native-build gate;
+Mac/iOS/Android builds, OS pickers/share sheets and physical lifecycle testing
+remain unperformed for this slice. Existing Rust 1.99 deprecation warnings remain.

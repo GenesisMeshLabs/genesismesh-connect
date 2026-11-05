@@ -155,6 +155,15 @@ pub struct LocalAccessRecord {
     pub archived: bool,
     pub record: AccessRecord,
 }
+
+#[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordExport {
+    Saved,
+    Cancelled,
+    ShareSheetOpened,
+}
 impl LocalAccessRecord {
     pub fn document(&self) -> Result<String> {
         Ok(serde_json::to_string_pretty(self)? + "\n")

@@ -10,6 +10,12 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum OperationId {
+    #[serde(rename = "connect.history.list.v1")]
+    LocalHistory,
+    #[serde(rename = "connect.history.record.v1")]
+    LocalRecord,
+    #[serde(rename = "connect.history.export.v1")]
+    ExportLocalRecord,
     #[serde(rename = "connect.resource.capabilities.v1")]
     ResourceCapabilities,
     #[serde(rename = "connect.access.inspect.v1")]
@@ -20,6 +26,9 @@ pub enum OperationId {
 impl OperationId {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::LocalHistory => "connect.history.list.v1",
+            Self::LocalRecord => "connect.history.record.v1",
+            Self::ExportLocalRecord => "connect.history.export.v1",
             Self::ResourceCapabilities => "connect.resource.capabilities.v1",
             Self::InspectAccess => "connect.access.inspect.v1",
             Self::UpdateAccess => crate::access_workflow::OPERATION,
@@ -38,6 +47,7 @@ pub enum OperationClass {
 pub enum Approval {
     None,
     ExactIntentConfirmation,
+    NativeSaveDestination,
 }
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -65,8 +75,67 @@ pub struct OperationDescriptor {
     pub assisted: bool,
 }
 
-pub fn registry() -> [OperationDescriptor; 3] {
+pub fn resource_operation_ids() -> [OperationId; 3] {
     [
+        OperationId::ResourceCapabilities,
+        OperationId::InspectAccess,
+        OperationId::UpdateAccess,
+    ]
+}
+
+pub fn registry() -> [OperationDescriptor; 6] {
+    [
+        OperationDescriptor {
+            id: OperationId::LocalHistory,
+            title: "View this device's access activity",
+            class: OperationClass::Read,
+            actor: "current_device_profile",
+            key_tier: "local_profile",
+            execution: "this_device",
+            approval: Approval::None,
+            retry: Retry::FreshRead,
+            evidence: "Unsigned local workflow history, including settled archives; not authority audit evidence",
+            input_schema: "#/schemas/history_query",
+            review_schema: None,
+            commit_schema: None,
+            output_schema: "#/schemas/history_page",
+            manual: true,
+            assisted: false,
+        },
+        OperationDescriptor {
+            id: OperationId::LocalRecord,
+            title: "Inspect a saved local access record",
+            class: OperationClass::Read,
+            actor: "current_device_profile",
+            key_tier: "local_profile",
+            execution: "this_device",
+            approval: Approval::None,
+            retry: Retry::FreshRead,
+            evidence: "Original local intent and observations; not an authority signature",
+            input_schema: "#/schemas/local_record_query",
+            review_schema: None,
+            commit_schema: None,
+            output_schema: "#/schemas/local_access_record",
+            manual: true,
+            assisted: false,
+        },
+        OperationDescriptor {
+            id: OperationId::ExportLocalRecord,
+            title: "Save a local access record",
+            class: OperationClass::Write,
+            actor: "current_device_profile",
+            key_tier: "local_profile",
+            execution: "this_device",
+            approval: Approval::NativeSaveDestination,
+            retry: Retry::FreshRead,
+            evidence: "Local metadata export only; opening a mobile share sheet does not prove external saving",
+            input_schema: "#/schemas/local_record_query",
+            review_schema: None,
+            commit_schema: None,
+            output_schema: "#/schemas/record_export",
+            manual: true,
+            assisted: false,
+        },
         OperationDescriptor {
             id: OperationId::ResourceCapabilities,
             title: "Check this item's available features",
@@ -182,6 +251,12 @@ impl AccessCommitInput {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "operation", content = "input", deny_unknown_fields)]
 pub enum OperationRequest {
+    #[serde(rename = "connect.history.list.v1")]
+    LocalHistory(crate::access_workflow::history::HistoryQuery),
+    #[serde(rename = "connect.history.record.v1")]
+    LocalRecord(crate::access_workflow::history::LocalRecordQuery),
+    #[serde(rename = "connect.history.export.v1")]
+    ExportLocalRecord(crate::access_workflow::history::LocalRecordQuery),
     #[serde(rename = "connect.resource.capabilities.v1")]
     ResourceCapabilities(ResourceQuery),
     #[serde(rename = "connect.access.inspect.v1")]
@@ -194,6 +269,8 @@ impl OperationRequest {
         ensure!(text.len() <= 24 * 1024, "Operation request is too large");
         let request: Self = serde_json::from_value(genesis_mesh_sdk::parse_strict_json(text)?)?;
         match &request {
+            Self::LocalHistory(input) => input.validate()?,
+            Self::LocalRecord(input) | Self::ExportLocalRecord(input) => input.validate()?,
             Self::ResourceCapabilities(input) => input.validate()?,
             Self::InspectAccess(input) => input.validate()?,
             Self::UpdateAccess(input) => input.validate()?,
@@ -202,6 +279,9 @@ impl OperationRequest {
     }
     pub fn id(&self) -> OperationId {
         match self {
+            Self::LocalHistory(_) => OperationId::LocalHistory,
+            Self::LocalRecord(_) => OperationId::LocalRecord,
+            Self::ExportLocalRecord(_) => OperationId::ExportLocalRecord,
             Self::ResourceCapabilities(_) => OperationId::ResourceCapabilities,
             Self::InspectAccess(_) => OperationId::InspectAccess,
             Self::UpdateAccess(_) => OperationId::UpdateAccess,
@@ -266,7 +346,11 @@ impl ResourceCapabilities {
             );
         }
         ensure!(
-            self.operations.len() <= registry().len()
+            self.operations.len() <= resource_operation_ids().len()
+                && self
+                    .operations
+                    .iter()
+                    .all(|id| resource_operation_ids().contains(id))
                 && self
                     .operations
                     .iter()
@@ -311,8 +395,13 @@ pub mod schemas {
             "access_commit_input":schemars::schema_for!(AccessCommitInput),
             "access_policy":schemars::schema_for!(AccessPolicy),
             "access_review":schemars::schema_for!(AccessRecord),
-            "access_outcome":schemars::schema_for!(AccessOutcome)
-                ,"resource_capabilities":schemars::schema_for!(ResourceCapabilities)
+            "access_outcome":schemars::schema_for!(AccessOutcome),
+            "resource_capabilities":schemars::schema_for!(ResourceCapabilities),
+            "history_query":schemars::schema_for!(crate::access_workflow::history::HistoryQuery),
+            "history_page":schemars::schema_for!(crate::access_workflow::history::HistoryPage),
+            "local_record_query":schemars::schema_for!(crate::access_workflow::history::LocalRecordQuery),
+            "local_access_record":schemars::schema_for!(crate::access_workflow::history::LocalAccessRecord),
+            "record_export":schemars::schema_for!(crate::access_workflow::history::RecordExport)
         }})
     }
     fn sorted(value: Value) -> Value {

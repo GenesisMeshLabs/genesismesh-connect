@@ -47,6 +47,7 @@ pub struct HomeStatus {
     owner: bool,
     configured: bool,
     network: Option<String>,
+    activity_scope: Option<String>,
     peer: Option<String>,
     devices: Vec<HomeDevice>,
     selected_device: Option<String>,
@@ -102,6 +103,19 @@ pub async fn home_status(
             .unwrap_or_default(),
         selected_device: device.as_ref().and_then(|d| d.peer_node.clone()),
         network: device.as_ref().map(|d| d.network.clone()),
+        activity_scope: device
+            .map(|d| {
+                connect_core::access_workflow::history::HistoryScope {
+                    pin: connect_core::authority::TrustPin {
+                        root_public_key: d.root_public_key.clone(),
+                        network_name: d.network.clone(),
+                    },
+                    actor: d.node_public_key.clone(),
+                }
+                .id()
+            })
+            .transpose()
+            .map_err(error)?,
         peer: device
             .as_ref()
             .and_then(|d| d.paired_device.as_ref().map(|p| p.name.clone())),

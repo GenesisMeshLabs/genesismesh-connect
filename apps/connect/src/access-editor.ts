@@ -69,7 +69,7 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
   async function cancelReview() {
     const pending=review;
     if(pending)await invoke("cancel_access_review",{id:pending.intent.id});
-    if(review===pending)review=null;render();
+    if(review===pending)review=null;render();window.dispatchEvent(new Event("connect-access-history-changed"));
   }
   el("access-close").addEventListener("click",()=>{if(!saving){void cancelReview().catch(()=>{});dialog.close();}});
   el("access-back").addEventListener("click",()=>{if(!saving)void cancelReview().catch(e=>problem(friendlyProblem(String(e))));});
@@ -77,6 +77,7 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
     if(saving||!editing)return;saving=true;problem("");render();
     try{
       outcome=await invoke<AccessOutcome|null>("access_workflow_status",{collection:editing.id,check:true,workflowId:outcome?.record.intent.id||null});
+      window.dispatchEvent(new Event("connect-access-history-changed"));
       if(outcome?.record.stage==="state_observed"&&outcome.local_applied){dialog.close();message(accessOutcomeText(outcome));}
       await refresh();
     }
@@ -90,6 +91,7 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
       const approved=review;saving=true;render();
       try {
         outcome=await invoke<AccessOutcome>("commit_access_policy",{request:{id:approved.intent.id,digest:approved.digest}});
+        window.dispatchEvent(new Event("connect-access-history-changed"));
         review=null;
         if(outcome.record.stage==="state_observed"&&outcome.local_applied){dialog.close();message(accessOutcomeText(outcome));}
         await refresh();
@@ -118,6 +120,7 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
     saving=true;render();
     try {
       review=await invoke<AccessRecord>("review_access_policy",{request:{collection:editing.id,settings:{...policy,recipients,expires_at,max_bytes:Number(el<HTMLSelectElement>("access-size").value),max_seconds:Number(el<HTMLSelectElement>("access-duration").value),extra_gates}}});
+      window.dispatchEvent(new Event("connect-access-history-changed"));
       outcome=null;
       render();el<HTMLButtonElement>("access-save").focus();
     }catch(error){problem(friendlyProblem(String(error)));}

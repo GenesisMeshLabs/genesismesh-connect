@@ -12,7 +12,7 @@ fn review() -> serde_json::Value {
 #[test]
 fn registry_keeps_read_write_actor_approval_and_retry_contracts_distinct() -> Result<()> {
     let specs = registry();
-    assert_eq!(specs.len(), 3);
+    assert_eq!(specs.len(), 6);
     let read = specs
         .iter()
         .find(|s| s.id == OperationId::InspectAccess)
@@ -28,7 +28,14 @@ fn registry_keeps_read_write_actor_approval_and_retry_contracts_distinct() -> Re
     assert_eq!(write.approval, Approval::ExactIntentConfirmation);
     assert_eq!(write.retry, Retry::ReconcileNeverAutomaticallyResend);
     for spec in specs {
-        assert_eq!(spec.actor, "authenticated_resource_host");
+        assert_eq!(
+            spec.actor,
+            if spec.execution == "this_device" {
+                "current_device_profile"
+            } else {
+                "authenticated_resource_host"
+            }
+        );
         assert!(!spec.assisted);
         assert!(spec.manual);
     }
@@ -133,7 +140,7 @@ fn resource_metadata_is_bound_to_context_and_never_substitutes_for_permissions()
         core_version: Some(version.into()),
         profile: ResourceProfile::ConnectManaged,
         policy_version: 1,
-        operations: registry().iter().map(|d| d.id).collect(),
+        operations: connect_core::operations::resource_operation_ids().into(),
     };
     valid.require(&pin, &actor, &collection, OperationId::UpdateAccess)?;
     for field in [
@@ -192,6 +199,54 @@ fn resource_metadata_is_bound_to_context_and_never_substitutes_for_permissions()
     let mut extra = serde_json::to_value(valid)?;
     extra["admin_token"] = json!("not accepted");
     assert!(serde_json::from_value::<ResourceCapabilities>(extra).is_err());
+    Ok(())
+}
+
+#[test]
+fn local_history_operations_cannot_be_advertised_as_remote_resource_rights() -> Result<()> {
+    use connect_core::{
+        authority::TrustPin,
+        operations::{ResourceCapabilities, ResourceProfile},
+    };
+    let pin = TrustPin {
+        root_public_key: STANDARD.encode([1; 32]),
+        network_name: "Home".into(),
+    };
+    let actor = STANDARD.encode([2; 32]);
+    let collection = uuid::Uuid::new_v4().to_string();
+    let version = include_str!("../../../apps/connect/authority/core-requirements.txt")
+        .lines()
+        .find_map(|line| line.strip_prefix("genesis-mesh=="))
+        .unwrap();
+    let caps = ResourceCapabilities {
+        schema: 1,
+        pin: pin.clone(),
+        actor: actor.clone(),
+        collection: collection.clone(),
+        core_version: Some(version.into()),
+        profile: ResourceProfile::ConnectManaged,
+        policy_version: 1,
+        operations: vec![
+            OperationId::ResourceCapabilities,
+            OperationId::LocalHistory,
+            OperationId::UpdateAccess,
+        ],
+    };
+    assert!(
+        caps.require(&pin, &actor, &collection, OperationId::ResourceCapabilities)
+            .is_err()
+    );
+    OperationRequest::parse(r#"{"operation":"connect.history.list.v1","input":{}}"#)?;
+    assert!(
+        OperationRequest::parse(
+            r#"{"operation":"connect.history.list.v1","input":{"path":"outside"}}"#
+        )
+        .is_err()
+    );
+    assert!(
+        OperationRequest::parse(r#"{"operation":"connect.history.list.v1","input":{"limit":51}}"#)
+            .is_err()
+    );
     Ok(())
 }
 

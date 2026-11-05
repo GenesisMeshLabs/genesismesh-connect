@@ -1,8 +1,8 @@
 # Typed resource operations
 
 `connect_core::operations` is a closed registry of implemented Connect operations.
-Its descriptors name the operation class, resource-host actor requirement,
-member-device key tier, execution location, approval, retry and evidence limits.
+Its descriptors name the operation class, actor requirement, key tier,
+execution location, approval, retry and evidence limits.
 It does not accept arbitrary core routes, administrator URLs, key paths or shell
 commands. It does not enable an assistant or give membership administrative power.
 
@@ -13,6 +13,13 @@ review ID and digest; the [access workflow](access-workflow.md) resolves current
 identity, policy and approval context separately. A future assisted entry point
 must use the same native operation types and execution path. The registry marks
 assistance unavailable today.
+
+Three additional local operations list history, read a record and export a
+record using the current native device profile. Their generated schemas share
+the portable history types. They are not remote resource operations: authenticated
+resource capability replies use a separate fixed allowlist and reject local
+history/export IDs. The export operation requires the native save/share choice
+and accepts no destination path in its request. See [local access history](local-access-history.md).
 
 The generated [JSON contract](../contract/connect-operations.json) links each
 operation to its actual input, preview, commit and output schemas. Schemas derive
