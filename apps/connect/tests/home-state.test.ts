@@ -67,6 +67,9 @@ test("approval remains visible while a certificate is being installed", () => {
   );
 });
 test("ordinary connection errors explain the next action without exposing protocol details", () => {
+  assert.match(friendlyProblem("Choose a Genesis Mesh join link"), /invitation isn’t valid/);
+  assert.match(friendlyProblem("Invalid join link: invalid byte 63"), /Scan the QR code again/);
+  assert.match(friendlyProblem("This join link has expired. Create a new one on your computer."), /expired.*network owner.*new invitation/);
   assert.match(friendlyProblem("closed by peer: session ended (code 0)"), /Keep Connect open/);
   assert.match(friendlyProblem("The file changed. Refresh the file list"), /Refresh/);
   assert.match(friendlyProblem("current folder permission. Share the folder again to allow larger files"), /Share this folder again/);

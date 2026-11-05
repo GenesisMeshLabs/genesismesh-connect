@@ -29,12 +29,14 @@ pub struct PairCard {
 impl PairCard {
     pub fn parse(link: &str) -> Result<Self> {
         ensure!(link.len() <= 8192, "Join link is too long");
-        let bytes = URL_SAFE_NO_PAD.decode(
-            link.trim()
-                .strip_prefix(PREFIX)
-                .context("Choose a Genesis Mesh join link")?,
-        )?;
-        let card: Self = wire::decode(&bytes)?;
+        let bytes = URL_SAFE_NO_PAD
+            .decode(
+                link.trim()
+                    .strip_prefix(PREFIX)
+                    .context("Choose a Genesis Mesh join link")?,
+            )
+            .context("Invalid join link")?;
+        let card: Self = wire::decode(&bytes).context("Invalid join link")?;
         card.validate()?;
         Ok(card)
     }
@@ -618,13 +620,25 @@ mod tests {
             expires_at: Utc::now().timestamp() + 299,
         };
         assert_eq!(PairCard::parse(&card.link()?)?.host_node, card.host_node);
+        for malformed in [format!("{PREFIX}???"), format!("{PREFIX}e30")] {
+            assert_eq!(
+                PairCard::parse(&malformed).err().unwrap().to_string(),
+                "Invalid join link"
+            );
+        }
         // Made by a computer whose clock runs a minute ahead of this one.
         let mut ahead = card.clone();
         ahead.expires_at = Utc::now().timestamp() + 360;
         PairCard::parse(&ahead.link()?)?;
         let mut expired = card.clone();
         expired.expires_at = Utc::now().timestamp();
-        assert!(PairCard::parse(&expired.link()?).is_err());
+        assert!(
+            PairCard::parse(&expired.link()?)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("expired")
+        );
         let mut too_far = card.clone();
         too_far.expires_at = Utc::now().timestamp() + 300 + 310;
         assert!(PairCard::parse(&too_far.link()?).is_err());

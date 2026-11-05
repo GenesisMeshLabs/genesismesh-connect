@@ -113,6 +113,8 @@ export function formatBytes(bytes: number) {
   return `${(bytes / 1024 ** power).toFixed(1)} ${units[power - 1]}`;
 }
 export function friendlyProblem(value: string) {
+  if (/join link has expired/i.test(value)) return "This invitation has expired. Ask the network owner for a new invitation.";
+  if (/Choose a Genesis Mesh join link|Invalid join link|Join link is too long/i.test(value)) return "This invitation isn’t valid. Scan the QR code again or ask the network owner for a new invitation.";
   if (/history context changed|local record.*unavailable|historical record cannot|record no longer belongs/i.test(value)) return "This saved record cannot be checked in the current context. Refresh Activity, or review it on the network computer that handled it.";
   if (/could not verify resource prerequisites|resource prerequisites.*unavailable/i.test(value)) return "Couldn’t check this item’s features. Keep Connect open on your network computer, and update it if needed. No access change was sent.";
   if (/prerequisites answered for a different/i.test(value)) return "The feature check did not match this device, network and item. Reconnect to your network computer and reopen access settings.";
