@@ -1,5 +1,12 @@
 # Protected-read acceptance: software and physical devices
 
+> Historical acceptance matrix for the retained protected-read spike. Statements
+> below about a local-only endpoint, small reads and manual setup apply to that
+> spike. Current guided sharing and connectivity are described in the
+> [everyday workflow](everyday-workflow.md), with later build/device records in
+> [platform status](cross-platform.md). No additional physical acceptance is
+> established by the new [dependency qualification](release-qualification.md).
+
 Updated 2026-10-26. The Windows test suite uses real authority routes, SDK
 verification and real QUIC, with both identities on one computer. This does not
 pass the physical Windows/iPhone acceptance gate.

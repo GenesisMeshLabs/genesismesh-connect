@@ -1,5 +1,10 @@
 # Physical iPhone validation
 
+> Historical device/build record. Later installation and acceptance records live
+> in [platform status](cross-platform.md); current user instructions are in the
+> [everyday workflow](everyday-workflow.md). Preserve the dates and boundaries of
+> the results below rather than treating them as validation of every newer build.
+
 Current update (2026-10-26): build 6 is signed, installed and launched on the
 physical iPhone. It includes subfolder navigation and breadcrumbs, path-bound
 nested downloads, and the simpler Files/Devices/Settings interface. Code

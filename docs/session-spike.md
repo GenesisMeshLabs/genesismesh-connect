@@ -1,5 +1,10 @@
 # Session authentication spike
 
+> This page records the original diagnostic protocol and its security tests.
+> Its diagnostic/local-only limits do not describe current guided sharing.
+> See the [everyday workflow](everyday-workflow.md), [service scope](service-sharing.md)
+> and [qualification record](release-qualification.md) for the current boundaries.
+
 Spike B runs independently of iPhone provisioning. The portable Rust library and
 headless example implement a mutually authenticated diagnostic exchange. The
 Tauri Device tab now uses these authenticated sessions with the Windows device

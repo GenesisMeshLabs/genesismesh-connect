@@ -3,10 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core_release import required_core_version
+from core_release import required_core_version, require_installed_core_version
 
 
 class CoreReleaseTests(unittest.TestCase):
+    def test_qualification_cannot_use_an_installed_core_different_from_the_pin(self):
+        self.assertEqual(require_installed_core_version(required_core_version()), required_core_version())
+        with self.assertRaisesRegex(ValueError, "Choose an isolated matching environment"):
+            require_installed_core_version("0.0.0")
+
     def test_exact_pin_with_comments(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "requirements.txt"

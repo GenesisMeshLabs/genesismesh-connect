@@ -1,5 +1,9 @@
 # Windows device development
 
+> Retained expert/diagnostic workflow. For the current create/join, files,
+> inboxes and service experience, use the [everyday workflow](everyday-workflow.md).
+> This page's manual keys and small-file steps are not the normal product journey.
+
 The **Device** tab enrolls a Windows desktop, exchanges authenticated messages
 and reads small files from an authorized collection over the local network.
 See [protected-read setup](protected-read.md) for the additional edge invite,

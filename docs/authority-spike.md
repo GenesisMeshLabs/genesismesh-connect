@@ -1,5 +1,10 @@
 # Native authority integration
 
+> Retained diagnostic milestone. Ordinary users create/join through the
+> [guided workflow](everyday-workflow.md); manual invitations and local adapter
+> setup below are development instructions. Historical validation is not new
+> installed-app or physical-device acceptance.
+
 Connect can now enroll and renew diagnostic device identities against the native
 Python Network Authority, refresh verified trust and preserve rollback protection
 across restarts. This Rust library work does not require Mac provisioning. The

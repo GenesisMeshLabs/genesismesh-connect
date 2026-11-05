@@ -15,7 +15,7 @@ wheel in isolated Windows and Linux environments owned by this checkout.
 
 | Gate | Result |
 | --- | --- |
-| Windows owner adapter against real released core, including protected-key, recovery, policy and revocation cases | 13 tests passed, including 2 release-pin tests |
+| Windows owner adapter against real released core, including protected-key, recovery, policy and revocation cases | 14 tests passed, including 3 release-pin/qualification tests |
 | Frontend state tests | 22 passed |
 | TypeScript and Vite production build | Passed |
 | Workspace formatting | Passed |
