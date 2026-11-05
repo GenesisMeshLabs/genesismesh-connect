@@ -26,6 +26,8 @@ class OwnerTests(unittest.TestCase):
                 self.assertNotIn("key", json.dumps(result).replace("root_public_key", ""))
                 with patch("owner.require_installed_core_version", side_effect=RuntimeError("wrong release")):
                     with self.assertRaises(RuntimeError): owner.capabilities()
+                with patch("owner.require_installed_core_version", side_effect=ValueError("wrong release")):
+                    with self.assertRaisesRegex(Refused, "Update Connect"): owner.capabilities()
             finally: owner.close()
     def test_service_access_editor_versions_limits_expiry_and_preserves_extra_rules(self):
         import uuid

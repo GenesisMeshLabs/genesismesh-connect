@@ -238,7 +238,10 @@ class Owner:
         """
         if not self.config:
             raise Refused("Open your network before checking its features.")
-        require_installed_core_version()
+        try:
+            require_installed_core_version()
+        except ValueError:
+            raise Refused("Update Connect on the network computer: its bundled Genesis Mesh release does not match.") from None
         from core_release import required_core_version
         return {"schema": 1, "core_version": required_core_version(),
                 "pin": self.info()["pin"], "transport": "local_inherited_pipe",

@@ -1,6 +1,7 @@
 use connect_core::{EndpointStatus, NetworkMode, ProbeEndpoint, RoundTripReport};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+mod access;
 mod consumer;
 mod desktop;
 mod downloads;
@@ -120,7 +121,10 @@ pub fn run() {
             consumer::pair_join,
             services::share_service,
             services::get_access_policy,
-            services::update_access_policy,
+            access::review_access_policy,
+            access::commit_access_policy,
+            access::access_workflow_status,
+            access::cancel_access_review,
             services::open_service,
             services::service_connections,
             services::close_service,

@@ -226,7 +226,8 @@
             <dialog id="access-dialog" class="share-dialog">
               <form id="access-form">
                 <div class="share-heading"><h2 id="access-title">Manage access</h2><button id="access-close" type="button" class="text-button">Close</button></div>
-                <p>These settings update your network’s policy for this shared item.</p>
+                <div id="access-choices">
+                <p>Choose who can use this item. You’ll review the change before it is saved.</p>
                 <fieldset><legend>Allowed devices</legend><div id="access-devices"></div></fieldset>
                 <label for="access-expiry">Access expires</label><input id="access-expiry" type="datetime-local" /><p class="home-muted">Leave empty for ongoing access. Times use this device’s time zone.</p>
                 <details><summary>Limits and additional rules</summary>
@@ -234,7 +235,18 @@
                   <div id="access-duration-field"><label for="access-duration">Maximum service session</label><select id="access-duration"><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="3600">1 hour</option></select></div>
                   <label for="access-extra">Additional Genesis Mesh gates (JSON)</label><textarea id="access-extra" rows="6" spellcheck="false"></textarea><p class="home-muted">Existing rules are preserved. The authority validates any changes. Resource and allowed-device gates are managed above.</p>
                 </details>
-                <p id="access-version" class="home-muted"></p><p id="access-problem" role="alert" hidden></p><button id="access-save" type="submit">Save access policy</button>
+                </div>
+                <section id="access-review" hidden aria-labelledby="access-review-title">
+                  <h3 id="access-review-title">Review access</h3>
+                  <p>Only this item’s access will change. This is a local review; the network checks permission and validates the rules when you confirm.</p>
+                  <dl id="access-review-lines"></dl>
+                  <p>New requests use the saved rules. Open service sessions recheck access within 10 seconds.</p>
+                  <details><summary>Exact policy and device identifiers</summary><pre id="access-review-exact"></pre></details>
+                  <button id="access-back" type="button" class="secondary">Change choices</button>
+                </section>
+                <p id="access-version" class="home-muted"></p>
+                <div id="access-outcome" role="status" hidden><p id="access-outcome-text"></p><button id="access-check" type="button" class="secondary">Check status</button><button id="access-reload" type="button" class="secondary">Reload settings</button></div>
+                <p id="access-problem" role="alert" hidden></p><button id="access-save" type="submit">Review change</button>
               </form>
             </dialog>
             <div id="files-empty" class="home-empty">

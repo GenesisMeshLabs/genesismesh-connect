@@ -13,7 +13,8 @@ use std::{
 };
 
 pub const OPERATION: &str = "connect.access.update.v1";
-const MAX_BYTES: u64 = 4 * 1024 * 1024;
+// Includes before/after/readback gates for every bounded active record.
+const MAX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_RECORDS: usize = 128;
 
 /// Native verified context, never accepted as authority from the web UI/model.
@@ -209,6 +210,7 @@ impl AccessJournal {
         no_link(path)?;
         let lock_path = path.with_extension("lock");
         no_link(&lock_path)?;
+        let initialized = lock_path.exists();
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)]
@@ -230,6 +232,10 @@ impl AccessJournal {
             );
             serde_json::from_value::<Records>(parse_strict_json(std::str::from_utf8(&bytes)?)?)?
         } else {
+            ensure!(
+                !initialized,
+                "Workflow history is missing. Restore it before changing access; it has not been reset"
+            );
             Records {
                 schema: 1,
                 records: vec![],
@@ -270,7 +276,7 @@ impl AccessJournal {
                 recovered = true;
             }
         }
-        if recovered {
+        if recovered || !path.exists() {
             journal.save()?;
         }
         Ok(journal)
@@ -295,6 +301,65 @@ impl AccessJournal {
         File::open(parent)?.sync_all()?;
         self.usable = true;
         Ok(())
+    }
+    fn archive_completed(&mut self) -> Result<()> {
+        ensure!(self.usable, "Workflow journal unavailable");
+        // Only settled records may leave the active file. Never discard an
+        // unconfirmed dispatch, live review, or its original intent identity.
+        let ids: std::collections::BTreeSet<_> = self
+            .records
+            .records
+            .iter()
+            .filter(|r| matches!(r.stage, Stage::StateObserved | Stage::Conflict))
+            .take(MAX_RECORDS / 2)
+            .map(|r| r.intent.id.clone())
+            .collect();
+        ensure!(
+            !ids.is_empty(),
+            "Too many unfinished access changes; check their status first"
+        );
+        let archive = self.path.with_extension("archive");
+        no_link(&archive)?;
+        if !archive.exists() {
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            builder.create(&archive)?;
+            #[cfg(unix)]
+            File::open(archive.parent().context("Missing workflow directory")?)?.sync_all()?;
+        }
+        ensure!(
+            archive.is_dir(),
+            "Workflow archive needs attention; it has been preserved"
+        );
+        let archived = Records {
+            schema: 1,
+            records: self
+                .records
+                .records
+                .iter()
+                .filter(|r| ids.contains(&r.intent.id))
+                .cloned()
+                .collect(),
+        };
+        let bytes = serde_json::to_vec(&archived)?;
+        ensure!(
+            bytes.len() as u64 <= MAX_BYTES,
+            "Workflow archive is too large"
+        );
+        let mut file = tempfile::NamedTempFile::new_in(&archive)?;
+        file.write_all(&bytes)?;
+        file.as_file().sync_all()?;
+        file.persist_noclobber(archive.join(format!("{}.json", uuid::Uuid::new_v4())))?;
+        #[cfg(unix)]
+        File::open(&archive)?.sync_all()?;
+        // A crash before active replacement leaves duplicates, never missing
+        // history. An archive failure leaves all original active records.
+        self.records.records.retain(|r| !ids.contains(&r.intent.id));
+        self.save()
     }
     pub fn list(&self, context: &AccessContext, collection: &str) -> Vec<AccessRecord> {
         self.records
@@ -321,15 +386,14 @@ impl AccessJournal {
                 .any(|r| matches!(r.stage, Stage::Submitted | Stage::Unknown)),
             "An earlier access change has an uncertain result. Check its status before changing access again"
         );
-        // Retain all dispatched records. Only obsolete, never-submitted reviews
-        // may be pruned; reaching the bound refuses a new dispatch explicitly.
+        // Retain dispatched records, archiving settled history before removing
+        // it from the active file. Only obsolete unsubmitted reviews are pruned.
         self.records.records.retain(|r| {
             !matches!(r.stage, Stage::Prepared | Stage::Cancelled) || r.intent.expires_at > now
         });
-        ensure!(
-            self.records.records.len() < MAX_RECORDS,
-            "Workflow history is full; export or review it before making another change"
-        );
+        if self.records.records.len() >= MAX_RECORDS {
+            self.archive_completed()?;
+        }
         let intent = AccessIntent {
             schema: 1,
             operation: OPERATION.into(),

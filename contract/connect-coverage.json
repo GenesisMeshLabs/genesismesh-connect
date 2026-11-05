@@ -342,7 +342,7 @@
       "status": "partial",
       "manual": "partial",
       "assisted": "planned",
-      "scope_note": "The resource editor handles a subset and extra gate JSON; a general visual editor is missing.",
+      "scope_note": "The resource editor has one strict typed access-update review, durable dispatch/readback status and fixed local adapter readiness. A general visual policy editor and general operation/assisted workflows remain missing.",
       "execution_locations": [
         "authority-host",
         "this-device"
@@ -362,7 +362,7 @@
       "actor_requirements": [
         "Read-only, member, executor, operator and root requirements must be resolved per operation before exposure"
       ],
-      "approval": "Operation-specific immutable intent and current actor checks; not implemented by this inventory",
+      "approval": "Resource access changes bind exact intent to native identity, audience, current state and five-minute expiry. This is not independent approval or general owner administration.",
       "schemas": {
         "input": null,
         "output": null,
@@ -373,17 +373,25 @@
       "evidence": {
         "sources": [
           "README.md",
-          "docs/everyday-workflow.md"
+          "docs/everyday-workflow.md",
+          "docs/access-workflow.md",
+          "crates/connect-core/src/access_workflow.rs",
+          "apps/connect/src-tauri/src/access.rs"
         ],
-        "automated": [],
+        "automated": [
+          "crates/connect-core/tests/access_workflow.rs",
+          "crates/connect-core/tests/access_workflow_authority.rs",
+          "apps/connect/tests/access-state.test.ts",
+          "apps/connect/tests/access-errors.test.ts"
+        ],
         "physical": [],
         "accepted": false
       },
       "acceptance_gaps": [
-        "Typed operation schemas and prerequisites",
+        "General typed operation schemas and authenticated remote prerequisites beyond resource access",
         "Manual/assisted authorization parity",
-        "Denial, interruption and uncertain-outcome recovery",
-        "Workflow-specific verification and physical/usability evidence"
+        "General operation reconciliation, attribution and concurrent independent administrator fencing",
+        "Physical/native end-to-end acceptance of new review and lifecycle behavior"
       ],
       "public_entries": 31
     },

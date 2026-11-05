@@ -290,6 +290,89 @@ fn single_writer_cancel_and_persistence_failure_do_not_dispatch() -> Result<()> 
     Ok(())
 }
 
+#[test]
+fn missing_history_after_initialization_does_not_silently_reset_pending_work() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("journal.json");
+    let journal = AccessJournal::open(&path)?;
+    assert!(path.is_file());
+    drop(journal);
+    std::fs::remove_file(&path)?;
+    assert!(AccessJournal::open(&path).is_err());
+    assert!(!path.exists());
+    Ok(())
+}
+
+#[test]
+fn settled_history_is_archived_before_active_compaction_and_unknown_dispatch_stays() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("journal.json");
+    let mut journal = AccessJournal::open(&path)?;
+    let context = context();
+    let pending_collection = uuid::Uuid::new_v4().to_string();
+    let pending = journal.prepare(
+        context.clone(),
+        pending_collection,
+        "Waiting".into(),
+        policy(),
+        policy(),
+        Utc::now(),
+    )?;
+    journal.submit(
+        &pending.intent.id,
+        &pending.digest,
+        &context,
+        policy(),
+        Utc::now(),
+    )?;
+    journal.uncertain(&pending.intent.id)?;
+    let collection = uuid::Uuid::new_v4().to_string();
+    let mut before = policy();
+    for _ in 0..130 {
+        let review = journal.prepare(
+            context.clone(),
+            collection.clone(),
+            "Photos".into(),
+            before.clone(),
+            before.clone(),
+            Utc::now(),
+        )?;
+        journal.submit(
+            &review.intent.id,
+            &review.digest,
+            &context,
+            before.clone(),
+            Utc::now(),
+        )?;
+        before.version += 1;
+        journal.observe(&review.intent.id, before.clone())?;
+    }
+    assert_eq!(
+        journal.get(&pending.intent.id, &context)?.stage,
+        Stage::Unknown
+    );
+    let archives =
+        std::fs::read_dir(path.with_extension("archive"))?.collect::<std::io::Result<Vec<_>>>()?;
+    assert_eq!(archives.len(), 1);
+    let archived: serde_json::Value = serde_json::from_slice(&std::fs::read(archives[0].path())?)?;
+    assert_eq!(archived["records"].as_array().unwrap().len(), 64);
+    assert!(
+        !archived["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["intent"]["id"] == pending.intent.id)
+    );
+    drop(journal);
+    assert_eq!(
+        AccessJournal::open(&path)?
+            .get(&pending.intent.id, &context)?
+            .stage,
+        Stage::Unknown
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn private_permissions_and_link_substitution_are_checked() -> Result<()> {

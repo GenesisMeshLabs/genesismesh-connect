@@ -669,3 +669,8 @@
 .space-row > div > button { margin: 12px 8px 0 0; }
 #share-refresh-targets { width: 100%; margin: 8px 0; }
 .share-dialog #share-confirm, .share-dialog #access-save { position: sticky; bottom: 0; width: 100%; margin-top: 12px; box-shadow: 0 0 0 8px #15241f; }
+#access-review { border: 0; padding: 0; background: transparent; }
+#access-review dl { margin-block: 1rem; }
+#access-review dd { overflow-wrap: anywhere; }
+#access-review-exact { white-space: pre-wrap; overflow-wrap: anywhere; }
+#access-outcome { margin-block: 1rem; padding: 0.8rem; border: 1px solid var(--border, #4d654a); border-radius: 12px; }

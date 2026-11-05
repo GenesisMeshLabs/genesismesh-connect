@@ -96,12 +96,22 @@ test('CLI refuses stale output without repairing it, then explicitly regenerates
     const paths=['scripts/connect-contract.mjs','contract','README.md','docs/everyday-workflow.md',
       'docs/server-node.md','docs/service-sharing.md','docs/capability-coverage.md','Cargo.lock',
       'crates/connect-core/Cargo.toml','apps/connect/authority/core-requirements.txt'];
+    // The real mapping owns its evidence references. A new implemented slice
+    // must remain testable in an isolated checkout without maintaining a second
+    // hand-written reference list here.
+    const mapping=JSON.parse(await readFile(resolve(ROOT,'contract/connect-journeys.json'),'utf8'));
+    for(const journey of mapping.journeys)
+      for(const path of [...journey.evidence.sources,...journey.evidence.automated,...journey.evidence.physical,journey.schemas.input,journey.schemas.output].filter(Boolean)) {
+        assert.ok(!path.includes('..') && !path.includes(':') && !path.startsWith('/') && !path.startsWith('\\'));
+        if(!paths.includes(path))paths.push(path);
+      }
     for (const path of paths) {
       await mkdir(dirname(resolve(fixture,path)),{recursive:true});
       await cp(resolve(ROOT,path),resolve(fixture,path),{recursive:true});
     }
     const run=(command)=>spawnSync(process.execPath,[resolve(fixture,'scripts/connect-contract.mjs'),command],{cwd:fixture,encoding:'utf8'});
-    assert.equal(run('check').status,0);
+    const initial=run('check');
+    assert.equal(initial.status,0,initial.stderr);
     const artifact=resolve(fixture,'contract/connect-coverage.json');
     const expected=await readFile(artifact,'utf8');
     await writeFile(artifact,'{}\n');

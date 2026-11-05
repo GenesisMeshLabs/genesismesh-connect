@@ -126,9 +126,9 @@ pins, identify missing history and fence old hosts before claiming continuity.
 | --- | --- |
 | CONNECT-01 coverage and version inventory | Implemented; reviewed immutable snapshot, complete public declaration mapping, drift checks and CI definition |
 | Dependency qualification | Real-core Windows owner tests and Linux QUIC/authority checks pass; full Windows native gate blocked by Application Control; other platforms remain separate |
-| CONNECT-02 typed operation registry and exact-intent preview | Architecture defined here; execution implementation and per-operation schemas remain planned |
-| CONNECT-03 durable journal | State/retry requirements defined here; implementation and crash/reconciliation tests remain planned |
-| CONNECT-04 runtime prerequisite discovery | Required distinction from build inventory defined here; authenticated discovery remains planned |
+| CONNECT-02 typed operation registry and exact-intent preview | First strict access-update schema and manual review/commit implemented; general registry and assisted coverage remain planned |
+| CONNECT-03 durable journal | Access-update dispatch/crash/readback journal implemented; enrollment, recovery and general workflows remain planned |
+| CONNECT-04 runtime prerequisite discovery | Fixed local adapter release/network/operation readiness implemented; general authenticated remote flags/actor discovery remains planned |
 | Later phases | All agents, policies, federation, oversight, evidence, offline and operations outcomes remain visible in the reviewed mapping |
 
 For every implemented slice, retain denial, expiry, replay, changed intent,
@@ -137,6 +137,10 @@ measurements. Run a real disposable authority/controller; a mock acknowledgement
 is not execution evidence. Keep compiled, installed, launched, physically tested
 and usable-by-a-first-time-person results distinct. Missing Mac/phone access or
 security-policy blocks are explicit unperformed gates, never passes.
+
+See the [access workflow and its precise verification limits](access-workflow.md)
+for the first implemented execution slice. This does not complete CONNECT-02,
+CONNECT-03 or CONNECT-04 for the whole public-core surface.
 
 An independent operator and a separately implemented authority are distinct
 federation acceptance milestones. Neither same-host tests nor two authorities

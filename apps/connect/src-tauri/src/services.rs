@@ -3,7 +3,7 @@
 use crate::{consumer, desktop::DesktopState, workflow::WorkflowState};
 use connect_core::{
     device::DeviceController,
-    owner::{AccessPolicy, AccessUpdate},
+    owner::AccessPolicy,
     session::{
         bridge::SpaceView,
         sharing::{SpaceKind, service::Target},
@@ -156,58 +156,6 @@ pub async fn get_access_policy(
         None => serde_json::from_value(device.access_policy(id, None).await.map_err(error)?)
             .map_err(error),
     }
-}
-#[tauri::command]
-pub async fn update_access_policy(
-    id: String,
-    settings: AccessPolicy,
-    state: tauri::State<'_, WorkflowState>,
-    desktop: tauri::State<'_, DesktopState>,
-) -> Result<AccessPolicy, String> {
-    let _idle = desktop
-        .transfers
-        .try_read()
-        .map_err(|_| "Wait for the network change to finish")?;
-    let mut owner = state.slot.lock().await;
-    let mut slot = desktop.slot.lock().await;
-    let device = slot.controller.as_mut().ok_or("Join your network first")?;
-    let status = device.status().map_err(error)?;
-    if status.disconnected {
-        return Err("This device is disconnected".into());
-    }
-    let mut config = status
-        .shares
-        .iter()
-        .find(|s| s.collection_id == id)
-        .cloned()
-        .ok_or("Only the sharing device can manage access")?;
-    consumer::validate_recipients(
-        settings.recipients.clone(),
-        &consumer::recipients_for(&status),
-    )?;
-    let updated: AccessUpdate = match owner.runtime.as_mut() {
-        Some(runtime) => runtime
-            .access_update(&status.node_public_key, &id, &settings)
-            .map_err(error)?,
-        None => serde_json::from_value(
-            device
-                .access_policy(id.clone(), Some(settings))
-                .await
-                .map_err(error)?,
-        )
-        .map_err(error)?,
-    };
-    config.recipients = updated.settings.recipients.clone();
-    config.attestation_id = updated.space.attestation_id;
-    if let Some(target) = &mut config.service {
-        target.max_bytes = updated.settings.max_bytes;
-        target.max_seconds = updated.settings.max_seconds;
-    }
-    device.set_space(config).await.map_err(error)?;
-    if let Some(runtime) = owner.runtime.as_mut() {
-        device.publish_spaces(runtime.space_list().map_err(error)?);
-    }
-    Ok(updated.settings)
 }
 #[tauri::command]
 pub async fn open_service(id: String, app: tauri::AppHandle) -> Result<OpenService, String> {

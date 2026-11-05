@@ -47,10 +47,10 @@ for distribution in distributions():
             if path.is_file(): licenses.append((str(path),'licenses/'+name))
 python_license=Path(sys.base_prefix)/'LICENSE.txt'
 if python_license.is_file(): licenses.append((str(python_license),'licenses/CPython'))
-a=Analysis([%r],pathex=[%r],binaries=[],datas=collect_data_files('genesis_mesh')+copy_metadata('genesis-mesh')+licenses,hiddenimports=collect_submodules('genesis_mesh',filter=lambda name:'.tests' not in name),excludes=['pytest','IPython','matplotlib','tkinter'],noarchive=False)
+a=Analysis([%r],pathex=[%r],binaries=[],datas=[(%r,'.')]+collect_data_files('genesis_mesh')+copy_metadata('genesis-mesh')+licenses,hiddenimports=collect_submodules('genesis_mesh',filter=lambda name:'.tests' not in name),excludes=['pytest','IPython','matplotlib','tkinter'],noarchive=False)
 pyz=PYZ(a.pure)
 exe=EXE(pyz,a.scripts,a.binaries,a.datas,[],name=%r,icon=%r,debug=False,bootloader_ignore_signals=False,strip=False,upx=False,console=True)
-'''%(str(source/"main.py"),str(source),target,str(app/"src-tauri"/"icons"/"icon.ico")),encoding="utf-8")
+'''%(str(source/"main.py"),str(source),str(source/"core-requirements.txt"),target,str(app/"src-tauri"/"icons"/"icon.ico")),encoding="utf-8")
 subprocess.run([sys.executable,"-m","PyInstaller","--noconfirm","--distpath",str(output),"--workpath",str(scratch/"work"),str(spec)],check=True)
 stamp.write_text(json.dumps(key,indent=2)+"\n")
 print("Packaged Genesis Mesh authority:",binary.name)

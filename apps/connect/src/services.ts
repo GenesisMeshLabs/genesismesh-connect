@@ -1,61 +1,11 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { el, input } from "./ui";
-import { isService, friendlyProblem, formatBytes, type HomeStatus, type HomeSpace } from "./home-state";
-interface AccessPolicy { version:number; recipients:string[]; expires_at:string|null; max_bytes:number; max_seconds:number; extra_gates:unknown[] }
+import { el } from "./ui";
+import { friendlyProblem, type HomeStatus, type HomeSpace } from "./home-state";
+import { setupAccessEditor } from "./access-editor";
 interface Connection { id:string; name:string; kind:HomeSpace["kind"]; address:string; url:string|null; problem:string|null }
 export function setupServices(getStatus:()=>HomeStatus|null, refresh:()=>Promise<void>, message:(s:string)=>void) {
-  const dialog=el<HTMLDialogElement>("access-dialog");
-  let editing:HomeSpace|null=null, policy:AccessPolicy|null=null, saving=false, polling=false, originalExpiry="";
-  function problem(value:string) {el("access-problem").textContent=value;el("access-problem").hidden=!value;}
-  function selectCurrent(id:string,value:number,label:string) {
-    const select=el<HTMLSelectElement>(id);
-    select.querySelectorAll('[data-current]').forEach(o=>o.remove());
-    if (![...select.options].some(o=>o.value===String(value))) {const option=new Option(label,String(value));option.dataset.current="true";select.add(option);}
-    select.value=String(value);
-  }
-  async function access(space:HomeSpace) {
-    const result=await invoke<AccessPolicy>("get_access_policy",{id:space.id});
-    policy=result;editing=space;problem("");
-    el("access-title").textContent=`Access to ${space.name}`;
-    el("access-version").textContent=`Policy version ${result.version} · Changes are enforced by your network authority.`;
-    const list=el("access-devices");list.replaceChildren();
-    const devices=new Map(getStatus()?.devices.map(d=>[d.id,d.name]) || []);
-    // Retain existing grants even if the current member list is temporarily stale.
-    for(const id of result.recipients) if(!devices.has(id)) devices.set(id,"Previously allowed device (refresh Devices to identify)");
-    for(const [id,name] of devices) {
-      const label=document.createElement("label"), box=document.createElement("input");
-      box.type="checkbox";box.name="access-recipient";box.value=id;box.checked=result.recipients.includes(id);
-      label.append(box,document.createTextNode(name));list.append(label);
-    }
-    if(result.expires_at) {
-      const date=new Date(result.expires_at);date.setMinutes(date.getMinutes()-date.getTimezoneOffset());input("access-expiry").value=date.toISOString().slice(0,16);
-    } else input("access-expiry").value="";
-    originalExpiry=input("access-expiry").value;
-    selectCurrent("access-size",result.max_bytes,`Current limit: ${formatBytes(result.max_bytes)}`);
-    selectCurrent("access-duration",result.max_seconds,`Current limit: ${result.max_seconds} seconds`);
-    el("access-duration-field").hidden=!isService(space);
-    input("access-extra").value=JSON.stringify(result.extra_gates,null,2);
-    dialog.showModal();
-  }
-  el("access-close").addEventListener("click",()=>{if(!saving)dialog.close();});
-  dialog.addEventListener("cancel",e=>{if(saving)e.preventDefault();});
-  el("access-form").addEventListener("submit",async e=>{
-    e.preventDefault();if(saving||!editing||!policy)return;problem("");
-    const recipients=[...dialog.querySelectorAll<HTMLInputElement>('input[name="access-recipient"]:checked')].map(b=>b.value);
-    if(!recipients.length){problem("Choose at least one device, or use Stop sharing to close access for everyone.");return;}
-    let extra_gates:unknown;
-    try{extra_gates=JSON.parse(input("access-extra").value);}catch{problem("Additional rules must be a valid JSON array.");return;}
-    if(!Array.isArray(extra_gates)){problem("Additional rules must be a JSON array.");return;}
-    let expires_at:string|null=null;
-    if(input("access-expiry").value){const date=new Date(input("access-expiry").value);if(!Number.isFinite(date.getTime())||date.getTime()<=Date.now()){problem("Choose a future expiry date.");return;}expires_at=date.toISOString();}
-    if(input("access-expiry").value===originalExpiry) expires_at=policy.expires_at;
-    saving=true;el<HTMLButtonElement>("access-save").disabled=true;
-    try {
-      await invoke("update_access_policy",{id:editing.id,settings:{...policy,recipients,expires_at,max_bytes:Number(el<HTMLSelectElement>("access-size").value),max_seconds:Number(el<HTMLSelectElement>("access-duration").value),extra_gates}});
-      dialog.close();message("Access policy saved. New connections use the updated rules; open service sessions recheck them within 10 seconds.");await refresh();
-    }catch(error){problem(friendlyProblem(String(error)));}
-    finally{saving=false;el<HTMLButtonElement>("access-save").disabled=false;}
-  });
+  const access=setupAccessEditor(getStatus,refresh,message);
+  let polling=false;
   async function connections() {
     if(polling||!isTauri())return;polling=true;
     try {

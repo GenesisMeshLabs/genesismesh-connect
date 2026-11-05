@@ -111,6 +111,12 @@ export function formatBytes(bytes: number) {
   return `${(bytes / 1024 ** power).toFixed(1)} ${units[power - 1]}`;
 }
 export function friendlyProblem(value: string) {
+  if (/review expired|review expiry/i.test(value)) return "This review expired. Choose Change choices, then review the current settings again.";
+  if (/access changed since|shared item changed|no longer shared|policy changed/i.test(value)) return "This item changed elsewhere. Reload its access settings before saving.";
+  if (/workflow history is full|workflow journal is full/i.test(value)) return "Access history has reached this preview’s storage limit. Your settings are unchanged; use the network computer to review the history.";
+  if (/uncertain result|unconfirmed|result could not be confirmed/i.test(value)) return "An earlier change is unconfirmed. Choose Check status before making another change.";
+  if (/network computer.*incompatible|update the network computer|update connect|unsupported network setup operation/i.test(value)) return "Update Connect on your network computer before changing access here.";
+  if (/workflow.*(storage|history|journal)|workflow persistence|another access change/i.test(value)) return "Access history could not be opened safely. Close and reopen Connect; your existing history has been preserved.";
   if (/policy changed/i.test(value)) return "This policy changed elsewhere. Close and reopen Manage access to load its latest version.";
   if (/custom.*(rule|gate|policy)|policy is disabled|authority before editing/i.test(value)) return "This policy has custom rules that need review at the network authority. Connect has kept them unchanged.";
   if (/network authority cannot be shared|connection cannot be shared again/i.test(value)) return "Choose an application’s port. Connect’s own authority and connection ports cannot be shared.";

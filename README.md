@@ -11,6 +11,10 @@ acceptance. Classification is not full feature parity. See the
 [workflow and authority boundaries](docs/workflow-architecture.md) and
 [dependency qualification](docs/release-qualification.md).
 
+Manage access now has an [exact-scope review and durable change status](docs/access-workflow.md).
+An interrupted change is checked against the authority before another change
+can be submitted; it is never retried automatically.
+
 ## Structure
 
 The normal navigation is **Shared**, **Devices** and **Settings**. Technical

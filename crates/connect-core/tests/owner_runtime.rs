@@ -19,6 +19,7 @@ mod desktop {
         let profile = directory.path().join("device");
         let mut owner = OwnerRuntime::start(&binary()?, &owner_path)?;
         let info = owner.create("My home")?;
+        owner.capabilities()?.require_access_update(&info.pin)?;
         let mut device = DeviceController::prepare(&profile, info.url.clone(), info.pin.clone())?;
         let node = device.status()?.node_public_key;
         let invite = owner

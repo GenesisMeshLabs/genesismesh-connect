@@ -57,6 +57,7 @@ try {
     Invoke-VerificationStep 'Clippy' 'cargo' @('clippy', '--workspace', '--all-targets', '--locked', '--', '-D', 'warnings')
     Invoke-VerificationStep 'workspace tests' 'cargo' @('test', '--workspace', '--all-targets', '--locked')
     Invoke-VerificationStep 'real authority tests' 'cargo' @('test', '--workspace', '--test', 'live_authority', '--locked', '--', '--ignored', '--nocapture')
+    Invoke-VerificationStep 'durable access change with real authority' 'cargo' @('test', '-p', 'connect-core', '--test', 'access_workflow_authority', '--locked', '--', '--ignored', '--nocapture')
     Invoke-VerificationStep 'desktop and frontend build' 'npm.cmd' @('run', 'tauri', 'build', '--', '--debug', '--no-bundle', '--ci') (Join-Path $connectRoot 'apps\connect')
     $verification.status = 'passed'
 } catch {
