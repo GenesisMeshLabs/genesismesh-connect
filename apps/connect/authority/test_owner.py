@@ -410,7 +410,7 @@ class OwnerTests(unittest.TestCase):
                     self.assertTrue(private.read_bytes().startswith(MAGIC))
                 settings=(second/staged["config"]).read_text()
                 self.assertNotIn(staged["root"],settings)
-                self.assertIn(second.as_posix(),settings)
+                self.assertIn(second.resolve().as_posix(),settings)
                 # The restored authority keeps its history and its operator.
                 self.assertTrue(restored.invite(node)["invite"])
                 self.assertTrue(restored.service.db.conn.execute("select count(*) from invite_tokens").fetchone()[0]>=2)

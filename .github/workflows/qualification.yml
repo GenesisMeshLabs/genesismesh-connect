@@ -148,7 +148,11 @@ jobs:
           key: android-arm64-rust-1.98-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'apps/connect/package-lock.json', 'apps/connect/scripts/android-init.mjs') }}
       - run: npm ci
       - run: npm run android:init -- --ci
-      - run: npm run tauri -- android build --debug --apk --target aarch64 --ci
+      - name: Build an isolated physical-test package
+        run: |
+          mkdir -p temp
+          printf '%s\n' '{"identifier":"org.genesismesh.connect.qualification","productName":"Genesis Mesh Connect Test"}' > temp/qualification.conf.json
+          npm run tauri -- android build --debug --apk --target aarch64 --ci --config temp/qualification.conf.json
       - name: Verify and inventory APKs
         run: |
           mapfile -t apks < <(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk')
