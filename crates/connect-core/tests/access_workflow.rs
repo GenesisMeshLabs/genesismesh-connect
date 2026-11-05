@@ -356,6 +356,16 @@ fn settled_history_is_archived_before_active_compaction_and_unknown_dispatch_sta
     assert_eq!(archives.len(), 1);
     let archived: serde_json::Value = serde_json::from_slice(&std::fs::read(archives[0].path())?)?;
     assert_eq!(archived["records"].as_array().unwrap().len(), 64);
+    let old_id = archived["records"][0]["intent"]["id"].as_str().unwrap();
+    let local = journal.history_record(
+        &connect_core::access_workflow::history::HistoryScope {
+            pin: context.pin.clone(),
+            actor: context.actor.clone(),
+        },
+        old_id,
+    )?;
+    assert!(local.archived);
+    assert!(!local.signed);
     assert!(
         !archived["records"]
             .as_array()

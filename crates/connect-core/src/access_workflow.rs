@@ -12,6 +12,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod history;
+
 pub const OPERATION: &str = "connect.access.update.v1";
 // Includes before/after/readback gates for every bounded active record.
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
@@ -87,6 +89,59 @@ pub struct AccessRecord {
 struct Records {
     schema: u8,
     records: Vec<AccessRecord>,
+}
+impl Records {
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema == 1 && self.records.len() <= MAX_RECORDS,
+            "Unsupported workflow journal"
+        );
+        let mut ids = std::collections::BTreeSet::new();
+        for record in &self.records {
+            ensure!(
+                record.digest == record.intent.digest()? && ids.insert(&record.intent.id),
+                "Workflow history needs attention; it was preserved"
+            );
+            ensure!(
+                record.stage != Stage::Prepared
+                    || (record.authorization == Authorization::NotEvaluated
+                        && record.observed.is_none()),
+                "Invalid prepared workflow state"
+            );
+            ensure!(
+                record.stage != Stage::StateObserved || record.observed.is_some(),
+                "Workflow readback is missing"
+            );
+            if let Some(observed) = &record.observed {
+                ensure!(
+                    normalize(observed.clone(), None)? == *observed,
+                    "Invalid workflow readback"
+                );
+            }
+        }
+        Ok(())
+    }
+    fn read(path: &Path) -> Result<Self> {
+        let mut budget = MAX_BYTES;
+        Self::read_budgeted(path, &mut budget)
+    }
+    fn read_budgeted(path: &Path, budget: &mut u64) -> Result<Self> {
+        no_link(path)?;
+        ensure!(
+            std::fs::metadata(path)?.is_file(),
+            "Invalid workflow history file"
+        );
+        let limit = (*budget).min(MAX_BYTES);
+        ensure!(limit > 0, "Workflow history scan limit reached");
+        let mut bytes = Vec::new();
+        File::open(path)?.take(limit + 1).read_to_end(&mut bytes)?;
+        *budget = budget.saturating_sub(bytes.len() as u64);
+        ensure!(bytes.len() as u64 <= limit, "Workflow journal is too large");
+        let records: Self =
+            serde_json::from_value(parse_strict_json(std::str::from_utf8(&bytes)?)?)?;
+        records.validate()?;
+        Ok(records)
+    }
 }
 
 /// Exclusive writer, bounded strict JSON, atomic replacement and fsync. Stores
@@ -235,15 +290,7 @@ impl AccessJournal {
         fs2::FileExt::try_lock_exclusive(&lock)
             .context("Another access change is running; wait for it to finish")?;
         let records = if path.exists() {
-            let mut bytes = Vec::new();
-            File::open(path)?
-                .take(MAX_BYTES + 1)
-                .read_to_end(&mut bytes)?;
-            ensure!(
-                bytes.len() as u64 <= MAX_BYTES,
-                "Workflow journal is too large"
-            );
-            serde_json::from_value::<Records>(parse_strict_json(std::str::from_utf8(&bytes)?)?)?
+            Records::read(path)?
         } else {
             ensure!(
                 !initialized,
@@ -254,27 +301,7 @@ impl AccessJournal {
                 records: vec![],
             }
         };
-        ensure!(
-            records.schema == 1 && records.records.len() <= MAX_RECORDS,
-            "Unsupported workflow journal"
-        );
-        let mut ids = std::collections::BTreeSet::new();
-        for record in &records.records {
-            ensure!(
-                record.digest == record.intent.digest()? && ids.insert(&record.intent.id),
-                "Workflow history needs attention; it was preserved"
-            );
-            ensure!(
-                record.stage != Stage::Prepared
-                    || (record.authorization == Authorization::NotEvaluated
-                        && record.observed.is_none()),
-                "Invalid prepared workflow state"
-            );
-            ensure!(
-                record.stage != Stage::StateObserved || record.observed.is_some(),
-                "Workflow readback is missing"
-            );
-        }
+        records.validate()?;
         let mut journal = Self {
             path: path.to_owned(),
             records,
