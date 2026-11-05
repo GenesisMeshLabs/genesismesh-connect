@@ -43,8 +43,8 @@ can be supplied with `--wheelhouse`; the requirements still constrain versions.
 
 The **Android authority source wheels** manual GitHub workflow builds one of
 the missing packages using pinned cibuildwheel tooling. Start with
-`pydantic-core`; cryptography and PyNaCl also need their external native library
-recipes qualified. This is a build spike, not a complete embedded authority.
+`pydantic-core`; cryptography, PyNaCl and CFFI have additional native library
+requirements. This is a build spike, not a complete embedded authority.
 The workflow verifies the exact installed dependency against the core pin,
 downloads the hash-locked upstream sdist, cross-builds arm64/API24/CPython3.13,
 and checks CPython 3.13 interpreter/ABI compatibility, matching expanded filename
@@ -63,7 +63,7 @@ python scripts/android_authority_sources.py lock
 This derives exact versions from the released core and its model dependency;
 it does not introduce another core release pin. Review the new source hashes
 and rerun qualification. The source lock deliberately refuses an unreviewed
-release change. It currently covers the three missing native dependencies,
+release change. It currently covers four missing native dependencies,
 not the full transitive wheel closure or a production software bill of materials.
 
 Cryptography's Android build currently needs one narrowly scoped build patch:
@@ -72,6 +72,19 @@ patch queries the cross environment's target `INCLUDEPY` on Android and checks
 for `Python.h`. The original sdist and patch are separately hash-locked and
 reported. It changes header discovery, not cryptographic operations or core
 policy/identity semantics. Runtime and linked-library qualification remain open.
+
+PyNaCl builds its complete bundled libsodium source as a static target library.
+CFFI builds the separately hash-locked libffi source in
+`scripts/android-authority-native.lock.json`, also statically. Both builds refuse
+a host compiler or host Python library. Cross-compilation does not execute
+Android native tests on the x86 runner. CFFI's selected version must satisfy the
+active Android requirements of both cryptography and PyNaCl; it is locked as a
+build constraint so later host resolution cannot silently change the binding.
+
+Build records on 5 November 2026: the required pydantic-core, cryptography and
+PyNaCl wheels passed Android arm64/API24, CPython 3.13 ABI/metadata and 16 KiB
+checks. CFFI/libffi qualification, complete binary dependency resolution and
+physical embedded-core execution remain open. No phone authority is enabled.
 
 1. Build missing wheels reproducibly from verified upstream sources. Keep source
    digests, compiler/NDK/ABI/API versions, linkage, licenses and vulnerability

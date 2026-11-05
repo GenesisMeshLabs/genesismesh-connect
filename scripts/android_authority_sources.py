@@ -18,12 +18,13 @@ import urllib.request
 import zipfile
 
 from packaging.requirements import Requirement
+from packaging.markers import default_environment
 from packaging.tags import compatible_tags, cpython_tags, parse_tag
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "scripts/android-authority-sources.lock.json"
-PACKAGES = ("pydantic-core", "cryptography", "PyNaCl")
+PACKAGES = ("pydantic-core", "cryptography", "PyNaCl", "cffi")
 PATCHES = {"cryptography": ["scripts/android-authority-patches/cryptography-android-include.patch"]}
 
 
@@ -63,15 +64,29 @@ def versions():
     dependency("genesis-mesh", "pydantic")
     return {"pydantic-core": dependency("pydantic", "pydantic-core"),
             "cryptography": dependency("genesis-mesh", "cryptography"),
-            "PyNaCl": dependency("genesis-mesh", "PyNaCl")}
+            "PyNaCl": dependency("genesis-mesh", "PyNaCl"), "cffi": cffi_version()}
 
 
-def fetch(url, limit):
+def cffi_version():
+    environment = {**default_environment(), "python_version": "3.13", "python_full_version": "3.13.0",
+                   "sys_platform": "android", "os_name": "posix", "platform_system": "Android",
+                   "platform_machine": "aarch64", "platform_python_implementation": "CPython", "extra": ""}
+    version = metadata.version("cffi")
+    for parent in ("cryptography", "PyNaCl"):
+        requirements = [Requirement(r) for r in metadata.requires(parent) or []]
+        active = [r for r in requirements if canonicalize_name(r.name) == "cffi" and (not r.marker or r.marker.evaluate(environment))]
+        if not active or any(not r.specifier.contains(version) for r in active):
+            raise ValueError("CFFI does not satisfy the Android authority dependencies")
+    return version
+
+
+def fetch(url, limit, hosts=("pypi.org", "files.pythonhosted.org")):
     parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme != "https" or parsed.hostname not in {"pypi.org", "files.pythonhosted.org"} or parsed.username or parsed.password:
+    if parsed.scheme != "https" or parsed.hostname not in hosts or parsed.username or parsed.password:
         raise ValueError("Only official HTTPS Python package sources are permitted")
     with urllib.request.urlopen(url, timeout=60) as response:
-        if urllib.parse.urlsplit(response.url).hostname != parsed.hostname:
+        redirected = urllib.parse.urlsplit(response.url)
+        if redirected.scheme != "https" or redirected.hostname not in hosts or redirected.username or redirected.password:
             raise ValueError("Unexpected source redirect")
         data = response.read(limit + 1)
     if len(data) > limit:

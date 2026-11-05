@@ -19,7 +19,7 @@ on:
         required: true
         default: pydantic-core
         type: choice
-        options: [pydantic-core, cryptography, PyNaCl]
+        options: [pydantic-core, cryptography, PyNaCl, cffi]
 
 permissions:
   contents: read
@@ -45,7 +45,10 @@ jobs:
             apps/connect/authority/core-requirements.txt
             scripts/android-authority-build-requirements.txt
       - name: Install pinned core metadata and wheel tooling
-        run: python -m pip install -r apps/connect/authority/core-requirements.txt -r scripts/android-authority-build-requirements.txt
+        run: |
+          python -c "import json; print('cffi==' + json.load(open('scripts/android-authority-sources.lock.json'))['packages']['cffi']['version'])" > "$RUNNER_TEMP/connect-native-constraints.txt"
+          echo "PIP_CONSTRAINT=$RUNNER_TEMP/connect-native-constraints.txt" >> "$GITHUB_ENV"
+          python -m pip install -c "$RUNNER_TEMP/connect-native-constraints.txt" -r apps/connect/authority/core-requirements.txt -r scripts/android-authority-build-requirements.txt
       - name: Prepare exact hash-locked upstream source
         run: |
           native_build_root="$RUNNER_TEMP/connect-native-source"
@@ -54,6 +57,9 @@ jobs:
           if test "$PACKAGE" = PyNaCl; then
             printf 'CIBW_ENVIRONMENT=%s SODIUM_INSTALL=system\n' "$CIBW_ENVIRONMENT" >> "$GITHUB_ENV"
             echo "CIBW_BEFORE_BUILD=python \"$GITHUB_WORKSPACE/scripts/android_authority_native.py\" \"{package}\"" >> "$GITHUB_ENV"
+          fi
+          if test "$PACKAGE" = cffi; then
+            echo "CIBW_BEFORE_BUILD=python \"$GITHUB_WORKSPACE/scripts/android_authority_native.py\" \"{package}\" --kind ffi" >> "$GITHUB_ENV"
           fi
       - name: Source and target refusal tests
         run: python -m unittest discover -s scripts/tests -p 'test_native_*.py' -v
@@ -65,7 +71,7 @@ jobs:
             ~/.cache/cibuildwheel
             ~/.cargo/registry
             ~/.cargo/git
-          key: android-authority-${{ env.PACKAGE }}-${{ hashFiles('scripts/android-authority-sources.lock.json', 'scripts/android-authority-build-requirements.txt') }}
+          key: android-authority-${{ env.PACKAGE }}-${{ hashFiles('scripts/android-authority-sources.lock.json', 'scripts/android-authority-native.lock.json', 'scripts/android-authority-build-requirements.txt') }}
       - name: Cross-build Android arm64 wheel (device execution is a separate gate)
         run: |
           set -euo pipefail

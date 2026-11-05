@@ -18,6 +18,14 @@ spec.loader.exec_module(sources)
 
 
 class SourceTests(unittest.TestCase):
+    def test_cffi_must_satisfy_both_android_parent_requirements(self):
+        requirements = ['cffi>=1.4.1; python_version < "3.9"', 'cffi>=2.0.0; python_version >= "3.9"']
+        with patch.object(sources.metadata, "requires", return_value=requirements):
+            with patch.object(sources.metadata, "version", return_value="1.17.1"):
+                with self.assertRaisesRegex(ValueError, "CFFI does not satisfy"):
+                    sources.cffi_version()
+            with patch.object(sources.metadata, "version", return_value="2.1.1"):
+                self.assertEqual(sources.cffi_version(), "2.1.1")
     def wheel(self, root, python="cp313", abi="cp313", declared="same"):
         version = json.loads(sources.LOCK.read_text())["packages"]["pydantic-core"]["version"]
         tag = f"{python}-{abi}-android_24_arm64_v8a"
