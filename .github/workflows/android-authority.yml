@@ -1,0 +1,31 @@
+name: Android authority dependency gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Test refusal and result reporting
+        run: python -m unittest discover -s scripts/tests -p test_android_authority_probe.py -v
+      - name: Resolve unchanged core and dependency closure for Android
+        run: python scripts/probe-android-authority.py --output temp/android-authority
+      - name: Preserve failure report and partial wheel inventory
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Android-authority-dependency-report-${{ github.sha }}
+          path: |
+            temp/android-authority/report.json
+            temp/android-authority/resolver.log
+          if-no-files-found: error
+          retention-days: 7
