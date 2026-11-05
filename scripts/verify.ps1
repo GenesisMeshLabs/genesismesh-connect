@@ -47,7 +47,7 @@ $previousPython = $env:CONNECT_NA_PYTHON
 try {
     $env:CONNECT_NA_PYTHON = $AuthorityPython
     Invoke-VerificationStep 'frontend onboarding, browsing and references' 'npm.cmd' @('test') (Join-Path $connectRoot 'apps\connect')
-    Invoke-VerificationStep 'owner adapter with real core' $AuthorityPython @('-m', 'unittest', '-v', 'test_owner') (Join-Path $connectRoot 'apps\connect\authority')
+    Invoke-VerificationStep 'owner adapter and release pin with real core' $AuthorityPython @('-m', 'unittest', '-v', 'test_core_release', 'test_owner') (Join-Path $connectRoot 'apps\connect\authority')
     Invoke-VerificationStep 'formatting' 'cargo' @('fmt', '--all', '--', '--check')
     Invoke-VerificationStep 'standalone core library' 'cargo' @('check', '-p', 'connect-core', '--lib', '--locked')
     Invoke-VerificationStep 'iOS DNS parser' 'cargo' @('test', '--manifest-path', 'vendor/n0-dns-resolver/Cargo.toml', '--lib', 'system_config::ios::tests', '--no-default-features', '--locked')

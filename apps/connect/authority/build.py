@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 from build_platform import target as native_target, extension
+from core_release import required_core_version
 
 source=Path(__file__).resolve().parent
 app=source.parent
@@ -17,8 +18,8 @@ output=app/"src-tauri"/"binaries"
 binary=output/(target+extension())
 stamp=scratch/"source.json"
 version=importlib.metadata.version("genesis-mesh")
-if version!="1.8.1":
-    raise SystemExit("Build the owner runtime with genesis-mesh==1.8.1")
+if version!=required_core_version():
+    raise SystemExit(f"Build the owner runtime with genesis-mesh=={required_core_version()}")
 core=Path(next(iter(importlib.util.find_spec("genesis_mesh").submodule_search_locations)))
 digest=hashlib.sha256()
 digest.update((app/"src-tauri"/"icons"/"icon.ico").read_bytes())

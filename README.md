@@ -63,7 +63,7 @@ npm ci
 npm run tauri build -- --debug --no-bundle
 ```
 
-The Windows executable is `target/debug/genesismesh-connect.exe` at the repository root. Keep its bundled `genesismesh-authority.exe` alongside it. Building the owner runtime needs the sibling Genesis Mesh 1.8.1 source and build Python (or explicit `CONNECT_CORE_SOURCE` and `CONNECT_NA_PYTHON`); installed end users need neither. Packaging uses an isolated build environment, with dependency reports under `temp/authority-build/<native-target>/`. For frontend hot reload, use `npm run tauri dev` instead; the explicit debug-only `CONNECT_NA_PYTHON` option can run the owner adapter from source. Opening Vite in an ordinary browser does not provide native Rust commands.
+The Windows executable is `target/debug/genesismesh-connect.exe` at the repository root. Keep its bundled `genesismesh-authority.exe` alongside it. Building the owner runtime needs the sibling Genesis Mesh source matching `apps/connect/authority/core-requirements.txt` and build Python (or explicit `CONNECT_CORE_SOURCE` and `CONNECT_NA_PYTHON`); installed end users need neither. Packaging uses an isolated build environment, with dependency reports under `temp/authority-build/<native-target>/`. For frontend hot reload, use `npm run tauri dev` instead; the explicit debug-only `CONNECT_NA_PYTHON` option can run the owner adapter from source. Opening Vite in an ordinary browser does not provide native Rust commands.
 
 Use the [everyday workflow](docs/everyday-workflow.md) for normal setup, or the [Device guide](docs/windows-device.md) for technical controls. For the original connectivity spike, open **Settings → Advanced tools → Connection check**, start both endpoints in local mode and exchange tickets. That separate diagnostic does not publish endpoint addresses. Guided sessions follow the network computer's connection setting: public relays (n0 relays and address lookup, the default) or private, local network only (no relay or address publication); see [choose how devices connect](docs/everyday-workflow.md#choose-how-devices-connect). Either way Genesis Mesh authenticates the node and authorizes access.
 
@@ -91,7 +91,7 @@ The diagnostic protocols accept one message of at most 1,024 bytes per connectio
 
 Desktop hosting follows app lifetime. Phone suspension can interrupt it. Service sharing is a loopback TCP tunnel to a configured local service, with a live authority decision and periodic rechecks; it is not a system VPN or remote shell execution API. Mobile folder hosting, unattended desktop service operation and physical acceptance of the new service/file picker workflows remain separate work.
 
-Spike B pins the released `v1.8.1` SDK and runs without Mac or iPhone setup:
+Spike B uses the released SDK pinned in `crates/connect-core/Cargo.toml` and runs without Mac or iPhone setup:
 
 ```powershell
 cargo run -p connect-core --example session --locked -- self-test

@@ -1120,7 +1120,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 3.0.9",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -1879,8 +1879,8 @@ dependencies = [
 
 [[package]]
 name = "genesis-mesh-sdk"
-version = "1.8.1"
-source = "git+https://github.com/GenesisMeshLabs/sdk-rust?tag=v1.8.1#e554ca482a3ef4bc1e7a2ef205ac1d537daa169d"
+version = "1.9.1"
+source = "git+https://github.com/GenesisMeshLabs/sdk-rust?tag=v1.9.1#b67c248717d5d99aca6f4dad320692f3f6c07c69"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -5450,6 +5450,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
 dependencies = [
  "proc-macro2",
+ "quote",
  "unicode-ident",
 ]
 
@@ -5893,7 +5894,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

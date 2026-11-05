@@ -9,12 +9,14 @@ import tomllib
 import venv
 from pathlib import Path
 from build_platform import target as native_target, extension
+from core_release import required_core_version
 
 source=Path(__file__).resolve().parent
 root=source.parents[2]
 core=Path(os.environ.get("CONNECT_CORE_SOURCE",str(root.parent/"genesismesh"))).resolve()
 project=tomllib.loads((core/"pyproject.toml").read_text())
-if project["project"]["version"]!="1.8.1": raise SystemExit("Package the supported Genesis Mesh 1.8.1 source.")
+version=required_core_version()
+if project["project"]["version"]!=version: raise SystemExit(f"Package the pinned Genesis Mesh {version} source.")
 scratch=root/"temp"/"authority-build"/native_target()
 scratch.mkdir(parents=True,exist_ok=True)
 build_env=scratch/"environment"
@@ -45,7 +47,7 @@ for name in ("pyproject.toml","README.md","LICENSE"): shutil.copyfile(core/name,
 env={**os.environ,"PYTHONDONTWRITEBYTECODE":"1"}
 env.pop("PYTHONPATH",None)
 def run(*args): subprocess.run([str(python),*args],check=True,env=env)
-run("-m","pip","install","--no-compile","--disable-pip-version-check","-r",str(source/"build-requirements.txt"),str(snapshot))
+run("-m","pip","install","--no-compile","--disable-pip-version-check","-r",str(source/"build-requirements.txt"),"-r",str(source/"core-requirements.txt"),str(snapshot))
 run(str(source/"build.py"))
 versions=subprocess.check_output([str(python),"-m","pip","freeze"],text=True,env=env)
-stamp.write_text(json.dumps({"source":fingerprint,"core_version":"1.8.1","dependencies":versions.splitlines()},indent=2)+"\n")
+stamp.write_text(json.dumps({"source":fingerprint,"core_version":version,"dependencies":versions.splitlines()},indent=2)+"\n")

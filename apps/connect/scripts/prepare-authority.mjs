@@ -21,7 +21,7 @@ const python =
   (process.platform === "win32" ? resolve(root, "../genesismesh/.venv/Scripts/python.exe") : "python3");
 if (process.platform === "win32" && !existsSync(python))
   throw new Error(
-    "The build needs Genesis Mesh 1.8.1. Set CONNECT_NA_PYTHON to its build environment. Installed apps use the bundled runtime.",
+    "The build needs Python to package the pinned Genesis Mesh release. Set CONNECT_NA_PYTHON to its build environment. Installed apps use the bundled runtime.",
   );
 const env = { ...process.env, PYTHONDONTWRITEBYTECODE: "1" };
 function run(args) {

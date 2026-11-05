@@ -28,7 +28,7 @@ fs2 = "=0.4.3"
 aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }
 hkdf = "0.13.0"
 data-encoding = "2.11"
-genesis-mesh-sdk = { git = "https://github.com/GenesisMeshLabs/sdk-rust", tag = "v1.8.1", default-features = false }
+genesis-mesh-sdk = { git = "https://github.com/GenesisMeshLabs/sdk-rust", tag = "v1.9.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
