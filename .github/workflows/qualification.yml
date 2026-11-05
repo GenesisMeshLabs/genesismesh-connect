@@ -32,6 +32,9 @@ jobs:
       - run: npm test
       - run: npx tsc --noEmit
       - run: npx vite build
+      - name: Android packaging refusal checks
+        working-directory: .
+        run: python3 -m unittest discover -s scripts/tests -p 'test_android_apk.py'
 
   core:
     name: Core (${{ matrix.os }})
@@ -152,6 +155,7 @@ jobs:
           test "${#apks[@]}" -gt 0
           for apk in "${apks[@]}"; do
             "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$apk"
+            python3 ../../scripts/check-android-apk.py "$apk"
             sha256sum "$apk"
           done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

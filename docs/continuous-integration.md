@@ -9,7 +9,8 @@ and `Connect qualification`. The latter can also be started manually. It checks:
   real core/QUIC, access and owner-control checks; standalone authority/recovery;
   Linux desktop and headless-host compilation.
 - An arm64 Android debug APK built with the existing initialization/branding/
-  permission patches, followed by signature verification and SHA-256 inventory.
+  permission patches, followed by signature verification, 16 KiB ELF/RELRO/ZIP
+  alignment refusal checks and SHA-256 inventory.
 
 Download the Android APK from the run's **Artifacts** section. It is a development
 build with a development signing identity, not a store release. Updating a device
