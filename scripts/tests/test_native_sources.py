@@ -17,6 +17,14 @@ spec.loader.exec_module(sources)
 
 
 class SourceTests(unittest.TestCase):
+    def test_source_build_is_isolated_from_connect_cargo_workspace(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "Cargo.toml").write_text("[workspace]\nmembers=[]\n")
+            with patch.object(sources, "verified_source") as fetch:
+                with self.assertRaisesRegex(ValueError, "outside.*Cargo workspace"):
+                    sources.prepare("pydantic-core", root / "native")
+                fetch.assert_not_called()
     def test_ranges_urls_and_conditional_dependencies_cannot_replace_exact_pin(self):
         for text in ("example>=1", "example==1.*", "example @ https://example.com/pkg.whl", 'example==1; sys_platform=="linux"'):
             with self.assertRaises(ValueError):

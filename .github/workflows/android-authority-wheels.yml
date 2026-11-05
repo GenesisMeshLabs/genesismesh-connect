@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 35
     env:
       PACKAGE: ${{ inputs.package || 'pydantic-core' }}
+      BUILD_ROOT: ${{ runner.temp }}/connect-native-source
       RUSTUP_TOOLCHAIN: 1.98.0
       ANDROID_API_LEVEL: '24'
       CIBW_BUILD: cp313-android_arm64_v8a
@@ -42,7 +43,7 @@ jobs:
       - name: Install pinned core metadata and wheel tooling
         run: python -m pip install -r apps/connect/authority/core-requirements.txt -r scripts/android-authority-build-requirements.txt
       - name: Prepare exact hash-locked upstream source
-        run: python scripts/android_authority_sources.py prepare --package "$PACKAGE" --output temp/android-native
+        run: python scripts/android_authority_sources.py prepare --package "$PACKAGE" --output "$BUILD_ROOT"
       - name: Source and target refusal tests
         run: python -m unittest discover -s scripts/tests -p test_native_sources.py -v
       - name: Install declared Rust and Android target
@@ -56,10 +57,11 @@ jobs:
           key: android-authority-${{ env.PACKAGE }}-${{ hashFiles('scripts/android-authority-sources.lock.json', 'scripts/android-authority-build-requirements.txt') }}
       - name: Cross-build Android arm64 wheel (device execution is a separate gate)
         run: |
-          python -m cibuildwheel temp/android-native/project --platform android --archs arm64_v8a --output-dir temp/android-native/wheels 2>&1 | tee temp/android-native/build.log
+          set -euo pipefail
+          python -m cibuildwheel "$BUILD_ROOT/project" --platform android --archs arm64_v8a --output-dir "$BUILD_ROOT/wheels" 2>&1 | tee "$BUILD_ROOT/build.log"
       - name: Verify native target and alignment
         run: |
-          mapfile -t wheels < <(find temp/android-native/wheels -name '*.whl')
+          mapfile -t wheels < <(find "$BUILD_ROOT/wheels" -name '*.whl')
           test "${#wheels[@]}" -gt 0
           for wheel in "${wheels[@]}"; do
             python scripts/android_authority_sources.py check "$wheel"
@@ -70,8 +72,8 @@ jobs:
         with:
           name: Android-authority-${{ env.PACKAGE }}-${{ github.sha }}
           path: |
-            temp/android-native/source-report.json
-            temp/android-native/build.log
-            temp/android-native/wheels/
+            ${{ env.BUILD_ROOT }}/source-report.json
+            ${{ env.BUILD_ROOT }}/build.log
+            ${{ env.BUILD_ROOT }}/wheels/
           if-no-files-found: warn
           retention-days: 7

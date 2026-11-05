@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import struct
 import tarfile
+import tomllib
 import urllib.parse
 import urllib.request
 import zipfile
@@ -115,6 +116,10 @@ def unpack(archive, output):
 
 
 def prepare(name, output):
+    for parent in output.resolve().parents:
+        manifest = parent / "Cargo.toml"
+        if manifest.is_file() and "workspace" in tomllib.loads(manifest.read_text()):
+            raise ValueError("Prepare sources outside the enclosing Cargo workspace")
     source, data = verified_source(name)
     output.mkdir(parents=True, exist_ok=False)
     archive = output / "upstream.tar.gz"
