@@ -10,6 +10,42 @@ use chrono::{Duration, Utc};
 use std::collections::BTreeSet;
 
 impl DeviceController {
+    pub async fn owner_control_exchange(
+        &mut self,
+        request: &crate::owner_control::ControlEnvelope,
+    ) -> Result<crate::owner_control::ControlReply> {
+        self.require_connected()?;
+        let trust = self.refresh_inner(false).await?;
+        let identity = self
+            .device
+            .as_ref()
+            .context("Join this device first")?
+            .session_identity()?;
+        self.bridge_client
+            .as_ref()
+            .context("Use Requests locally on the network computer")?
+            .owner_control(identity, trust, request)
+            .await
+    }
+    pub async fn verify_owner_controller(
+        &mut self,
+        certificate: &serde_json::Value,
+        node: &str,
+    ) -> Result<crate::owner_control::VerifiedController> {
+        self.require_connected()?;
+        ensure!(
+            self.network_computer(),
+            "This device is not the authority host"
+        );
+        let trust = self.refresh_inner(false).await?;
+        crate::owner_control::VerifiedController::from_session(
+            &self.administrative_binding()?.scope,
+            &trust,
+            certificate,
+            node,
+            Utc::now(),
+        )
+    }
     fn administrative_binding(&self) -> Result<AdministrativeBinding> {
         let node = STANDARD.encode(self.vault.key().verifying_key().to_bytes());
         let host = if self.network_computer() {

@@ -80,6 +80,7 @@ enum Operation {
     Services,
     AccessPolicy,
     ResourceCapabilities,
+    OwnerControl,
 }
 
 /// A Space as a device learns it from its network computer: another device's

@@ -68,6 +68,211 @@ fn target() -> PairingTarget {
         comparison_code: "012345".into(),
     }
 }
+
+#[test]
+fn enrollment_queue_is_bound_idempotent_and_survives_restart() -> Result<()> {
+    let f = Fixture::new();
+    let admin = key();
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("control.json");
+    let mut store = ControlStore::create(&path, scope(&f), f.now)?;
+    let request = enrollment(&f, &admin, &[Permission::ListPairing])?;
+    let digest = request.digest()?;
+    let submit = |store: &mut ControlStore| {
+        store.request_enrollment(request.clone(), f.client_cert.clone(), &peer(&f)?, f.now)
+    };
+    assert!(matches!(
+        submit(&mut store)?,
+        EnrollmentState::Pending { .. }
+    ));
+    assert!(matches!(
+        submit(&mut store)?,
+        EnrollmentState::Pending { .. }
+    ));
+    assert_eq!(store.pending_enrollments(f.now).len(), 1);
+    assert!(store.grants().is_empty(), "submission is not approval");
+    let mut changed = request.intent.clone();
+    changed.grant_expires_at += Duration::minutes(1);
+    assert!(
+        store
+            .request_enrollment(
+                EnrollmentRequest::sign(changed, &admin)?,
+                f.client_cert.clone(),
+                &peer(&f)?,
+                f.now
+            )
+            .is_err()
+    );
+    let mut altered_certificate = f.client_cert.clone();
+    altered_certificate["cert_id"] = json!("another-certificate");
+    assert!(
+        store
+            .request_enrollment(request.clone(), altered_certificate, &peer(&f)?, f.now)
+            .is_err()
+    );
+    assert!(matches!(
+        store.enrollment_state(&public(&f.server), &request.intent.id, f.now),
+        EnrollmentState::Missing
+    ));
+    drop(store);
+    let mut store = ControlStore::open(&path, &scope(&f))?;
+    assert_eq!(store.pending_enrollments(f.now).len(), 1);
+    store.enroll_locally(request.clone(), &digest, &peer(&f)?, f.now)?;
+    assert!(store.pending_enrollments(f.now).is_empty());
+    assert!(matches!(
+        submit(&mut store)?,
+        EnrollmentState::Active { .. }
+    ));
+    store.revoke_locally(&request.intent.id, f.now)?;
+    assert!(matches!(submit(&mut store)?, EnrollmentState::Revoked));
+    Ok(())
+}
+
+#[test]
+fn declined_enrollment_does_not_reappear_or_grant_access() -> Result<()> {
+    let f = Fixture::new();
+    let admin = key();
+    let dir = tempfile::tempdir()?;
+    let mut store = ControlStore::create(&dir.path().join("c.json"), scope(&f), f.now)?;
+    let request = enrollment(&f, &admin, &[Permission::ListPairing])?;
+    store.request_enrollment(request.clone(), f.client_cert.clone(), &peer(&f)?, f.now)?;
+    assert!(
+        store
+            .decline_locally(&request.intent.id, "changed", f.now)
+            .is_err()
+    );
+    store.decline_locally(&request.intent.id, &request.digest()?, f.now)?;
+    assert!(store.pending_enrollments(f.now).is_empty());
+    assert!(matches!(
+        store.request_enrollment(request.clone(), f.client_cert.clone(), &peer(&f)?, f.now)?,
+        EnrollmentState::Declined
+    ));
+    assert!(
+        store
+            .enroll_locally(request.clone(), &request.digest()?, &peer(&f)?, f.now)
+            .is_err()
+    );
+    assert!(matches!(
+        store.enrollment_state(
+            &public(&f.client),
+            &request.intent.id,
+            f.now + Duration::minutes(3)
+        ),
+        EnrollmentState::Expired
+    ));
+    Ok(())
+}
+
+#[test]
+fn enrollment_queue_is_bounded_without_evicting_waiting_requests() -> Result<()> {
+    let f = Fixture::new();
+    let dir = tempfile::tempdir()?;
+    let mut store = ControlStore::create(&dir.path().join("c.json"), scope(&f), f.now)?;
+    let first = enrollment(&f, &key(), &[Permission::ListPairing])?;
+    store.request_enrollment(first.clone(), f.client_cert.clone(), &peer(&f)?, f.now)?;
+    let second = enrollment(&f, &key(), &[Permission::ListPairing])?;
+    assert!(
+        store
+            .request_enrollment(second, f.client_cert.clone(), &peer(&f)?, f.now)
+            .is_err()
+    );
+    assert_eq!(
+        store.pending_enrollments(f.now)[0].request.digest()?,
+        first.digest()?
+    );
+    let mut huge = f.client_cert.clone();
+    huge["padding"] = json!("x".repeat(65_536));
+    assert!(
+        store
+            .request_enrollment(first, huge, &peer(&f)?, f.now)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn results_are_exact_private_durable_and_never_replay_permission() -> Result<()> {
+    let f = Fixture::new();
+    let admin = key();
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("c.json");
+    let mut store = ControlStore::create(&path, scope(&f), f.now)?;
+    let grant = enroll(&mut store, &f, &admin, &[Permission::ApprovePairing])?;
+    let target = target();
+    let cmd = command(
+        &f,
+        &admin,
+        &grant.enrollment.intent.id,
+        OwnerAction::ApprovePairing(target.clone()),
+    )?;
+    let reserved = store.reserve(&cmd, &peer(&f)?, f.now)?;
+    store.record_result(
+        reserved.nonce(),
+        reserved.digest(),
+        ControlResult::Started,
+        f.now,
+    )?;
+    assert!(
+        store
+            .record_result(
+                reserved.nonce(),
+                reserved.digest(),
+                ControlResult::Approved {
+                    node: public(&f.client)
+                },
+                f.now
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .record_result(
+                reserved.nonce(),
+                reserved.digest(),
+                ControlResult::Rejected {
+                    node: target.node.clone()
+                },
+                f.now
+            )
+            .is_err()
+    );
+    let result = ControlResult::Approved { node: target.node };
+    store.record_result(reserved.nonce(), reserved.digest(), result.clone(), f.now)?;
+    assert!(
+        store
+            .record_result(
+                reserved.nonce(),
+                reserved.digest(),
+                ControlResult::Started,
+                f.now
+            )
+            .is_err()
+    );
+    assert_eq!(
+        store.result_for(&public(&f.server), reserved.nonce(), reserved.digest()),
+        ControlResult::Unconfirmed
+    );
+    assert_eq!(
+        store.result_for(&public(&f.client), reserved.nonce(), "wrong"),
+        ControlResult::Unconfirmed
+    );
+    drop(store);
+    let mut store = ControlStore::open(&path, &scope(&f))?;
+    assert_eq!(
+        store.result_for(&public(&f.client), reserved.nonce(), reserved.digest()),
+        result
+    );
+    assert!(store.reserve(&cmd, &peer(&f)?, f.now).is_err());
+    drop(store);
+    let mut saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+    saved["used"][0]["result"]["node"] = json!(public(&f.client));
+    std::fs::write(&path, serde_json::to_vec(&saved)?)?;
+    assert!(
+        ControlStore::open(&path, &scope(&f)).is_err(),
+        "invalid persisted results are refused"
+    );
+    Ok(())
+}
 fn enroll(
     store: &mut ControlStore,
     f: &Fixture,

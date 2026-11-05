@@ -1,4 +1,5 @@
 use super::protocol::*;
+use super::{ControlResult, EnrollmentState, PendingEnrollment};
 use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Utc};
 use genesis_mesh_sdk::parse_strict_json;
@@ -13,6 +14,7 @@ use std::{
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_GRANTS: usize = 64;
 const MAX_RESERVATIONS: usize = 256;
+const MAX_CERTIFICATE_BYTES: usize = 64 * 1024;
 
 /// Host-local delegation, not a core operator key or portable capability.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -37,6 +39,8 @@ struct UsedRequest {
     digest: String,
     reserved_at: DateTime<Utc>,
     observation: Observation,
+    #[serde(default)]
+    result: Option<ControlResult>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +50,8 @@ struct State {
     high_water: DateTime<Utc>,
     grants: Vec<Grant>,
     used: Vec<UsedRequest>,
+    #[serde(default)]
+    pending: Vec<PendingEnrollment>,
 }
 impl State {
     fn validate(&self) -> Result<()> {
@@ -56,12 +62,32 @@ impl State {
             "Unsupported or oversized owner-control state"
         );
         self.scope.validate()?;
+        ensure!(
+            self.pending.len() <= 8,
+            "Too many administrative enrollment requests"
+        );
+        let mut pending_ids = BTreeSet::new();
+        for pending in &self.pending {
+            pending.request.verify()?;
+            ensure!(
+                serde_json::to_vec(&pending.certificate)?.len() <= MAX_CERTIFICATE_BYTES,
+                "Saved enrollment certificate is too large"
+            );
+            ensure!(
+                pending_ids.insert(&pending.request.intent.id)
+                    && pending.request.intent.scope == self.scope
+                    && pending.certificate["node_public_key"]
+                        == pending.request.intent.controller_node,
+                "Invalid saved enrollment request"
+            );
+        }
         let mut ids = BTreeSet::new();
         for grant in &self.grants {
             let intent = &grant.enrollment.intent;
             grant.enrollment.verify()?;
             ensure!(
                 ids.insert(&intent.id)
+                    && !pending_ids.contains(&intent.id)
                     && intent.scope == self.scope
                     && grant.approval_digest == grant.enrollment.digest()?,
                 "Invalid saved owner enrollment"
@@ -78,6 +104,13 @@ impl State {
         let mut nonces = BTreeSet::new();
         for used in &self.used {
             let command = &used.command;
+            if let Some(result) = &used.result {
+                result.validate_for(&command.intent.action)?;
+                ensure!(
+                    used.observation == Observation::ReplyObserved,
+                    "Saved result has no observed reply"
+                );
+            }
             let grant = self
                 .grants
                 .iter()
@@ -132,7 +165,8 @@ impl Reservation {
 }
 
 /// Caller must hold this exclusive host lock through the final live target and
-/// core-role checks and immediate dispatch. There is no remote enrollment API.
+/// core-role checks and immediate dispatch. Remote enrollment requests cannot
+/// approve themselves; approval remains a separate local operation.
 /// OS storage is the host trust boundary; restoring an old whole file is not
 /// detected as cryptographic rollback and must not be used as a recovery flow.
 pub struct ControlStore {
@@ -157,6 +191,7 @@ impl ControlStore {
                 high_water: now,
                 grants: vec![],
                 used: vec![],
+                pending: vec![],
             },
             _lock: lock,
             usable: true,
@@ -240,6 +275,196 @@ impl ControlStore {
         &self.state.grants
     }
 
+    pub fn pending_enrollments(&self, now: DateTime<Utc>) -> Vec<PendingEnrollment> {
+        self.state
+            .pending
+            .iter()
+            .filter(|p| !p.declined && now < p.request.intent.expires_at)
+            .cloned()
+            .collect()
+    }
+    pub fn enrollment_state(&self, node: &str, id: &str, now: DateTime<Utc>) -> EnrollmentState {
+        if let Some(grant) =
+            self.state.grants.iter().find(|g| {
+                g.enrollment.intent.id == id && g.enrollment.intent.controller_node == node
+            })
+        {
+            if grant.revoked_at.is_some() {
+                return EnrollmentState::Revoked;
+            }
+            if now >= grant.enrollment.intent.grant_expires_at {
+                return EnrollmentState::Expired;
+            }
+            return EnrollmentState::Active {
+                grant: grant.clone(),
+            };
+        }
+        if let Some(p) = self
+            .state
+            .pending
+            .iter()
+            .find(|p| p.request.intent.id == id && p.request.intent.controller_node == node)
+        {
+            if now >= p.request.intent.expires_at {
+                return EnrollmentState::Expired;
+            }
+            return if p.declined {
+                EnrollmentState::Declined
+            } else {
+                EnrollmentState::Pending {
+                    request: p.request.clone(),
+                }
+            };
+        }
+        EnrollmentState::Missing
+    }
+    /// Narrow same-intent submission idempotency; this never approves a grant.
+    pub fn request_enrollment(
+        &mut self,
+        request: EnrollmentRequest,
+        certificate: serde_json::Value,
+        peer: &VerifiedController,
+        now: DateTime<Utc>,
+    ) -> Result<EnrollmentState> {
+        self.clock(now)?;
+        request.verify()?;
+        ensure!(
+            serde_json::to_vec(&certificate)?.len() <= MAX_CERTIFICATE_BYTES,
+            "Enrollment certificate is too large"
+        );
+        peer.require(&self.state.scope, &request.intent.controller_node, now)?;
+        ensure!(
+            request.intent.scope == self.state.scope
+                && certificate["node_public_key"] == request.intent.controller_node
+                && genesis_mesh_sdk::canonical_digest(&certificate)? == peer.certificate_digest,
+            "Wrong enrollment context"
+        );
+        let digest = request.digest()?;
+        for grant in self
+            .state
+            .grants
+            .iter()
+            .filter(|g| g.enrollment.intent.id == request.intent.id)
+        {
+            ensure!(
+                grant.enrollment.intent.controller_node == request.intent.controller_node
+                    && grant.approval_digest == digest,
+                "Enrollment identity was already used"
+            );
+        }
+        for pending in self
+            .state
+            .pending
+            .iter()
+            .filter(|p| p.request.intent.id == request.intent.id)
+        {
+            ensure!(
+                pending.request.digest()? == digest,
+                "Enrollment intent changed"
+            );
+        }
+        let state = self.enrollment_state(&request.intent.controller_node, &request.intent.id, now);
+        match &state {
+            EnrollmentState::Active { grant } => ensure!(
+                grant.approval_digest == request.digest()?,
+                "Enrollment intent changed"
+            ),
+            EnrollmentState::Pending { request: stored } => ensure!(
+                stored.digest()? == request.digest()?,
+                "Enrollment intent changed"
+            ),
+            EnrollmentState::Declined | EnrollmentState::Expired | EnrollmentState::Revoked => {
+                return Ok(state);
+            }
+            EnrollmentState::Missing => {}
+        }
+        if !matches!(state, EnrollmentState::Missing) {
+            return Ok(state);
+        }
+        live(request.intent.created_at, request.intent.expires_at, now)?;
+        self.state
+            .pending
+            .retain(|p| now < p.request.intent.expires_at);
+        ensure!(
+            self.state.pending.len() < 8
+                && !self
+                    .state
+                    .pending
+                    .iter()
+                    .any(
+                        |p| p.request.intent.controller_node == request.intent.controller_node
+                            && !p.declined
+                    ),
+            "An administrative request is already waiting or the queue is full"
+        );
+        let node = request.intent.controller_node.clone();
+        let id = request.intent.id.clone();
+        self.state.pending.push(PendingEnrollment {
+            request,
+            certificate,
+            declined: false,
+        });
+        self.state.high_water = now;
+        self.save()?;
+        Ok(self.enrollment_state(&node, &id, now))
+    }
+    pub fn decline_locally(&mut self, id: &str, digest: &str, now: DateTime<Utc>) -> Result<()> {
+        self.clock(now)?;
+        let pending = self
+            .state
+            .pending
+            .iter_mut()
+            .find(|p| p.request.intent.id == id)
+            .context("Enrollment is no longer waiting")?;
+        ensure!(
+            pending.request.digest()? == digest && now < pending.request.intent.expires_at,
+            "Enrollment changed or expired"
+        );
+        pending.declined = true;
+        self.state.high_water = now;
+        self.save()
+    }
+    pub fn result_for(&self, node: &str, nonce: &str, digest: &str) -> ControlResult {
+        self.state
+            .used
+            .iter()
+            .find(|r| {
+                r.command.intent.nonce == nonce
+                    && r.digest == digest
+                    && r.command.intent.controller_node == node
+            })
+            .and_then(|r| r.result.clone())
+            .unwrap_or(ControlResult::Unconfirmed)
+    }
+    pub fn record_result(
+        &mut self,
+        nonce: &str,
+        digest: &str,
+        result: ControlResult,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        self.clock(now)?;
+        let used = self
+            .state
+            .used
+            .iter_mut()
+            .find(|r| r.command.intent.nonce == nonce && r.digest == digest)
+            .context("Request result is no longer retained")?;
+        result.validate_for(&used.command.intent.action)?;
+        if let Some(
+            terminal @ (ControlResult::Approved { .. }
+            | ControlResult::Rejected { .. }
+            | ControlResult::PairingList { .. }),
+        ) = &used.result
+        {
+            ensure!(terminal == &result, "A terminal result cannot be replaced");
+        }
+        used.result = Some(result);
+        used.observation = Observation::ReplyObserved;
+        self.state.high_water = now;
+        self.save()
+    }
+
     /// Called only after fresh, explicit approval on the authority host. The
     /// expected digest must come from the exact native review shown locally.
     /// No member/owner command is allowed to call this method on another device.
@@ -260,6 +485,17 @@ impl ControlStore {
         peer.require(&self.state.scope, &intent.controller_node, now)?;
         live(intent.created_at, intent.expires_at, now)?;
         let digest = request.digest()?;
+        if let Some(pending) = self
+            .state
+            .pending
+            .iter()
+            .find(|p| p.request.intent.id == intent.id)
+        {
+            ensure!(
+                !pending.declined && pending.request.digest()? == digest,
+                "Enrollment was declined or changed after submission"
+            );
+        }
         ensure!(
             digest == reviewed_digest,
             "Enrollment changed after local review"
@@ -283,6 +519,9 @@ impl ControlStore {
             revoked_at: None,
         };
         self.state.grants.push(grant.clone());
+        self.state
+            .pending
+            .retain(|p| p.request.intent.id != grant.enrollment.intent.id);
         self.state.high_water = now;
         self.save()?;
         Ok(grant)
@@ -357,6 +596,7 @@ impl ControlStore {
             digest: digest.clone(),
             reserved_at: now,
             observation: Observation::Unconfirmed,
+            result: None,
         });
         self.state.high_water = now;
         self.save()?;

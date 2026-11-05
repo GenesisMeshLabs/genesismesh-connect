@@ -196,6 +196,79 @@ async fn host(f: &Fixture, http: &HttpFixture) -> Result<AuthorityBridge> {
 }
 
 #[tokio::test]
+async fn owner_transport_binds_the_actual_peer_and_refuses_incompatible_hosts() -> Result<()> {
+    use crate::owner_control::{ControlEnvelope, ControlExchange, ControlReply, EnrollmentState};
+    let f = Fixture::new();
+    let http = authority(&f).await?;
+    let bridge = host(&f, &http).await?;
+    let client = BridgeAuthority::new(route(&bridge, &f))?;
+    let request = ControlEnvelope {
+        version: 1,
+        request: ControlExchange::EnrollmentStatus {
+            id: uuid::Uuid::new_v4().to_string(),
+        },
+    };
+    assert!(
+        client
+            .owner_control(identity(&f), f.trust()?, &request)
+            .await
+            .is_err()
+    );
+    let (owner, mut requests) = tokio::sync::mpsc::channel::<crate::owner::OwnerRequest>(8);
+    bridge.serve_owner(owner);
+    let incompatible = ControlEnvelope {
+        version: 2,
+        request: request.request.clone(),
+    };
+    assert!(
+        client
+            .owner_control(identity(&f), f.trust()?, &incompatible)
+            .await
+            .is_err()
+    );
+    assert!(
+        requests.try_recv().is_err(),
+        "incompatible versions cannot dispatch"
+    );
+    let expected_node = public(&f.client);
+    let expected_certificate = f.client_cert.clone();
+    let runtime = tokio::spawn(async move {
+        let request = requests.recv().await.unwrap();
+        match request.call {
+            crate::owner::OwnerCall::Control {
+                node,
+                certificate,
+                request: envelope,
+            } => {
+                assert_eq!(node, expected_node);
+                assert_eq!(certificate, expected_certificate);
+                assert!(matches!(
+                    envelope.request,
+                    ControlExchange::EnrollmentStatus { .. }
+                ));
+                request
+                    .reply
+                    .send(Ok(serde_json::to_value(ControlReply::Enrollment(
+                        EnrollmentState::Missing,
+                    ))
+                    .unwrap()))
+                    .unwrap();
+            }
+            _ => panic!("wrong fixed adapter operation"),
+        }
+    });
+    assert!(matches!(
+        client
+            .owner_control(identity(&f), f.trust()?, &request)
+            .await?,
+        ControlReply::Enrollment(EnrollmentState::Missing)
+    ));
+    runtime.await?;
+    bridge.close().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn public_trust_is_root_verified_and_old_valid_identity_can_only_renew() -> Result<()> {
     let f = Fixture::new();
     let http = authority(&f).await?;
@@ -787,7 +860,8 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
     let runtime = tokio::spawn(async move {
         while let Some(request) = requests.recv().await {
             let result = match &request.call {
-                crate::owner::OwnerCall::ResourceCapabilities { .. } => {
+                crate::owner::OwnerCall::ResourceCapabilities { .. }
+                | crate::owner::OwnerCall::Control { .. } => {
                     Err(anyhow::anyhow!("Not configured in this fixture"))
                 }
                 crate::owner::OwnerCall::Share {

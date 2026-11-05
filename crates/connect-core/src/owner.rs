@@ -170,6 +170,11 @@ pub fn orphaned(
 /// a device's behalf. The host is always the authenticated device.
 #[derive(Debug)]
 pub enum OwnerCall {
+    Control {
+        node: String,
+        certificate: Value,
+        request: crate::owner_control::ControlEnvelope,
+    },
     ResourceCapabilities {
         host: String,
         collection: String,
@@ -514,6 +519,9 @@ impl OwnerRuntime {
     /// Answer one bridge request.
     pub fn answer(&mut self, call: OwnerCall) -> Result<Value> {
         Ok(match call {
+            OwnerCall::Control { .. } => anyhow::bail!(
+                "Update the network computer: this host has no owner Requests adapter"
+            ),
             OwnerCall::ResourceCapabilities { host, collection } => {
                 serde_json::to_value(self.resource_capabilities(&host, &collection)?)?
             }

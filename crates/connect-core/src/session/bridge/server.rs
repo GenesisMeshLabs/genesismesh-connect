@@ -380,6 +380,7 @@ async fn exchange(
         | Operation::Services
         | Operation::AccessPolicy
         | Operation::ResourceCapabilities
+        | Operation::OwnerControl
         | Operation::ShareSpace
         | Operation::UnshareSpace => {
             let peer = authenticate_for(
@@ -423,6 +424,35 @@ async fn exchange(
                 "Authority renewal budget exhausted"
             );
             match request.operation {
+                Operation::OwnerControl => {
+                    credentials
+                        .trust
+                        .certificate(&peer, &credentials.expected_node, Utc::now())?;
+                    let request: crate::owner_control::ControlEnvelope =
+                        serde_json::from_value(signed)?;
+                    ensure!(
+                        request.version == 1,
+                        "Update the network computer: incompatible owner control"
+                    );
+                    let owner = published
+                        .owner
+                        .lock()
+                        .expect("bridge owner")
+                        .clone()
+                        .context("Update the network computer to use owner Requests")?;
+                    let (reply, receive) = tokio::sync::oneshot::channel();
+                    owner
+                        .try_send(crate::owner::OwnerRequest {
+                            call: crate::owner::OwnerCall::Control {
+                                node: credentials.expected_node.clone(),
+                                certificate: peer,
+                                request,
+                            },
+                            reply,
+                        })
+                        .map_err(|_| anyhow::anyhow!("Owner Requests is busy"))?;
+                    receive.await.context("Owner Requests did not answer")?
+                }
                 Operation::Renew => {
                     check_renewal(&signed, &peer, &credentials.expected_node)?;
                     forwarded.fetch_add(1, Ordering::Relaxed);

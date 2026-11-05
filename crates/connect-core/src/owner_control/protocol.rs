@@ -54,7 +54,7 @@ impl PairingTarget {
             comparison_code: request.code.clone(),
         }
     }
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         uuid_id(&self.request_id)?;
         public_key(&self.node)?;
         crate::session::pairing::valid_name(&self.name)?;
@@ -247,6 +247,7 @@ pub struct VerifiedController {
     pub(super) scope: ControlScope,
     pub(super) node: String,
     pub(super) checked_at: DateTime<Utc>,
+    pub(super) certificate_digest: String,
 }
 impl VerifiedController {
     pub fn from_session(
@@ -266,6 +267,7 @@ impl VerifiedController {
             scope: scope.clone(),
             node: session_node.into(),
             checked_at: now,
+            certificate_digest: canonical_digest(certificate)?,
         })
     }
     pub(super) fn require(

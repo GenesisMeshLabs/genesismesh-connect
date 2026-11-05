@@ -47,6 +47,23 @@ pub struct BridgeAuthority {
 }
 
 impl BridgeAuthority {
+    /// No automatic retry. Pairing writes require explicit result readback.
+    pub async fn owner_control(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+        request: &crate::owner_control::ControlEnvelope,
+    ) -> Result<crate::owner_control::ControlReply> {
+        Ok(serde_json::from_value(
+            self.authenticated(
+                identity,
+                trust,
+                Operation::OwnerControl,
+                &serde_json::to_value(request)?,
+            )
+            .await?,
+        )?)
+    }
     /// Reaches the desktop the way its ticket was created; a device that knows
     /// its own setting uses `with_connectivity`.
     pub fn new(route: BridgeRoute) -> Result<Self> {
