@@ -214,7 +214,7 @@
       "status": "planned",
       "manual": "planned",
       "assisted": "planned",
-      "scope_note": "Portable pairing-only owner-control enrollment/signature/replay contract implemented, but deliberately unexposed. Native administrative custody, authenticated owner transport, final core role/target checks, Requests UX and recovery remain incomplete. This is not a core operator enrollment or an accepted general administrator journey.",
+      "scope_note": "Pairing-only owner-control contract and separate protected native key custody/controller preparation implemented, but deliberately unexposed. Native Linux store and real-core preparation qualified. Owner transport, final core role/target dispatch, explicit enrollment/revocation UI, phone Requests and recovery remain incomplete. This is not general core operator administration or an accepted journey.",
       "execution_locations": [
         "requires-adapter-review"
       ],
@@ -243,11 +243,15 @@
       "recovery": "Preserve identity and exact intent; operation-specific recovery remains an acceptance prerequisite",
       "evidence": {
         "sources": [
-          "docs/owner-control-contract.md"
+          "docs/owner-control-contract.md",
+          "docs/plan-progress.md"
         ],
         "automated": [
           "crates/connect-core/tests/owner_control.rs",
-          "crates/connect-core/tests/owner_control_authority.rs"
+          "crates/connect-core/tests/owner_control_authority.rs",
+          "crates/connect-core/src/device/admin_vault_tests.rs",
+          "crates/connect-core/src/device/admin_control.rs",
+          "crates/connect-core/tests/admin_key_sealed.rs"
         ],
         "physical": [],
         "accepted": false

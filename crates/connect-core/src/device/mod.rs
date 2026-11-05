@@ -5,7 +5,10 @@ pub(crate) mod owner_store;
 mod sealed_store;
 #[cfg(target_os = "linux")]
 pub use sealed_store::{MASTER_KEY_CREDENTIAL, use_sealed_store};
+mod admin_control;
+mod admin_vault;
 mod lifecycle;
+pub use admin_vault::{AdministrativeBinding, AdministrativeKey};
 mod vault;
 pub(crate) use vault::validate_peer;
 
@@ -238,6 +241,15 @@ impl DeviceController {
     /// including its secret in a native credential store.
     pub fn discard(self) -> Result<()> {
         let path = self.state_directory.clone();
+        match std::fs::symlink_metadata(path.join(admin_vault::FILE)) {
+            Ok(_) => AdministrativeKey::erase_for_device(
+                &path.join(admin_vault::FILE),
+                self.vault.pin(),
+                &STANDARD.encode(self.vault.key().verifying_key().to_bytes()),
+            )?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
         let Self { vault, .. } = self;
         vault.discard()?;
         std::fs::remove_dir_all(path)?;

@@ -60,6 +60,7 @@ try {
     Invoke-VerificationStep 'real authority tests' 'cargo' @('test', '--workspace', '--test', 'live_authority', '--locked', '--', '--ignored', '--nocapture')
     Invoke-VerificationStep 'durable access change with real authority' 'cargo' @('test', '-p', 'connect-core', '--test', 'access_workflow_authority', '--locked', '--', '--ignored', '--nocapture')
     Invoke-VerificationStep 'owner-control membership with real authority' 'cargo' @('test', '-p', 'connect-core', '--test', 'owner_control_authority', '--locked', '--', '--ignored', '--nocapture')
+    Invoke-VerificationStep 'native device and administrative custody/lifecycle with real core' 'cargo' @('test', '-p', 'connect-core', '--lib', 'device::', '--locked', '--', '--ignored', '--nocapture')
     Invoke-VerificationStep 'desktop and frontend build' 'npm.cmd' @('run', 'tauri', 'build', '--', '--debug', '--no-bundle', '--ci') (Join-Path $connectRoot 'apps\connect')
     $verification.status = 'passed'
 } catch {

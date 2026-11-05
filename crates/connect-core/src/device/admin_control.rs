@@ -1,0 +1,226 @@
+//! Native preparation only; neither a UI signing oracle nor a remote grant.
+use super::{AdministrativeBinding, AdministrativeKey, DeviceController, admin_vault};
+use crate::owner_control::{
+    CommandIntent, ControlScope, EnrollmentIntent, EnrollmentRequest, Grant, OwnerAction,
+    OwnerCommand, Permission,
+};
+use anyhow::{Context, Result, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use chrono::{Duration, Utc};
+use std::collections::BTreeSet;
+
+impl DeviceController {
+    fn administrative_binding(&self) -> Result<AdministrativeBinding> {
+        let node = STANDARD.encode(self.vault.key().verifying_key().to_bytes());
+        let host = if self.network_computer() {
+            node.clone()
+        } else {
+            self.vault
+                .bridge_route()
+                .context(
+                    "Pair this device with its network computer before requesting administration",
+                )?
+                .host_node
+                .clone()
+        };
+        Ok(AdministrativeBinding {
+            scope: ControlScope {
+                pin: self.vault.pin().clone(),
+                host_node: host,
+            },
+            controller_node: node,
+        })
+    }
+    /// Explicit enrollment preparation, not approval. This is the only native
+    /// path that may create the separate key; no raw identity overrides.
+    pub async fn prepare_owner_enrollment(
+        &mut self,
+        permissions: BTreeSet<Permission>,
+        validity_seconds: u32,
+    ) -> Result<EnrollmentRequest> {
+        ensure!(
+            !permissions.is_empty() && validity_seconds > 120 && validity_seconds <= 30 * 24 * 3600,
+            "Choose pairing permissions and administrative access of at most 30 days"
+        );
+        self.require_connected()?;
+        self.check_network().await?;
+        ensure!(
+            self.device.is_some(),
+            "Join this device to its network before requesting administration"
+        );
+        let binding = self.administrative_binding()?;
+        let path = self.state_directory.join(admin_vault::FILE);
+        let key = if path.try_exists()? {
+            AdministrativeKey::open(&path, &binding)?
+        } else {
+            AdministrativeKey::create(&path, binding.clone())?
+        };
+        let now = Utc::now();
+        key.sign_enrollment(EnrollmentIntent {
+            version: 1,
+            id: uuid::Uuid::new_v4().to_string(),
+            scope: binding.scope,
+            controller_node: binding.controller_node,
+            administrative_key: key.public_key().into(),
+            permissions,
+            created_at: now,
+            expires_at: now + Duration::seconds(120),
+            grant_expires_at: now + Duration::seconds(validity_seconds.into()),
+        })
+    }
+    /// Preparation after exact user review belongs in the eventual trusted
+    /// workflow adapter. The host must independently check its real grant,
+    /// current membership, target and core rights. This method dispatches nothing.
+    pub async fn prepare_owner_command(
+        &mut self,
+        grant: &Grant,
+        action: OwnerAction,
+    ) -> Result<OwnerCommand> {
+        self.require_connected()?;
+        self.check_network().await?;
+        ensure!(
+            self.device.is_some(),
+            "Join this device to its network before requesting administration"
+        );
+        let binding = self.administrative_binding()?;
+        let enrollment = &grant.enrollment.intent;
+        ensure!(
+            enrollment.scope == binding.scope
+                && enrollment.controller_node == binding.controller_node
+                && grant.approval_digest == grant.enrollment.digest()?,
+            "Administrative enrollment belongs to a different network, host or device"
+        );
+        let now = Utc::now();
+        ensure!(
+            grant.revoked_at.is_none()
+                && grant.approved_at <= now
+                && now < enrollment.grant_expires_at,
+            "Administrative access expired or was revoked"
+        );
+        ensure!(
+            enrollment.permissions.contains(&action.permission()),
+            "This enrollment does not allow that pairing operation"
+        );
+        let key = AdministrativeKey::open(&self.state_directory.join(admin_vault::FILE), &binding)?;
+        ensure!(
+            key.public_key() == enrollment.administrative_key,
+            "Administrative key changed; enroll this device again on its network computer"
+        );
+        key.sign_command(CommandIntent {
+            version: 1,
+            grant_id: enrollment.id.clone(),
+            nonce: uuid::Uuid::new_v4().to_string(),
+            scope: binding.scope,
+            controller_node: binding.controller_node,
+            action,
+            created_at: now,
+            expires_at: std::cmp::min(now + Duration::seconds(120), enrollment.grant_expires_at),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        authority::{LocalAuthority, TrustStore},
+        owner::OwnerRuntime,
+        owner_control::{ControlStore, VerifiedController},
+    };
+    #[tokio::test]
+    #[ignore = "Requires pinned CONNECT_NA_PYTHON and isolated native credential store"]
+    async fn real_controller_prepares_scoped_native_signatures_and_preserves_identity_across_restart()
+    -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let profile = dir.path().join("device");
+        let python = std::env::var_os("CONNECT_NA_PYTHON").context("Set CONNECT_NA_PYTHON")?;
+        let mut owner = OwnerRuntime::start_python(
+            std::path::Path::new(&python),
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/connect/authority/main.py"),
+            &dir.path().join("owner"),
+        )?;
+        let info = owner.create("Native owner preparation")?;
+        let mut device = DeviceController::prepare(&profile, info.url.clone(), info.pin.clone())?;
+        device.enable_managed_connectivity()?;
+        assert!(
+            device
+                .prepare_owner_enrollment([Permission::ListPairing].into_iter().collect(), 600)
+                .await
+                .is_err()
+        );
+        assert!(!profile.join(admin_vault::FILE).exists());
+        let node = device.status()?.node_public_key;
+        device.enroll_host(&owner.invite(&node, true)?).await?;
+        let enrollment = device
+            .prepare_owner_enrollment([Permission::ListPairing].into_iter().collect(), 600)
+            .await?;
+        assert_eq!(enrollment.intent.controller_node, node);
+        assert_eq!(enrollment.intent.scope.pin, info.pin);
+        assert_eq!(enrollment.intent.scope.host_node, node);
+        assert_ne!(enrollment.intent.administrative_key, node);
+        let admin_public = enrollment.intent.administrative_key.clone();
+        let recovery = device.recovery_identity()?;
+        assert!(!std::str::from_utf8(&recovery.vault)?.contains("administrative-key"));
+        assert!(!std::str::from_utf8(&recovery.vault)?.contains(&admin_public));
+        let authority = LocalAuthority::new(&info.url)?;
+        let mut trust = TrustStore::create(&dir.path().join("host-trust.json"), info.pin)?;
+        let snapshot = authority.refresh(&mut trust).await?;
+        let now = Utc::now();
+        let peer = VerifiedController::from_session(
+            &enrollment.intent.scope,
+            &snapshot,
+            device
+                .device
+                .as_ref()
+                .context("Missing device")?
+                .certificate(),
+            &node,
+            now,
+        )?;
+        let mut registry = ControlStore::create(
+            &dir.path().join("controls.json"),
+            enrollment.intent.scope.clone(),
+            now,
+        )?;
+        let digest = enrollment.digest()?;
+        let grant = registry.enroll_locally(enrollment, &digest, &peer, now)?;
+        let command = device
+            .prepare_owner_command(&grant, OwnerAction::ListPairing)
+            .await?;
+        let current_snapshot = authority.refresh(&mut trust).await?;
+        let now = Utc::now();
+        let peer = VerifiedController::from_session(
+            &grant.enrollment.intent.scope,
+            &current_snapshot,
+            device
+                .device
+                .as_ref()
+                .context("Missing device")?
+                .certificate(),
+            &node,
+            now,
+        )?;
+        registry.reserve(&command, &peer, now)?;
+        let before = std::fs::read(profile.join(admin_vault::FILE))?;
+        drop(device);
+        let mut device = DeviceController::open(&profile)?;
+        assert_eq!(device.status()?.node_public_key, node);
+        let again = device
+            .prepare_owner_enrollment([Permission::ListPairing].into_iter().collect(), 600)
+            .await?;
+        assert_eq!(again.intent.administrative_key, admin_public);
+        assert_eq!(std::fs::read(profile.join(admin_vault::FILE))?, before);
+        device.disconnect().await?;
+        assert!(
+            device
+                .prepare_owner_command(&grant, OwnerAction::ListPairing)
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(profile.join(admin_vault::FILE))?, before);
+        device.discard()?;
+        assert!(!profile.exists());
+        Ok(())
+    }
+}

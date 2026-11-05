@@ -3,9 +3,10 @@
 `connect_core::owner_control` implements a separate, bounded administrative
 enrollment and request contract. **It is not exposed by a Tauri command, the
 member authority bridge, the node socket or the operation registry.** No phone
-has gained administrator access through this work. Native key custody, host
-enrollment UI, the authenticated owner-control wire protocol and Requests remain
-the next integration gates. The public-core administrator journey stays planned.
+has gained administrator access through this work. Native key custody and
+controller preparation are implemented; host enrollment UI, the authenticated
+owner-control wire protocol and Requests remain the next integration gates.
+The public-core administrator journey stays planned.
 
 ## Three independent prerequisites
 
@@ -34,6 +35,46 @@ still needs the host's real core operator and operation-specific role/key-tier
 checks. A second tap by the same owner is not independent approval.
 
 ## Exact requests and durable replay refusal
+
+### Native key custody
+
+The device keeps a separate purpose-bound administrative credential. Its private
+seed is not added to the member identity or encrypted recovery export. The
+private profile holds public binding metadata plus an opaque provider/account
+reference, or a current-user DPAPI blob on Windows. Existing device DPAPI uses
+its original entropy domain; administrative blobs use a separate domain. Other
+platforms reuse the existing explicit Keychain, Keystore-backed, Secret Service
+or headless sealed-store adapters, with purpose/account/context checks.
+
+`AdministrativeKey` retains public metadata only. Each typed enrollment/command
+signature rereads the reference and protected credential and checks the exact
+network, host, member, account and public key. Locked, missing, substituted,
+corrupt or changed-provider credentials fail without replacing a key. Only
+explicit enrollment preparation can create one. A persistent creation marker
+and exclusive no-clobber commit prevent automatic regeneration after interrupted
+or missing initialized state. Failed/unconfirmed first creation needs an explicit
+future recovery/reset ceremony; opening/signing never creates a new key.
+
+`DeviceController::prepare_owner_enrollment` and `prepare_owner_command` derive
+scope from the current native profile and paired authority host, require an
+enrolled connected device and refresh trust before signing. They accept typed
+choices/actions, without caller-selected identities, URLs or private keys. They
+dispatch nothing and grant no administrative rights. They remain unavailable
+through app IPC until exact user review, client workflow recovery, native user
+presence and authenticated host control are integrated.
+
+Leave/discard cleanup removes only a purpose-checked credential for that
+network/member and supports retry after native-secret deletion. An older host
+binding can be removed when the device leaves the same network. A foreign root
+or member is preserved. Recovery restores membership separately and requires
+fresh administrative enrollment. A missing reference can leave an unreachable
+native credential; creation is refused rather than silently generating a new
+identity. The app does not claim universal orphan erasure or hardware anti-rollback.
+
+Reopening OS protected storage is **not** a fresh biometric or user-presence
+ceremony. Actual lock behavior follows each OS/store; DPAPI access in a logged-in
+process does not itself detect Windows screen lock. Native lifecycle and
+high-risk user-presence acceptance remain separate gates.
 
 Each signed command contains a version, grant ID, nonce, controller node, pinned
 scope, host audience, action and a two-minute validity window. Approval/rejection
@@ -105,8 +146,20 @@ member still needs local administrative enrollment. A real core revocation then
 prevents rebuilding its current controller context despite a retained grant.
 This is membership/revocation qualification, **not remote pairing dispatch**.
 
-Before exposure: implement protected native administrative-key references and
-locked/missing-key refusal; authenticate and bind the owner transport separately;
+Linux qualification now includes the real isolated native store, typed native
+controller signing with a disposable real authority, restart, recovery-export
+exclusion, disconnect refusal, missing native credential and leave/discard
+cleanup. Mock-store cases additionally cover lock/unlock, account/purpose/seed
+substitution, provider changes, concurrent access and failed reference commit.
+An isolated headless-process test also qualifies the actual Linux sealed store,
+including encrypted-record corruption and missing-key refusal. Its master key
+is a disposable fixture; it does not establish TPM/systemd deployment acceptance.
+Windows DPAPI and Apple/Android adapters are implemented but have not been
+compiled/installed/tested anew for this slice. The prior Windows Application
+Control blocker remains unresolved. No new browser or physical-device acceptance
+is claimed for these native-only changes.
+
+Before exposure: authenticate and bind the owner transport separately;
 add explicit local enrollment/revocation UX; enforce final core readiness and
 target checks in fixed app/node adapters; retain durable enrollment/dispatch
 recovery; then implement Requests with plain scope, approval and uncertainty.

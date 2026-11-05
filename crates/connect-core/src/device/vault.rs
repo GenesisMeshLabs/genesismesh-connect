@@ -732,15 +732,20 @@ fn unprotect(_: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
 
 #[cfg(windows)]
 fn protect(bytes: &[u8]) -> Result<Vec<u8>> {
-    Ok(crypt(bytes, true)?.to_vec())
+    Ok(crypt(bytes, true, b"GenesisMesh.Connect.Device.v1")?.to_vec())
 }
 #[cfg(windows)]
 fn unprotect(bytes: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
-    crypt(bytes, false)
+    crypt(bytes, false, b"GenesisMesh.Connect.Device.v1")
 }
 
 #[cfg(windows)]
-fn crypt(bytes: &[u8], encrypt: bool) -> Result<Zeroizing<Vec<u8>>> {
+pub(super) fn crypt_admin(bytes: &[u8], encrypt: bool) -> Result<Zeroizing<Vec<u8>>> {
+    crypt(bytes, encrypt, b"GenesisMesh.Connect.AdminKey.v1")
+}
+
+#[cfg(windows)]
+fn crypt(bytes: &[u8], encrypt: bool, domain: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     use windows_sys::Win32::{
         Foundation::LocalFree,
         Security::Cryptography::{
@@ -755,7 +760,6 @@ fn crypt(bytes: &[u8], encrypt: bool) -> Result<Zeroizing<Vec<u8>>> {
         cbData: bytes.len() as u32,
         pbData: bytes.as_ptr().cast_mut(),
     };
-    let domain = b"GenesisMesh.Connect.Device.v1";
     let entropy = CRYPT_INTEGER_BLOB {
         cbData: domain.len() as u32,
         pbData: domain.as_ptr().cast_mut(),
@@ -819,6 +823,17 @@ fn crypt(bytes: &[u8], encrypt: bool) -> Result<Zeroizing<Vec<u8>>> {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    #[test]
+    fn device_and_administrative_dpapi_domains_cannot_open_each_other() -> Result<()> {
+        let plaintext = b"disposable-purpose-separation-test";
+        let device = protect(plaintext)?;
+        let admin = crypt_admin(plaintext, true)?;
+        assert!(crypt_admin(&device, false).is_err());
+        assert!(unprotect(&admin).is_err());
+        assert_eq!(unprotect(&device)?.as_slice(), plaintext);
+        assert_eq!(crypt_admin(&admin, false)?.as_slice(), plaintext);
+        Ok(())
+    }
     #[test]
     fn windows_vault_roundtrip_no_plaintext_and_tamper_refusal() -> Result<()> {
         let dir = tempfile::tempdir()?;

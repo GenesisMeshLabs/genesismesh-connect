@@ -93,6 +93,20 @@ impl DeviceController {
             resolved.parent() == Some(parent.as_path()),
             "Device directory is outside the application directory"
         );
+        let admin_path = path.join(super::admin_vault::FILE);
+        match fs::symlink_metadata(&admin_path) {
+            Ok(_) => {
+                let vault = Vault::open(&path.join("device.bin"))?;
+                use base64::{Engine as _, engine::general_purpose::STANDARD};
+                super::AdministrativeKey::erase_for_device(
+                    &admin_path,
+                    vault.pin(),
+                    &STANDARD.encode(vault.key().verifying_key().to_bytes()),
+                )?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
         Vault::erase(&path.join("device.bin"))?;
         // The sibling marker survives an interrupted profile-directory removal.
         fs::remove_dir_all(path)?;

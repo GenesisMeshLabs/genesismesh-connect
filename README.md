@@ -10,6 +10,8 @@ existing narrow workflows from missing general journeys, and manual from assiste
 acceptance. Classification is not full feature parity. See the
 [workflow and authority boundaries](docs/workflow-architecture.md) and
 [dependency qualification](docs/release-qualification.md).
+The [plan progress map](docs/plan-progress.md) keeps all 12 initial tickets and
+their remaining user-outcome acceptance gates visible.
 
 Manage access now has an [exact-scope review and durable change status](docs/access-workflow.md).
 An interrupted change is checked against the authority before another change

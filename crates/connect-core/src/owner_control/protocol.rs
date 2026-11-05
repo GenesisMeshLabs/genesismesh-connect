@@ -21,7 +21,7 @@ pub struct ControlScope {
     pub host_node: String,
 }
 impl ControlScope {
-    pub(super) fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         crate::session::pairing::valid_name(&self.pin.network_name)?;
         public_key(&self.pin.root_public_key)?;
         public_key(&self.host_node)
@@ -286,7 +286,7 @@ impl VerifiedController {
     }
 }
 
-pub(super) fn public_key(key: &str) -> Result<()> {
+pub(crate) fn public_key(key: &str) -> Result<()> {
     let bytes = STANDARD.decode(key)?;
     ensure!(
         bytes.len() == 32 && STANDARD.encode(&bytes) == key,
