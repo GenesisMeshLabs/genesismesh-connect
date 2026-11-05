@@ -104,6 +104,7 @@ jobs:
             ${{ env.BUILD_ROOT }}/wheels/
           if-no-files-found: warn
           retention-days: 7
+          overwrite: true
 
   closure:
     name: Complete Android dependency closure
@@ -126,7 +127,7 @@ jobs:
       - name: Resolve the unchanged core and complete binary dependencies
         run: python scripts/probe-android-authority.py --wheelhouse temp/native-wheelhouse --output temp/native-closure
       - name: Verify target markers, Python requirements, metadata and native alignment
-        run: python scripts/android_authority_bundle.py verify temp/native-closure/wheels
+        run: python scripts/android_authority_bundle.py verify temp/native-closure/wheels --native-manifest temp/native-wheelhouse/native-manifest.json
       - name: Preserve complete closure and reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -137,3 +138,4 @@ jobs:
             temp/native-wheelhouse/
           if-no-files-found: warn
           retention-days: 7
+          overwrite: true

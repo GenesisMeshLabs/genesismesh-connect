@@ -92,6 +92,13 @@ evaluation. The minimum marker profile is recorded in its report; it is not a
 device execution result. Physical embedded-core, linked-library and hosting
 lifecycle qualification remain open. No phone authority is enabled.
 
+The final resolver result is bound to a manifest of the exact collected native
+wheel filenames, versions and SHA-256 hashes, plus both source locks. A newer
+compatible index version or a different build of the same version cannot replace
+them. Every incoming active dependency constraint is validated before repeated
+graph expansion is deduplicated; compatible cycles terminate without hiding a
+conflicting diamond constraint. Graph validity alone is not a qualified bundle.
+
 1. Build missing wheels reproducibly from verified upstream sources. Keep source
    digests, compiler/NDK/ABI/API versions, linkage, licenses and vulnerability
    qualification with the artifacts. Require 16 KiB native alignment checks.

@@ -222,6 +222,7 @@ def check_wheel(path):
     if not report["libraries"]:
         raise ValueError("Expected native libraries in the wheel")
     path.with_suffix(".qualification.json").write_text(json.dumps(report, indent=2) + "\n")
+    return report
 
 
 if __name__ == "__main__":
