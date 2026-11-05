@@ -14,9 +14,15 @@ def run(expected_version):
     report = {"status": "running", "checks": [], "authority_hosting_accepted": False}
     stage = "Android runtime"
     try:
-        assert hasattr(sys, "getandroidapilevel") and sys.getandroidapilevel() >= 24
+        # CPython's optional build-time API marker is not the running device API.
+        # Require the Android Java bridge and actual OS class, never a host fallback.
+        from java import jclass
+        device_api = int(jclass("android.os.Build$VERSION").SDK_INT)
+        if device_api < 24:
+            raise RuntimeError("Unsupported Android device API")
         report.update(python_version=sys.version.split()[0], platform=sys.platform,
-                      python_android_api=sys.getandroidapilevel())
+                      android_device_api=device_api,
+                      python_android_api=getattr(sys, "getandroidapilevel", lambda: None)())
         stage = "Core loading"
         version = importlib.metadata.version("genesis-mesh")
         assert version == expected_version
