@@ -27,3 +27,13 @@ jobs:
         run: node --test scripts/tests/connect-contract.test.mjs
       - name: Verify upstream provenance
         run: node scripts/connect-contract.mjs verify-upstream
+
+  operation-schemas:
+    name: Native operation schemas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install declared minimum Rust
+        run: rustup toolchain install 1.98.0 --profile minimal
+      - name: Check generated schemas and closed operation inputs
+        run: cargo +1.98.0 test -p connect-core --features operation-schemas --test operation_registry --locked

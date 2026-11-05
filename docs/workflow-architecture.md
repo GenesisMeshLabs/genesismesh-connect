@@ -126,7 +126,7 @@ pins, identify missing history and fence old hosts before claiming continuity.
 | --- | --- |
 | CONNECT-01 coverage and version inventory | Implemented; reviewed immutable snapshot, complete public declaration mapping, drift checks and CI definition |
 | Dependency qualification | Real-core Windows owner tests and Linux QUIC/authority checks pass; full Windows native gate blocked by Application Control; other platforms remain separate |
-| CONNECT-02 typed operation registry and exact-intent preview | First strict access-update schema and manual review/commit implemented; general registry and assisted coverage remain planned |
+| CONNECT-02 typed operation registry and exact-intent preview | Closed resource operation registry, generated value schemas and access review/commit implemented; broad core operations and assisted coverage remain planned |
 | CONNECT-03 durable journal | Access-update dispatch/crash/readback journal implemented; enrollment, recovery and general workflows remain planned |
 | CONNECT-04 runtime prerequisite discovery | Fixed local adapter release/network/operation readiness implemented; general authenticated remote flags/actor discovery remains planned |
 | Later phases | All agents, policies, federation, oversight, evidence, offline and operations outcomes remain visible in the reviewed mapping |

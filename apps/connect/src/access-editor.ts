@@ -14,7 +14,7 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
     select.value=String(value);
   }
   async function access(space:HomeSpace) {
-    const result=await invoke<AccessPolicy>("get_access_policy",{id:space.id});
+    const result=await invoke<AccessPolicy>("get_access_policy",{request:{collection:space.id}});
     policy=result;editing=space;review=null;problem("");
     outcome=await invoke<AccessOutcome|null>("access_workflow_status",{collection:space.id,check:false});
     if(outcome?.record.stage==="conflict")outcome=null; // Settings above are freshly read.
@@ -83,7 +83,7 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
     if(review) {
       const approved=review;saving=true;render();
       try {
-        outcome=await invoke<AccessOutcome>("commit_access_policy",{id:approved.intent.id,digest:approved.digest});
+        outcome=await invoke<AccessOutcome>("commit_access_policy",{request:{id:approved.intent.id,digest:approved.digest}});
         review=null;
         if(outcome.record.stage==="state_observed"&&outcome.local_applied){dialog.close();message(accessOutcomeText(outcome));}
         await refresh();
@@ -111,7 +111,7 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
     if(input("access-expiry").value===originalExpiry) expires_at=policy.expires_at;
     saving=true;render();
     try {
-      review=await invoke<AccessRecord>("review_access_policy",{id:editing.id,settings:{...policy,recipients,expires_at,max_bytes:Number(el<HTMLSelectElement>("access-size").value),max_seconds:Number(el<HTMLSelectElement>("access-duration").value),extra_gates}});
+      review=await invoke<AccessRecord>("review_access_policy",{request:{collection:editing.id,settings:{...policy,recipients,expires_at,max_bytes:Number(el<HTMLSelectElement>("access-size").value),max_seconds:Number(el<HTMLSelectElement>("access-duration").value),extra_gates}}});
       outcome=null;
       render();el<HTMLButtonElement>("access-save").focus();
     }catch(error){problem(friendlyProblem(String(error)));}

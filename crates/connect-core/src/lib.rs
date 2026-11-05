@@ -7,6 +7,7 @@ pub mod access_workflow;
 pub mod authority;
 pub mod connectivity;
 pub mod device;
+pub mod operations;
 pub mod owner;
 mod probe;
 pub mod recovery;

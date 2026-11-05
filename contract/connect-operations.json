@@ -1,0 +1,765 @@
+{
+  "operations": [
+    {
+      "actor": "authenticated_resource_host",
+      "approval": "none",
+      "assisted": false,
+      "class": "read",
+      "commit_schema": null,
+      "evidence": "Current authority state; not signed audit evidence",
+      "execution": "authority_host_via_fixed_adapter",
+      "id": "connect.access.inspect.v1",
+      "input_schema": "#/schemas/resource_query",
+      "key_tier": "member_device",
+      "manual": true,
+      "output_schema": "#/schemas/access_policy",
+      "retry": "fresh_read",
+      "review_schema": null,
+      "title": "Inspect this item's access"
+    },
+    {
+      "actor": "authenticated_resource_host",
+      "approval": "exact_intent_confirmation",
+      "assisted": false,
+      "class": "write",
+      "commit_schema": "#/schemas/access_commit_input",
+      "evidence": "Core reply and independent state readback tracked separately; no mutation attribution after a lost reply",
+      "execution": "authority_host_via_fixed_adapter",
+      "id": "connect.access.update.v1",
+      "input_schema": "#/schemas/access_review_input",
+      "key_tier": "member_device",
+      "manual": true,
+      "output_schema": "#/schemas/access_outcome",
+      "retry": "reconcile_never_automatically_resend",
+      "review_schema": "#/schemas/access_review",
+      "title": "Change this item's access"
+    }
+  ],
+  "schema_version": 1,
+  "schemas": {
+    "access_commit_input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "digest"
+      ],
+      "title": "AccessCommitInput",
+      "type": "object"
+    },
+    "access_outcome": {
+      "$defs": {
+        "AccessContext": {
+          "additionalProperties": false,
+          "description": "Native verified context, never accepted as authority from the web UI/model.",
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "audience": {
+              "type": "string"
+            },
+            "pin": {
+              "$ref": "#/$defs/TrustPin"
+            }
+          },
+          "required": [
+            "pin",
+            "actor",
+            "audience"
+          ],
+          "type": "object"
+        },
+        "AccessIntent": {
+          "additionalProperties": false,
+          "properties": {
+            "after": {
+              "$ref": "#/$defs/AccessPolicy"
+            },
+            "before": {
+              "$ref": "#/$defs/AccessPolicy"
+            },
+            "collection": {
+              "type": "string"
+            },
+            "context": {
+              "$ref": "#/$defs/AccessContext"
+            },
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "expires_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "operation": {
+              "pattern": "^connect\\.access\\.update\\.v1$",
+              "type": "string"
+            },
+            "schema": {
+              "format": "uint8",
+              "maximum": 1,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "schema",
+            "operation",
+            "id",
+            "context",
+            "collection",
+            "name",
+            "before",
+            "after",
+            "created_at",
+            "expires_at"
+          ],
+          "type": "object"
+        },
+        "AccessPolicy": {
+          "additionalProperties": false,
+          "properties": {
+            "expires_at": {
+              "format": "date-time",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "extra_gates": {
+              "description": "Core validates gate types and semantics. Native code also bounds encoded\nrule bytes and checks reserved/duplicate IDs; JSON Schema alone cannot.",
+              "items": true,
+              "maxItems": 24,
+              "type": "array"
+            },
+            "max_bytes": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "max_seconds": {
+              "format": "uint32",
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "recipients": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 31,
+              "minItems": 1,
+              "type": "array"
+            },
+            "version": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "version",
+            "recipients",
+            "max_bytes",
+            "max_seconds",
+            "extra_gates"
+          ],
+          "type": "object"
+        },
+        "AccessRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "authorization": {
+              "$ref": "#/$defs/Authorization"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "intent": {
+              "$ref": "#/$defs/AccessIntent"
+            },
+            "observed": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AccessPolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Readback is a state observation, not attribution or a signed receipt."
+            },
+            "stage": {
+              "$ref": "#/$defs/Stage"
+            },
+            "updated_at": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          "required": [
+            "intent",
+            "digest",
+            "stage",
+            "authorization",
+            "updated_at"
+          ],
+          "type": "object"
+        },
+        "Authorization": {
+          "enum": [
+            "not_evaluated",
+            "core_accepted",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "Stage": {
+          "enum": [
+            "prepared",
+            "submitted",
+            "unknown",
+            "state_observed",
+            "conflict",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        "TrustPin": {
+          "additionalProperties": false,
+          "description": "Provisioned out of band. Never construct this from an untrusted HTTP reply.",
+          "properties": {
+            "network_name": {
+              "type": "string"
+            },
+            "root_public_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "root_public_key",
+            "network_name"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "local_applied": {
+          "type": "boolean"
+        },
+        "problem": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "record": {
+          "$ref": "#/$defs/AccessRecord"
+        }
+      },
+      "required": [
+        "record",
+        "local_applied"
+      ],
+      "title": "AccessOutcome",
+      "type": "object"
+    },
+    "access_policy": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "expires_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "extra_gates": {
+          "description": "Core validates gate types and semantics. Native code also bounds encoded\nrule bytes and checks reserved/duplicate IDs; JSON Schema alone cannot.",
+          "items": true,
+          "maxItems": 24,
+          "type": "array"
+        },
+        "max_bytes": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_seconds": {
+          "format": "uint32",
+          "maximum": 3600,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "recipients": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 31,
+          "minItems": 1,
+          "type": "array"
+        },
+        "version": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "recipients",
+        "max_bytes",
+        "max_seconds",
+        "extra_gates"
+      ],
+      "title": "AccessPolicy",
+      "type": "object"
+    },
+    "access_review": {
+      "$defs": {
+        "AccessContext": {
+          "additionalProperties": false,
+          "description": "Native verified context, never accepted as authority from the web UI/model.",
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "audience": {
+              "type": "string"
+            },
+            "pin": {
+              "$ref": "#/$defs/TrustPin"
+            }
+          },
+          "required": [
+            "pin",
+            "actor",
+            "audience"
+          ],
+          "type": "object"
+        },
+        "AccessIntent": {
+          "additionalProperties": false,
+          "properties": {
+            "after": {
+              "$ref": "#/$defs/AccessPolicy"
+            },
+            "before": {
+              "$ref": "#/$defs/AccessPolicy"
+            },
+            "collection": {
+              "type": "string"
+            },
+            "context": {
+              "$ref": "#/$defs/AccessContext"
+            },
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "expires_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "operation": {
+              "pattern": "^connect\\.access\\.update\\.v1$",
+              "type": "string"
+            },
+            "schema": {
+              "format": "uint8",
+              "maximum": 1,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "schema",
+            "operation",
+            "id",
+            "context",
+            "collection",
+            "name",
+            "before",
+            "after",
+            "created_at",
+            "expires_at"
+          ],
+          "type": "object"
+        },
+        "AccessPolicy": {
+          "additionalProperties": false,
+          "properties": {
+            "expires_at": {
+              "format": "date-time",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "extra_gates": {
+              "description": "Core validates gate types and semantics. Native code also bounds encoded\nrule bytes and checks reserved/duplicate IDs; JSON Schema alone cannot.",
+              "items": true,
+              "maxItems": 24,
+              "type": "array"
+            },
+            "max_bytes": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "max_seconds": {
+              "format": "uint32",
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "recipients": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 31,
+              "minItems": 1,
+              "type": "array"
+            },
+            "version": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "version",
+            "recipients",
+            "max_bytes",
+            "max_seconds",
+            "extra_gates"
+          ],
+          "type": "object"
+        },
+        "Authorization": {
+          "enum": [
+            "not_evaluated",
+            "core_accepted",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "Stage": {
+          "enum": [
+            "prepared",
+            "submitted",
+            "unknown",
+            "state_observed",
+            "conflict",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        "TrustPin": {
+          "additionalProperties": false,
+          "description": "Provisioned out of band. Never construct this from an untrusted HTTP reply.",
+          "properties": {
+            "network_name": {
+              "type": "string"
+            },
+            "root_public_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "root_public_key",
+            "network_name"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "authorization": {
+          "$ref": "#/$defs/Authorization"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "intent": {
+          "$ref": "#/$defs/AccessIntent"
+        },
+        "observed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccessPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Readback is a state observation, not attribution or a signed receipt."
+        },
+        "stage": {
+          "$ref": "#/$defs/Stage"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "intent",
+        "digest",
+        "stage",
+        "authorization",
+        "updated_at"
+      ],
+      "title": "AccessRecord",
+      "type": "object"
+    },
+    "access_review_input": {
+      "$defs": {
+        "AccessPolicy": {
+          "additionalProperties": false,
+          "properties": {
+            "expires_at": {
+              "format": "date-time",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "extra_gates": {
+              "description": "Core validates gate types and semantics. Native code also bounds encoded\nrule bytes and checks reserved/duplicate IDs; JSON Schema alone cannot.",
+              "items": true,
+              "maxItems": 24,
+              "type": "array"
+            },
+            "max_bytes": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "max_seconds": {
+              "format": "uint32",
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "recipients": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 31,
+              "minItems": 1,
+              "type": "array"
+            },
+            "version": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "version",
+            "recipients",
+            "max_bytes",
+            "max_seconds",
+            "extra_gates"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "collection": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "settings": {
+          "$ref": "#/$defs/AccessPolicy"
+        }
+      },
+      "required": [
+        "collection",
+        "settings"
+      ],
+      "title": "AccessReviewInput",
+      "type": "object"
+    },
+    "request": {
+      "$defs": {
+        "AccessPolicy": {
+          "additionalProperties": false,
+          "properties": {
+            "expires_at": {
+              "format": "date-time",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "extra_gates": {
+              "description": "Core validates gate types and semantics. Native code also bounds encoded\nrule bytes and checks reserved/duplicate IDs; JSON Schema alone cannot.",
+              "items": true,
+              "maxItems": 24,
+              "type": "array"
+            },
+            "max_bytes": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "max_seconds": {
+              "format": "uint32",
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "recipients": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 31,
+              "minItems": 1,
+              "type": "array"
+            },
+            "version": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "version",
+            "recipients",
+            "max_bytes",
+            "max_seconds",
+            "extra_gates"
+          ],
+          "type": "object"
+        },
+        "AccessReviewInput": {
+          "additionalProperties": false,
+          "properties": {
+            "collection": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "settings": {
+              "$ref": "#/$defs/AccessPolicy"
+            }
+          },
+          "required": [
+            "collection",
+            "settings"
+          ],
+          "type": "object"
+        },
+        "ResourceQuery": {
+          "additionalProperties": false,
+          "properties": {
+            "collection": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "collection"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/ResourceQuery"
+            },
+            "operation": {
+              "const": "connect.access.inspect.v1",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "input"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/AccessReviewInput"
+            },
+            "operation": {
+              "const": "connect.access.update.v1",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "input"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "OperationRequest"
+    },
+    "resource_query": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "collection": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "collection"
+      ],
+      "title": "ResourceQuery",
+      "type": "object"
+    }
+  },
+  "scope": "Implemented Connect resource operations; not full public-core parity or authorization",
+  "semantic_validation": "Native intent/context/version/time checks and core ownership/gate validation are mandatory. Shapes alone do not authorize actions."
+}

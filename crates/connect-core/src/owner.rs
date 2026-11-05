@@ -98,14 +98,32 @@ pub struct Space {
     pub access_expires_at: Option<String>,
 }
 
+#[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AccessPolicy {
+    #[cfg_attr(
+        feature = "operation-schemas",
+        schemars(range(min = 1, max = 9007199254740991u64))
+    )]
     pub version: u64,
+    #[cfg_attr(feature = "operation-schemas", schemars(length(min = 1, max = 31)))]
     pub recipients: Vec<String>,
+    #[cfg_attr(
+        feature = "operation-schemas",
+        schemars(with = "Option<chrono::DateTime<chrono::Utc>>")
+    )]
     pub expires_at: Option<String>,
+    #[cfg_attr(
+        feature = "operation-schemas",
+        schemars(range(min = 1, max = 9007199254740991u64))
+    )]
     pub max_bytes: u64,
+    #[cfg_attr(feature = "operation-schemas", schemars(range(min = 1, max = 3600)))]
     pub max_seconds: u32,
+    /// Core validates gate types and semantics. Native code also bounds encoded
+    /// rule bytes and checks reserved/duplicate IDs; JSON Schema alone cannot.
+    #[cfg_attr(feature = "operation-schemas", schemars(length(max = 24)))]
     pub extra_gates: Vec<Value>,
 }
 #[derive(Deserialize, Serialize)]

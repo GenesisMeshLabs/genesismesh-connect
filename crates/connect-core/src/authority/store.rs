@@ -19,6 +19,7 @@ use std::{
 use crate::session::{TrustPolicy, TrustSnapshot};
 
 /// Provisioned out of band. Never construct this from an untrusted HTTP reply.
+#[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TrustPin {

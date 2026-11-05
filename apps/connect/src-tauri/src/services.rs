@@ -138,10 +138,12 @@ pub async fn share_service(
 }
 #[tauri::command]
 pub async fn get_access_policy(
-    id: String,
+    request: connect_core::operations::ResourceQuery,
     state: tauri::State<'_, WorkflowState>,
     desktop: tauri::State<'_, DesktopState>,
 ) -> Result<AccessPolicy, String> {
+    request.validate().map_err(error)?;
+    let id = request.collection;
     let mut owner = state.slot.lock().await;
     let mut slot = desktop.slot.lock().await;
     let device = slot.controller.as_mut().ok_or("Join your network first")?;

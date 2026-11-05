@@ -364,9 +364,9 @@
       ],
       "approval": "Resource access changes bind exact intent to native identity, audience, current state and five-minute expiry. This is not independent approval or general owner administration.",
       "schemas": {
-        "input": null,
-        "output": null,
-        "status": "pending-typed-operation-registry"
+        "input": "contract/connect-operations.json",
+        "output": "contract/connect-operations.json",
+        "status": "partial-typed-resource-operations; descriptor references identify individual value schemas"
       },
       "retry": "No generic mutation retry; readback/idempotency or explicit uncertain-result reconciliation required",
       "recovery": "Preserve identity and exact intent; operation-specific recovery remains an acceptance prerequisite",
@@ -376,13 +376,16 @@
           "docs/everyday-workflow.md",
           "docs/access-workflow.md",
           "crates/connect-core/src/access_workflow.rs",
-          "apps/connect/src-tauri/src/access.rs"
+          "apps/connect/src-tauri/src/access.rs",
+          "docs/operation-contract.md",
+          "crates/connect-core/src/operations.rs"
         ],
         "automated": [
           "crates/connect-core/tests/access_workflow.rs",
           "crates/connect-core/tests/access_workflow_authority.rs",
           "apps/connect/tests/access-state.test.ts",
-          "apps/connect/tests/access-errors.test.ts"
+          "apps/connect/tests/access-errors.test.ts",
+          "crates/connect-core/tests/operation_registry.rs"
         ],
         "physical": [],
         "accepted": false

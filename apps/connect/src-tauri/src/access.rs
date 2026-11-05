@@ -10,13 +10,18 @@ use connect_core::{
     access_workflow::{AccessContext, AccessJournal, AccessRecord, Stage},
     authority::TrustPin,
     device::{DeviceController, DeviceStatus},
+    operations::{AccessCommitInput, AccessOutcome, AccessReviewInput},
     owner::{AccessPolicy, AccessUpdate},
 };
-use serde::Serialize;
 use tauri::Manager;
 
 fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
+}
+/// Public descriptions only. Discovery does not grant any operation rights.
+#[tauri::command]
+pub fn operation_registry() -> Vec<connect_core::operations::OperationDescriptor> {
+    connect_core::operations::registry().to_vec()
 }
 fn item_name(name: &str) -> String {
     if name.trim().is_empty() {
@@ -86,13 +91,6 @@ fn readiness(owner: &mut OwnerSlot, context: &AccessContext) -> Result<(), Strin
     Ok(())
 }
 
-#[derive(Serialize)]
-pub struct AccessOutcome {
-    pub record: AccessRecord,
-    pub local_applied: bool,
-    pub problem: Option<String>,
-}
-
 async fn refresh_projection(
     owner: &mut OwnerSlot,
     device: &mut DeviceController,
@@ -145,10 +143,14 @@ async fn refresh_projection(
 
 #[tauri::command]
 pub async fn review_access_policy(
-    id: String,
-    settings: AccessPolicy,
+    request: AccessReviewInput,
     app: tauri::AppHandle,
 ) -> Result<AccessRecord, String> {
+    request.validate().map_err(error)?;
+    let AccessReviewInput {
+        collection: id,
+        settings,
+    } = request;
     let desktop = app.state::<DesktopState>();
     let workflow = app.state::<WorkflowState>();
     let _idle = desktop
@@ -186,10 +188,11 @@ pub async fn review_access_policy(
 
 #[tauri::command]
 pub async fn commit_access_policy(
-    id: String,
-    digest: String,
+    request: AccessCommitInput,
     app: tauri::AppHandle,
 ) -> Result<AccessOutcome, String> {
+    request.validate().map_err(error)?;
+    let AccessCommitInput { id, digest } = request;
     let desktop = app.state::<DesktopState>();
     let workflow = app.state::<WorkflowState>();
     let _idle = desktop

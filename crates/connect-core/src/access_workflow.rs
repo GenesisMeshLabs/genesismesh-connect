@@ -18,6 +18,7 @@ const MAX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_RECORDS: usize = 128;
 
 /// Native verified context, never accepted as authority from the web UI/model.
+#[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AccessContext {
@@ -26,10 +27,16 @@ pub struct AccessContext {
     pub audience: String,
 }
 
+#[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccessIntent {
+    #[cfg_attr(feature = "operation-schemas", schemars(range(min = 1, max = 1)))]
     pub schema: u8,
+    #[cfg_attr(
+        feature = "operation-schemas",
+        schemars(regex(pattern = "^connect\\.access\\.update\\.v1$"))
+    )]
     pub operation: String,
     pub id: String,
     pub context: AccessContext,
@@ -41,6 +48,7 @@ pub struct AccessIntent {
     pub expires_at: DateTime<Utc>,
 }
 
+#[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Stage {
@@ -52,6 +60,7 @@ pub enum Stage {
     Cancelled,
 }
 
+#[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Authorization {
@@ -60,6 +69,7 @@ pub enum Authorization {
     Unknown,
 }
 
+#[cfg_attr(feature = "operation-schemas", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccessRecord {
@@ -97,7 +107,10 @@ fn key(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn normalize(mut policy: AccessPolicy, now: Option<DateTime<Utc>>) -> Result<AccessPolicy> {
+pub(crate) fn normalize(
+    mut policy: AccessPolicy,
+    now: Option<DateTime<Utc>>,
+) -> Result<AccessPolicy> {
     ensure!(
         policy.version > 0 && policy.version < (1 << 53),
         "Invalid policy version"

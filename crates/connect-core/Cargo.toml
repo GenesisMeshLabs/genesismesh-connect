@@ -6,7 +6,11 @@ rust-version.workspace = true
 description = "Genesis Mesh Connect portable transport and session authentication diagnostics"
 publish = false
 
+[features]
+operation-schemas = ["dep:schemars"]
+
 [dependencies]
+schemars = { version = "=1.2.3", features = ["chrono04", "uuid1"], optional = true }
 anyhow.workspace = true
 iroh.workspace = true
 serde.workspace = true
