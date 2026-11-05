@@ -3,6 +3,7 @@
 #[cfg(test)]
 extern crate self as connect_core;
 
+pub mod access_workflow;
 pub mod authority;
 pub mod connectivity;
 pub mod device;

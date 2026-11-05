@@ -98,7 +98,7 @@ pub struct Space {
     pub access_expires_at: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AccessPolicy {
     pub version: u64,
