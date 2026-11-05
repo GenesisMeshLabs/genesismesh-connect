@@ -1,0 +1,77 @@
+name: Android authority source wheels
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/android-authority-wheels.yml'
+      - 'scripts/android-authority*'
+      - 'scripts/android_authority*'
+      - 'scripts/tests/test_native_sources.py'
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Native package to qualify (external library recipes may still be required)
+        required: true
+        default: pydantic-core
+        type: choice
+        options: [pydantic-core, cryptography, PyNaCl]
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PACKAGE: ${{ inputs.package || 'pydantic-core' }}
+      RUSTUP_TOOLCHAIN: 1.98.0
+      ANDROID_API_LEVEL: '24'
+      CIBW_BUILD: cp313-android_arm64_v8a
+      CIBW_BUILD_FRONTEND: build
+      CIBW_ENVIRONMENT: RUSTFLAGS='-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            apps/connect/authority/core-requirements.txt
+            scripts/android-authority-build-requirements.txt
+      - name: Install pinned core metadata and wheel tooling
+        run: python -m pip install -r apps/connect/authority/core-requirements.txt -r scripts/android-authority-build-requirements.txt
+      - name: Prepare exact hash-locked upstream source
+        run: python scripts/android_authority_sources.py prepare --package "$PACKAGE" --output temp/android-native
+      - name: Source and target refusal tests
+        run: python -m unittest discover -s scripts/tests -p test_native_sources.py -v
+      - name: Install declared Rust and Android target
+        run: rustup toolchain install 1.98.0 --profile minimal --target aarch64-linux-android
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cache/cibuildwheel
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: android-authority-${{ env.PACKAGE }}-${{ hashFiles('scripts/android-authority-sources.lock.json', 'scripts/android-authority-build-requirements.txt') }}
+      - name: Cross-build Android arm64 wheel (device execution is a separate gate)
+        run: |
+          python -m cibuildwheel temp/android-native/project --platform android --archs arm64_v8a --output-dir temp/android-native/wheels 2>&1 | tee temp/android-native/build.log
+      - name: Verify native target and alignment
+        run: |
+          mapfile -t wheels < <(find temp/android-native/wheels -name '*.whl')
+          test "${#wheels[@]}" -gt 0
+          for wheel in "${wheels[@]}"; do
+            python scripts/android_authority_sources.py check "$wheel"
+          done
+      - name: Keep source provenance, wheel and diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Android-authority-${{ env.PACKAGE }}-${{ github.sha }}
+          path: |
+            temp/android-native/source-report.json
+            temp/android-native/build.log
+            temp/android-native/wheels/
+          if-no-files-found: warn
+          retention-days: 7

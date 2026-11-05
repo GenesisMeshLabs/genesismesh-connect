@@ -41,6 +41,29 @@ can be supplied with `--wheelhouse`; the requirements still constrain versions.
 
 ## Implementation sequence and acceptance
 
+The **Android authority source wheels** manual GitHub workflow builds one of
+the missing packages using pinned cibuildwheel tooling. Start with
+`pydantic-core`; cryptography and PyNaCl also need their external native library
+recipes qualified. This is a build spike, not a complete embedded authority.
+The workflow verifies the exact installed dependency against the core pin,
+downloads the hash-locked upstream sdist, cross-builds arm64/API24/CPython3.13,
+and checks wheel metadata, native architecture and 16 KiB ELF alignment. It
+retains source provenance, compiler diagnostics and produced wheels. On x86
+runners, arm64 execution is untested and remains a physical-device gate.
+
+The source lock lives in `scripts/android-authority-sources.lock.json`. After a
+core release update, install its requirements and run:
+
+```text
+python scripts/android_authority_sources.py lock
+```
+
+This derives exact versions from the released core and its model dependency;
+it does not introduce another core release pin. Review the new source hashes
+and rerun qualification. The source lock deliberately refuses an unreviewed
+release change. It currently covers the three missing native dependencies,
+not the full transitive wheel closure or a production software bill of materials.
+
 1. Build missing wheels reproducibly from verified upstream sources. Keep source
    digests, compiler/NDK/ABI/API versions, linkage, licenses and vulnerability
    qualification with the artifacts. Require 16 KiB native alignment checks.

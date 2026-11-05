@@ -1,0 +1,2 @@
+cibuildwheel==4.3.5
+packaging==26.3
