@@ -9,10 +9,13 @@ and `Connect qualification`. The latter can also be started manually. It checks:
   real core/QUIC, access and owner-control checks; standalone authority/recovery;
   Linux desktop and headless-host compilation.
 - An arm64 Android debug APK built with the existing initialization/branding/
-  permission patches, followed by signature verification and SHA-256 inventory.
+  permission patches, followed by signature verification, 16 KiB ELF/RELRO/ZIP
+  alignment refusal checks and SHA-256 inventory.
 
-Download the Android APK from the run's **Artifacts** section. It is a development
-build with a development signing identity, not a store release. Updating a device
+Download the Android APK from the run's **Artifacts** section. Its package is
+`org.genesismesh.connect.qualification`, shown as **Genesis Mesh Connect Test**,
+so installing it preserves the ordinary app and its network. It is a development
+build with a runner-local development signing identity, not a store release. Updating a device
 requires compatible package/signing identity; do not automatically uninstall a
 user's app or erase its data after a signature mismatch.
 
