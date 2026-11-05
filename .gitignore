@@ -13,6 +13,7 @@
 **/__pycache__/
 /vendor/*/target/
 /vendor/tauri-plugin-view/android/build/
+/vendor/tauri-plugin-view/android/.gradle/
 **/node_modules/
 /dist/
 **/dist/
