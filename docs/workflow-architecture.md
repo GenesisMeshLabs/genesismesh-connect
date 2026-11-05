@@ -36,6 +36,12 @@ Remote owner administration needs its own versioned, authenticated protocol. The
 current fixed authority bridge is not permission to send owner operations from a
 phone. This phase does not broaden that bridge or change root custody.
 
+The [owner-control contract](owner-control-contract.md) now implements the first
+portable enrollment/signature/replay boundary for pairing-only administration.
+It remains deliberately unexposed until native custody, authenticated transport,
+fixed adapter enforcement, Requests UX and recovery are qualified. It is not a
+new core operator role or a general administrator workflow.
+
 ## Common journey
 
 Every supported journey must resolve intent, verified context, meaningful
@@ -129,6 +135,7 @@ pins, identify missing history and fence old hosts before claiming continuity.
 | CONNECT-02 typed operation registry and exact-intent preview | Closed resource operation registry, generated value schemas and access review/commit implemented; broad core operations and assisted coverage remain planned |
 | CONNECT-03 durable journal | Access-update dispatch/crash/readback journal implemented; enrollment, recovery and general workflows remain planned |
 | CONNECT-04 runtime prerequisite discovery | Authenticated local/remote resource-host release/profile/ownership/operation discovery implemented; arbitrary external authorities and general owner/agent roles remain planned |
+| CONNECT-05 owner-device control and Requests | Portable explicit enrollment, separate-key proofs, exact pairing targets and durable nonce reservation implemented; native custody, owner transport, fixed dispatch, Requests and physical acceptance remain planned |
 | CONNECT-11 Activity / Evidence | Ordinary device-local access history, archived records, eligible read-only reconciliation and unsigned JSON export implemented; general signed audit-pack inspection/verification remains planned |
 | Later phases | All agents, policies, federation, oversight, evidence, offline and operations outcomes remain visible in the reviewed mapping |
 

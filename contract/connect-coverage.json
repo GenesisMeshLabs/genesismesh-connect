@@ -191,7 +191,7 @@
       "status": "planned",
       "manual": "planned",
       "assisted": "planned",
-      "scope_note": "No accepted general-purpose guided journey; core support is not Connect product coverage.",
+      "scope_note": "Portable pairing-only owner-control enrollment/signature/replay contract implemented, but deliberately unexposed. Native administrative custody, authenticated owner transport, final core role/target checks, Requests UX and recovery remain incomplete. This is not a core operator enrollment or an accepted general administrator journey.",
       "execution_locations": [
         "requires-adapter-review"
       ],
@@ -219,8 +219,13 @@
       "retry": "No generic mutation retry; readback/idempotency or explicit uncertain-result reconciliation required",
       "recovery": "Preserve identity and exact intent; operation-specific recovery remains an acceptance prerequisite",
       "evidence": {
-        "sources": [],
-        "automated": [],
+        "sources": [
+          "docs/owner-control-contract.md"
+        ],
+        "automated": [
+          "crates/connect-core/tests/owner_control.rs",
+          "crates/connect-core/tests/owner_control_authority.rs"
+        ],
         "physical": [],
         "accepted": false
       },

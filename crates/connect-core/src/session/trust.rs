@@ -207,10 +207,10 @@ impl TrustSnapshot {
         Ok(snapshot)
     }
 
-    pub(super) fn network(&self) -> &str {
+    pub(crate) fn network(&self) -> &str {
         &self.policy.network_name
     }
-    pub(super) fn root(&self) -> &str {
+    pub(crate) fn root(&self) -> &str {
         &self.policy.root_public_key
     }
 

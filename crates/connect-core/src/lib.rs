@@ -9,6 +9,7 @@ pub mod connectivity;
 pub mod device;
 pub mod operations;
 pub mod owner;
+pub mod owner_control;
 mod probe;
 pub mod recovery;
 pub mod session;

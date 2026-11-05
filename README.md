@@ -15,6 +15,12 @@ Manage access now has an [exact-scope review and durable change status](docs/acc
 An interrupted change is checked against the authority before another change
 can be submitted; it is never retried automatically.
 
+The first [owner-control contract](docs/owner-control-contract.md) is implemented
+in the portable library. Explicit administrative enrollment and replay refusal
+are separate from member pairing. Remote-owner transport and Requests UI are
+still awaiting integration and qualification; existing member permissions are
+unchanged.
+
 ## Structure
 
 The normal navigation is **Shared**, **Devices**, **Activity** and **Settings**.
