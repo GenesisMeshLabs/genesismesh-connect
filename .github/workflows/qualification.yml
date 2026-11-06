@@ -107,6 +107,9 @@ jobs:
       - name: Python version checks (Unix owner access is tested through Rust pipe)
         working-directory: apps/connect/authority
         run: python -m unittest -v test_core_release
+      - name: Fixed embedded owner lifecycle with real core and test-only custody
+        working-directory: apps/connect/authority
+        run: python -m unittest -v test_embedded_owner
       - name: Native device and key lifecycle with private Secret Service
         run: |
           bash scripts/verify-linux-store.sh test -p connect-core --lib device:: --locked -- --ignored --nocapture

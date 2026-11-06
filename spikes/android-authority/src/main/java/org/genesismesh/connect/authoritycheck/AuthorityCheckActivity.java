@@ -11,6 +11,7 @@ import org.json.JSONObject;
 import org.json.JSONArray;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
+import org.genesismesh.connect.authority.OwnerKeyVault;
 
 public final class AuthorityCheckActivity extends Activity {
     private static final EngineCheckRunner<JSONObject> ENGINE =
@@ -35,15 +36,26 @@ public final class AuthorityCheckActivity extends Activity {
         setContentView(root);
         try { ENGINE.start(() -> {
             JSONObject report;
+            String stage = "Python startup";
             try {
                 if (!Python.isStarted()) Python.start(new AndroidPlatform(getApplicationContext()));
                 report = new JSONObject(Python.getInstance().getModule("authority_check")
                     .callAttr("run", BuildConfig.CORE_VERSION).toString());
+                if ("passed".equals(report.optString("status"))) {
+                    stage = "Protected owner custody";
+                    JSONObject owner = new JSONObject(Python.getInstance().getModule("owner_check").callAttr("run",
+                        BuildConfig.CORE_VERSION, new java.io.File(getNoBackupFilesDir(), "authority-check").getAbsolutePath(),
+                        new OwnerKeyVault(getApplicationContext())).toString());
+                    report.put("owner_check", owner);
+                    if (!"passed".equals(owner.optString("status"))) {
+                        report.put("status", "failed").put("stage", owner.optString("stage", "Owner custody"));
+                    }
+                }
                 report.put("source_commit", BuildConfig.SOURCE_COMMIT);
                 report.put("device_api", android.os.Build.VERSION.SDK_INT);
             } catch (Throwable error) {
                 report = new JSONObject();
-                try { report.put("status", "failed").put("stage", "Python startup")
+                try { report.put("status", "failed").put("stage", stage)
                     .put("exception_type", error.getClass().getSimpleName()).put("source_commit", BuildConfig.SOURCE_COMMIT); }
                 catch (Exception ignored) { }
             }
@@ -87,6 +99,13 @@ public final class AuthorityCheckActivity extends Activity {
                 .append(check.optBoolean("passed") ? "Passed" : "Needs attention").append("\n");
         }
         if (!passed) text.append("\nCheck: ").append(report.optString("stage", "startup")).append("\n");
+        JSONObject owner = report.optJSONObject("owner_check");
+        if (owner != null) {
+            JSONArray ownerChecks = owner.optJSONArray("checks");
+            if (ownerChecks != null) for (int i = 0; i < ownerChecks.length(); i++) {
+                text.append(ownerChecks.optJSONObject(i).optString("name")).append(": Passed\n");
+            }
+        }
         text.append("\nDevelopment runtime check. Network creation is not enabled by this test.");
         status.setText(text.toString());
     }
