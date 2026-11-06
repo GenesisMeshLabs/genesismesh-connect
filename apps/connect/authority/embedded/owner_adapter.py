@@ -115,7 +115,30 @@ class EmbeddedOwner:
                 raise
 
     def open(self):
+        """Low-level custody/readback; never writes or replays membership work."""
         return self._open()
+
+    def open_for_use(self):
+        """App activation: renew routine membership, preserve uncertain outcomes.
+
+        Recovery/readback uses open/_open, never this activation operation. Only
+        a fresh, unambiguous renewal can be automatic; an existing intent needs
+        explicit reconciliation before any further membership write.
+        """
+        with self.mutex:
+            self.vault.ready()
+            intent = self.storage.path("member-renewal.json")
+            if self.renewal_pending or intent.exists() or intent.is_symlink():
+                raise Refused("The previous membership update needs review. Check its saved result before trying again.")
+            if self.identity is None: self._open()
+            if self.certificate.expires_at - datetime.now(timezone.utc) <= timedelta(hours=1):
+                try:
+                    self.renew_member()
+                except Exception:
+                    self.close()
+                    raise Refused("The membership update could not be confirmed. Review its saved result; it was not repeated.") from None
+            self._verify(self.genesis, self.policy, self.certificate)
+            return dict(self.identity)
 
     def _open(self, *, allow_renewal=False):
         with self.mutex:

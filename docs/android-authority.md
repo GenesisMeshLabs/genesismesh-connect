@@ -118,6 +118,15 @@ startup-failure revalidation or merge was performed for this repair.
 
 ## Dependency gate
 
+App activation uses `EmbeddedOwner.open_for_use`: an expired membership, or one
+with at most an hour left, is renewed automatically through the same genuine
+core enrollment and signed durable intent as explicit recovery. Identity keys
+and root ciphertext stay unchanged; a healthy reopen issues nothing. An existing
+intent or an uncertain reply requires explicit readback/reconciliation and is
+never replayed on reopen. Revoked membership is not re-enrolled. The low-level
+`open` operation remains read-only for recovery tools. This does not enable
+Create in the main app or make a background-availability promise.
+
 ### Separate root custody
 
 New embedded profiles use schema 3: `root.sealed` is wrapped under a separate

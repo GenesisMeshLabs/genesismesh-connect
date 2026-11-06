@@ -54,7 +54,7 @@ def run(expected_version, directory, native):
         first = EmbeddedOwner(directory, vault, expected_version)
         stage = "Phone-local authority"
         if initial_operation(directory, bool(native.hasCustody())) == "reopen":
-            identity = first.open()
+            identity = first.open_for_use()
             report["initial_operation"] = "reopen"
         else:
             identity = first.create("Phone-local qualification")
@@ -72,7 +72,7 @@ def run(expected_version, directory, native):
         stage = "Close and reopen identity"
         first.close()
         second = EmbeddedOwner(directory, vault, expected_version)
-        if second.open() != identity or not second.check_member(): raise RuntimeError("Identity changed after reopen")
+        if second.open_for_use() != identity or not second.check_member(): raise RuntimeError("Identity changed after reopen")
         report["checks"].append({"name": stage, "passed": True})
         # Only public identity fingerprints/certificate ID appear in the developer report.
         report["identity"] = {key: hashlib.sha256(value.encode()).hexdigest()
