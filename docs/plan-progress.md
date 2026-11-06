@@ -83,7 +83,7 @@ availability. The full Create workflow remains disabled until those gates pass.
 Embedded owner adapter progress on 6 November 2026 (PR #22): fixed in-memory core
 initialization, signed self-enrollment, purpose-separated Android Keystore custody
 and create/open/close persistence are implemented behind the developer harness.
-Twenty-three Windows host tests pass using the real core and explicitly test-only
+Twenty-five Windows host tests pass using the real core and explicitly test-only
 encrypted custody, including interrupted creation/key generation, missing/corrupt
 state or keys, domain swaps, erased profile with existing custody, lock contention,
 revoked/missing membership, invalid names and stable public identities. These are

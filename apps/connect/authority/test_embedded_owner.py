@@ -441,5 +441,37 @@ class EmbeddedOwnerTests(unittest.TestCase):
             intent_path.write_bytes(original)
             self.assertTrue(self.owner().reconcile_member())
 
+    def test_committed_credential_with_failed_intent_cleanup_is_not_committed_twice(self):
+        owner = self.owner(); owner.create("Committed outcome")
+        expires = owner.certificate.expires_at; owner.close()
+        with core_time(expires + timedelta(minutes=6)):
+            owner.open(); unlink = Path.unlink
+            def failed_cleanup(path, *args, **kwargs):
+                if path.name == "member-renewal.json": raise OSError("Cleanup interrupted")
+                return unlink(path, *args, **kwargs)
+            with patch.object(Path, "unlink", new=failed_cleanup):
+                with self.assertRaises(OSError): owner.renew_member()
+            committed = dict(owner.identity); revision = owner.state["revision"]
+            owner.close()
+            recovered = self.owner()
+            with patch.object(recovered, "_enroll_member", side_effect=AssertionError("No reissue")):
+                self.assertEqual(recovered.reconcile_member(), committed)
+            self.assertEqual(recovered.state["revision"], revision)
+            self.assertTrue(recovered.check_member())
+
+    def test_multiple_completed_outcomes_require_review_instead_of_arbitrary_adoption(self):
+        owner = self.owner(); identity = owner.create("Ambiguous outcome")
+        expires = owner.certificate.expires_at; owner.close()
+        with core_time(expires + timedelta(minutes=6)):
+            owner.open(); before = (self.root / "state.json").read_bytes()
+            with patch.object(owner.storage, "replace_state", side_effect=OSError("Commit interrupted")):
+                with self.assertRaises(OSError): owner.renew_member()
+            owner._enroll_member()  # Simulate two genuine recorded outcomes from an older faulty caller.
+            owner.close()
+            with self.assertRaisesRegex(Refused, "No single"): self.owner().reconcile_member()
+            with self.assertRaisesRegex(Refused, "Core recorded"): self.owner().cancel_member_recovery()
+            self.assertEqual((self.root / "state.json").read_bytes(), before)
+            self.assertTrue((self.root / "member-renewal.json").exists())
+
 
 if __name__ == "__main__": unittest.main()
