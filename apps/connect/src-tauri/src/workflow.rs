@@ -35,7 +35,10 @@ pub struct NetworkStatus {
     problem: Option<String>,
 }
 fn runtime_available() -> bool {
-    if cfg!(all(target_os = "android", feature = "android-owner-qualification")) {
+    if cfg!(all(
+        target_os = "android",
+        feature = "android-owner-qualification"
+    )) {
         return true;
     }
     #[cfg(debug_assertions)]
@@ -54,7 +57,10 @@ fn runtime_name() -> &'static str {
         "genesismesh-authority"
     }
 }
-#[cfg_attr(all(target_os = "android", feature = "android-owner-qualification"), allow(dead_code))]
+#[cfg_attr(
+    all(target_os = "android", feature = "android-owner-qualification"),
+    allow(dead_code)
+)]
 fn start(directory: &std::path::Path) -> anyhow::Result<OwnerRuntime> {
     anyhow::ensure!(
         cfg!(any(windows, target_os = "macos", target_os = "linux")),
@@ -152,7 +158,10 @@ pub async fn network_status(
     let slot = state.slot.lock().await;
     Ok(NetworkStatus {
         runtime_available: runtime_available(),
-        phone: cfg!(all(target_os = "android", feature = "android-owner-qualification")),
+        phone: cfg!(all(
+            target_os = "android",
+            feature = "android-owner-qualification"
+        )),
         owner: slot.info.is_some()
             || (cfg!(any(windows, target_os = "macos", target_os = "linux"))
                 && state.directory.join("owner.json").is_file())
@@ -227,11 +236,13 @@ pub async fn network_reopen(app: tauri::AppHandle) -> Result<(), String> {
 /// The foreground setup journal sits beside the device profile; its presence
 /// means this phone created a network, finished or not.
 fn phone_setup_marker(owner_directory: &std::path::Path) -> bool {
-    cfg!(all(target_os = "android", feature = "android-owner-qualification"))
-        && owner_directory.parent().is_some_and(|parent| {
-            parent.join("foreground-setup.json").exists()
-                || parent.join("foreground-setup.lock").exists()
-        })
+    cfg!(all(
+        target_os = "android",
+        feature = "android-owner-qualification"
+    )) && owner_directory.parent().is_some_and(|parent| {
+        parent.join("foreground-setup.json").exists()
+            || parent.join("foreground-setup.lock").exists()
+    })
 }
 
 /// One phone setup at a time: Create, Open and reopening never overlap.
@@ -422,7 +433,10 @@ pub async fn network_attach(
         Ok(true)
     }
 }
-#[cfg_attr(all(target_os = "android", feature = "android-owner-qualification"), allow(dead_code))]
+#[cfg_attr(
+    all(target_os = "android", feature = "android-owner-qualification"),
+    allow(dead_code)
+)]
 async fn install_network(
     name: Option<String>,
     config: Option<PathBuf>,
