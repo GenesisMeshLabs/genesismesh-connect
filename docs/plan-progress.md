@@ -316,3 +316,41 @@ installation, physical lifecycle and first-time usability as separate facts.
 Current Windows Application Control and unperformed mobile/signing/device gates
 remain explicit. A compiled adapter or signed intent is not evidence that a
 nontechnical person completed the installed-app workflow.
+
+## Embedded protected-resource chain — 6 November 2026
+
+The qualified lost-confirmation recovery from `76885bd` now leads to actual
+protected operations, rather than only diagnostic messages. Six explicitly
+selected disposable host fixtures use the embedded `ForegroundNetwork`, genuine
+comparison-code pairing and core enrollment, sealed independent profiles, and
+real Iroh QUIC. They cover:
+
+- Nested folders and verified multi-window binary downloads in both directions,
+  after the joining client reopens and explicitly finishes its original pairing.
+  Each listing and download window reaches the genuine core decision route.
+- A paired, cryptographically authenticated member without that folder's
+  permission receives neither a directory page nor any file output.
+- Narrowing the full-file size policy stops the next window at the confirmed
+  offset. An explicit later policy version permits the same snapshot to resume.
+- Revocation refuses protected metadata and further download bytes even before
+  cached diagnostic-session trust is refreshed. Normal shutdown of an already
+  running authority also refuses further protected operations.
+- A joined device creates a TCP service through the authenticated bridge and the
+  fixed embedded owner adapter. A real echo works; wrong kind/collection never
+  reaches the target; a live policy change closes the stream and refuses new
+  connections. A stale policy version cannot overwrite the newer one.
+
+The TCP fixture reproduced excessive stack use in the composed forwarding path.
+Moving its two bounded I/O buffers to the heap fixed that failure on the normal
+test stack without changing protocol, authorization, buffer capacity or shared
+byte-budget rules. Both existing service-limit unit tests pass alongside the six
+resource fixtures. These are eight checks run for this slice; the earlier
+41-check recovery checkpoint is historical evidence, not a newly rerun total.
+
+[Validation record](evidence/embedded-resources-2026-11-06.json).
+The focused workflow selects these exact source/host checks for future CI; no
+hosted run was dispatched. This is not installed-app, physical-phone,
+nontechnical-user or full lifecycle acceptance. Public Create/administration/
+recovery gates and the completed read-only membership inspector remain unchanged.
+No device data was accessed, reset or installed; no blocked app-boundary build,
+excluded startup-failure test, publication, merge or deployment was attempted.

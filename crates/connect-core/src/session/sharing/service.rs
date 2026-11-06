@@ -178,7 +178,9 @@ async fn pump<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     mut write: W,
     remaining: Arc<AtomicU64>,
 ) -> Result<()> {
-    let mut buffer = [0; 64 * 1024];
+    // This buffer lives across awaits. Keep it out of the composed service
+    // future's stack frame, including while that future is created/moved.
+    let mut buffer = vec![0; 64 * 1024].into_boxed_slice();
     loop {
         let available = remaining.load(Ordering::Relaxed);
         ensure!(available > 0, "Service byte limit reached");

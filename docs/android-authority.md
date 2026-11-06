@@ -481,3 +481,19 @@ References: [Chaquopy Gradle integration](https://chaquo.com/chaquopy/doc/curren
 [Chaquopy package guidance](https://chaquo.com/chaquopy/doc/current/faq.html),
 [cibuildwheel Android builds](https://cibuildwheel.pypa.io/en/latest/platforms/),
 [Android 16 KiB support](https://developer.android.com/guide/practices/page-sizes).
+
+### Protected operations through the embedded host
+
+The disposable embedded-host chain now covers nested folder browsing and
+multi-window file transfer in both directions, including a client that reopened
+and explicitly recovered its original pairing completion. It also covers a real
+TCP service shared by a joined device through the authority bridge. Policy
+narrowing, stale edits, missing permission, revocation and a normal authority
+shutdown are refusal cases, with confirmed download bytes preserved.
+
+The bounded service I/O buffers now live on the heap, after the real TCP fixture
+reproduced excessive stack use. No protocol or authority limits changed.
+See the [dated host validation record](evidence/embedded-resources-2026-11-06.json)
+and focused `foreground_resources` target. These source/host checks do not
+complete the physical phone or app-shell gates above, and no production gate is
+enabled by their success.

@@ -76,3 +76,7 @@ jobs:
           cargo +1.98.0 test -p connect-core --features pairing-completion-recovery --lib device::pairing_completion::tests --locked
           cargo +1.98.0 test -p connect-core --features pairing-completion-recovery --lib device::vault::completion_tests --locked
           CONNECT_FOREGROUND_FIXTURE_PYTHON="$(command -v python)" cargo +1.98.0 test -p connect-core --features pairing-completion-recovery --test pairing_completion_recovery --locked -- --ignored
+      - name: Protected folders and TCP through embedded authority (disposable only)
+        run: |
+          cargo +1.98.0 test -p connect-core --lib session::sharing::service::tests --locked
+          CONNECT_FOREGROUND_FIXTURE_PYTHON="$(command -v python)" cargo +1.98.0 test -p connect-core --features pairing-completion-recovery --test foreground_resources --locked -- --ignored
