@@ -142,6 +142,7 @@ async fn interrupted_enrollment_never_replays_but_saved_verified_completion_can_
     resumed.open_authority()?;
     resumed.prepare_device()?;
     assert_eq!(resumed.view().stage, SetupStage::Ready);
+    resumed.enroll_device().await?;
     let network = resumed.finish()?;
     assert_eq!(
         completed.certificate_id,

@@ -61,6 +61,18 @@ public final class OwnerKeyVault {
         generate(MEMBER, false); // A partial failure stays blocked; never delete/recreate existing entries.
     }
 
+    /**
+     * Remove the wrapping keys of a creation that sealed no record, so it can
+     * be tried again. The embedded owner calls this only when this attempt made
+     * the keys and its storage holds nothing but the attempt's own marker.
+     */
+    public synchronized void discardUnsealed() throws Exception {
+        ready();
+        for (String alias : new String[] {ROOT, OWNER, MEMBER}) {
+            if (keys.containsAlias(alias)) keys.deleteEntry(alias);
+        }
+    }
+
     /** Fixed-alias metadata only. Never infer empty custody from missing files. */
     public synchronized boolean hasCustody() throws Exception {
         ready();

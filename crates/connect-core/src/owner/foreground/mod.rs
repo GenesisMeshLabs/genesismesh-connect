@@ -121,6 +121,22 @@ pub struct SetupView {
     pub needs_review: bool,
 }
 
+/// After a Create that failed before its authority existed, for example when
+/// the root key's authentication was declined: when the native backend holds
+/// no custody or state either, remove the setup record so the person can simply
+/// try again. Returns whether it was removed; anything further along is kept.
+pub fn abandon_unstarted_create(
+    mut runtime: OwnerRuntime,
+    config: &NativeSetupConfig,
+) -> Result<bool> {
+    let status = runtime.embedded_status()?;
+    if status.configured || status.running || config.profile().exists() {
+        return Ok(false);
+    }
+    journal::Journal::abandon_unstarted(&config.directory)?;
+    Ok(true)
+}
+
 pub struct ForegroundSetup {
     config: NativeSetupConfig,
     journal: journal::Journal,
@@ -130,6 +146,7 @@ pub struct ForegroundSetup {
     invitation: Option<Zeroizing<String>>,
     fresh_creation: bool,
     usable: bool,
+    membership_verified: bool,
 }
 /// Retain this lease alongside the runtime/device; another setup must not overlap.
 pub struct ForegroundLease {
@@ -184,6 +201,7 @@ impl ForegroundSetup {
             invitation: None,
             fresh_creation,
             usable: true,
+            membership_verified: false,
         })
     }
     pub fn view(&self) -> SetupView {
@@ -322,10 +340,9 @@ impl ForegroundSetup {
             SetupStage::EnrollmentReserved => self.record_enrolled(&status)?,
             SetupStage::Ready => {
                 Self::require_enrolled(&status)?;
-                ensure!(
-                    status.certificate_id == self.journal.saved.certificate_id,
-                    "Recorded membership changed"
-                );
+                // A verified renewal changes certificate ID, not the pinned
+                // network/member identity checked above. Fresh signed trust is
+                // required in enroll_device before updating this checkpoint.
             }
             _ => anyhow::bail!("Interrupted invitation needs review; it will not be repeated"),
         }
@@ -388,6 +405,17 @@ impl ForegroundSetup {
     pub async fn enroll_device(&mut self) -> Result<()> {
         self.enter()?;
         if self.journal.saved.stage == SetupStage::Ready {
+            let device = self
+                .device
+                .as_mut()
+                .context("Prepare the saved device first")?;
+            device.verify_owned_membership().await?;
+            let status = device.status()?;
+            Self::require_enrolled(&status)?;
+            if status.certificate_id != self.journal.saved.certificate_id {
+                self.record_enrolled(&status)?;
+            }
+            self.membership_verified = true;
             self.usable = true;
             return Ok(());
         }
@@ -406,12 +434,15 @@ impl ForegroundSetup {
         device.enroll_host(&invitation).await?;
         let status = device.status()?;
         self.record_enrolled(&status)?;
+        self.membership_verified = true;
         self.usable = true;
         Ok(())
     }
     pub fn finish(self) -> Result<ForegroundNetwork> {
         ensure!(
-            self.usable && self.journal.saved.stage == SetupStage::Ready,
+            self.usable
+                && self.membership_verified
+                && self.journal.saved.stage == SetupStage::Ready,
             "Foreground setup is not complete"
         );
         Ok(ForegroundNetwork {

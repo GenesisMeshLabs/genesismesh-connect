@@ -104,13 +104,19 @@ pub(crate) fn prepare<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<OwnerRunt
 impl<R: Runtime> Transport<R> {
     fn call(&mut self, method: &'static str, request: Value) -> Result<Value> {
         let call = self.session.prepare(&request)?;
-        let response = tauri::async_runtime::block_on(async {
+        let exchange = async {
             tokio::time::timeout(
                 Duration::from_millis(u64::from(call.budget_ms)),
                 self.handle.run_mobile_plugin_async::<Value>(method, &call),
             )
             .await
-        });
+        };
+        // Owner calls also come from async commands on a runtime worker, where
+        // a nested block_on panics; hand that worker over while waiting.
+        let response = match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => tokio::task::block_in_place(|| runtime.block_on(exchange)),
+            Err(_) => tauri::async_runtime::block_on(exchange),
+        };
         match response {
             Ok(Ok(reply)) => self.session.accept(&call, reply),
             _ => {

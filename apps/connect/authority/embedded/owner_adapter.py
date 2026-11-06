@@ -41,6 +41,10 @@ def seed(value):
     return SigningKey(raw)
 
 
+class CreationCancelled(Refused):
+    """A creation that failed before sealing anything and left nothing behind."""
+
+
 class EmbeddedOwner:
     def __init__(self, directory, vault, expected_core_version):
         if version("genesis-mesh") != expected_core_version:
@@ -61,11 +65,14 @@ class EmbeddedOwner:
                 raise Refused("Choose a network name with 1 to 80 characters.")
             self.vault.ready()
             self.storage.acquire(create=True)
+            fresh_custody = False
             try:
                 if {p.name for p in self.storage.directory.iterdir()} != {".authority-lock"}:
                     raise Refused("Existing authority state must be reopened or recovered, never replaced.")
                 instance = str(uuid.uuid4())
                 self.storage.write_new("initializing.json", encode({"schema": 3, "instance": instance}))
+                # Only wrapping keys this attempt makes may be discarded if it fails.
+                fresh_custody = not self.vault.has_custody()
                 self.vault.create()  # Refuses missing-state/existing-key and partial-key situations.
                 root, na, operator, member = [generate_keypair().private_key for _ in range(4)]
                 now = datetime.now(timezone.utc)
@@ -110,9 +117,28 @@ class EmbeddedOwner:
                 self.storage.path("initializing.json").unlink()
                 self.storage.sync()
                 return dict(self.identity)
-            except Exception:
+            except Exception as failure:
+                cancelled = fresh_custody and self._abandon_unsealed()
                 self.close()
+                if cancelled:
+                    raise CreationCancelled("Creating the network was cancelled before anything was saved. Try again.") from failure
                 raise
+
+    def _abandon_unsealed(self):
+        """Undo a creation that sealed nothing, for example when the root key's
+        authentication was declined: only this attempt's marker and the wrapping
+        keys it made, which protect no record. Anything further is kept."""
+        if self.service is not None:
+            return False
+        if {p.name for p in self.storage.directory.iterdir()} != {".authority-lock", "initializing.json"}:
+            return False
+        try:
+            self.vault.discard_unsealed()
+            self.storage.path("initializing.json").unlink()
+            self.storage.sync()
+        except Exception:
+            return False
+        return True
 
     def open(self):
         """Low-level custody/readback; never writes or replays membership work."""

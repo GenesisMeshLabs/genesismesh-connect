@@ -80,7 +80,8 @@ class OwnerQualificationPlugin(private val activity: Activity) : Plugin(activity
         } catch (_: Exception) { invoke.reject("Native owner close was refused.") }
     }
 
-    override fun onStop(activity: AppCompatActivity) { OwnerQualificationEngine.stopForLifecycle() }
+    // A covering picker or the home screen only stops the Activity; the network keeps
+    // serving while the process lives. Destroying the Activity closes it cleanly.
     override fun onDestroy(activity: AppCompatActivity) { OwnerQualificationEngine.stopForLifecycle() }
 }
 
@@ -92,6 +93,7 @@ private object OwnerQualificationEngine {
     private val worker = ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, ArrayBlockingQueue<Runnable>(4))
     private var owner: PyObject? = null
     private var module: PyObject? = null
+    private var ownerSession: String? = null
 
     fun enqueue(action: () -> Unit) { worker.execute(action) }
 
@@ -120,8 +122,9 @@ private object OwnerQualificationEngine {
         try {
             require(!activity.isFinishing && !activity.isDestroyed && System.nanoTime() < deadline)
             if (begin) {
-                require(value["request"].textValue() == "{\"op\":\"status\"}")
+                require(value["request"].textValue() == "{\"op\":\"status\"}" && owner == null)
                 guard.begin(session)
+                ownerSession = session
             }
             guard.reserve(session, sequence) // Durable core intents handle writes; this never permits replay.
             val result: String
@@ -141,14 +144,21 @@ private object OwnerQualificationEngine {
             require(guard.current(session) && System.nanoTime() < deadline)
             val outcome = JSObject(result)
             require(outcome.length() == 1 && (outcome.has("ok") || outcome.has("error")))
-            if (outcome.has("error")) guard.stop()
+            if (outcome.has("error")) stopAndClose()
             val reply = JSObject().put("schema", 1).put("session", session)
                 .put("sequence", sequence).put("reply", outcome)
             invoke.resolve(JSObject(reply.toString()))
         } catch (_: Exception) {
-            guard.stop()
+            // A refused begin for another session must not end the live one.
+            if (guard.belongs(session)) stopAndClose()
             invoke.reject("Native owner operation is unconfirmed. Existing state was preserved; it will not be repeated.")
         }
+    }
+
+    /** Runs on the worker: fence the session, then release it only after a clean close. */
+    private fun stopAndClose() {
+        guard.stop()
+        try { close() } catch (_: Exception) { /* Retain the unsettled owner; a new session waits for restart. */ }
     }
 
     fun stopForLifecycle() {
@@ -163,5 +173,7 @@ private object OwnerQualificationEngine {
         owner?.close()
         owner = null
         module = null
+        ownerSession?.let { guard.released(it) }
+        ownerSession = null
     }
 }

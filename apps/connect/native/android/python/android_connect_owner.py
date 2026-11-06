@@ -30,6 +30,7 @@ class AndroidVault(AndroidReadVault):
 
     def create(self): self.native.create()
     def has_custody(self): return bool(self.native.hasCustody())
+    def discard_unsealed(self): self.native.discardUnsealed()
     def seal_root(self, instance, data): return bytes(self.native.seal_root(instance, data))
     def seal_owner(self, instance, data): return bytes(self.native.seal_owner(instance, data))
     def seal_member(self, instance, data): return bytes(self.native.seal_member(instance, data))

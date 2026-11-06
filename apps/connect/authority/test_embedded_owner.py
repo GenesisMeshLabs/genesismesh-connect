@@ -22,7 +22,7 @@ from unittest.mock import patch
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 sys.path.insert(0, str(Path(__file__).with_name("embedded")))
-from owner_adapter import EmbeddedOwner, Refused
+from owner_adapter import CreationCancelled, EmbeddedOwner, Refused
 from core_release import required_core_version
 
 
@@ -59,6 +59,12 @@ class TestVault:
     def seal_member(self, instance, data): return self.seal("member", instance, data)
     def open_owner(self, instance, data): return self.open("owner", instance, data)
     def open_member(self, instance, data): return self.open("member", instance, data)
+    def has_custody(self):
+        self.ready()
+        return bool(self.keys)
+    def discard_unsealed(self):
+        self.ready()
+        self.keys = {}
     def require_root_custody(self):
         self.ready()
         if "root" not in self.keys: raise Refused("Missing root custody")
@@ -218,19 +224,20 @@ class EmbeddedOwnerTests(unittest.TestCase):
         self.assertFalse(self.root.exists())
         self.assertEqual(self.vault.creations, 0)
 
-    def test_partial_native_key_creation_preserves_the_entry_and_reservation(self):
+    def test_partial_native_key_creation_is_rolled_back_so_create_can_be_retried(self):
         owner = self.owner()
         def partial():
             self.vault.creations += 1
             self.vault.keys["owner"] = AESGCM.generate_key(bit_length=256)
             raise OSError("Injected second key failure")
         with patch.object(self.vault, "create", side_effect=partial):
-            with self.assertRaises(OSError): owner.create("Interrupted native custody")
-        before = self.snapshot(); keys = dict(self.vault.keys)
-        with self.assertRaises(Refused): self.owner().create("Replacement")
-        with self.assertRaises(Refused): self.owner().open()
-        self.assertEqual(self.snapshot(), before)
-        self.assertEqual(self.vault.keys, keys)
+            with self.assertRaises(CreationCancelled): owner.create("Interrupted native custody")
+        # Only the keys this attempt made, which protect no record, are gone.
+        self.assertEqual(self.vault.keys, {})
+        self.assertEqual({p.name for p in self.root.iterdir()}, {".authority-lock"})
+        with self.assertRaises((Refused, OSError)): self.owner().open()  # Nothing to reopen.
+        identity = self.owner().create("Retried")
+        self.assertEqual(identity["network_name"], "Retried")
 
     def test_erased_profile_cannot_replace_existing_keystore_identity(self):
         self.created(); keys = dict(self.vault.keys)

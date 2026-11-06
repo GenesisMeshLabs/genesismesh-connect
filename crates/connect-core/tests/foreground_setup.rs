@@ -2,7 +2,7 @@ use anyhow::Result;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use connect_core::owner::{
     NativeOwnerTransport, OwnerRuntime,
-    foreground::{ForegroundSetup, NativeSetupConfig, SetupChoice},
+    foreground::{ForegroundSetup, NativeSetupConfig, SetupChoice, abandon_unstarted_create},
 };
 use serde_json::{Value, json};
 use std::{
@@ -34,6 +34,9 @@ impl NativeOwnerTransport for Native {
         Ok(match op {
             "status" => {
                 json!({"configured":self.configured,"running":false,"foreground_only":true,"production_create_enabled":self.invalid=="production"})
+            }
+            "create" if self.invalid == "fail_create" => {
+                anyhow::bail!("Root authentication declined")
             }
             "create" | "open" => {
                 self.configured = true;
@@ -182,5 +185,42 @@ fn native_storage_refuses_linked_configuration_or_journals() -> Result<()> {
     let (owner, _) = runtime(true, "");
     assert!(ForegroundSetup::begin(owner, config(dir.path())?, SetupChoice::Open).is_err());
     assert_eq!(retained, std::fs::read(other.path().join("saved"))?);
+    Ok(())
+}
+
+#[test]
+fn create_that_never_reached_its_authority_can_be_abandoned_and_retried() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let (owner, _) = runtime(false, "fail_create");
+    let mut setup = ForegroundSetup::begin(owner, config(dir.path())?, create())?;
+    assert!(setup.open_authority().is_err());
+    drop(setup);
+    // The recorded attempt alone refuses another Create.
+    let (owner, _) = runtime(false, "");
+    assert!(ForegroundSetup::begin(owner, config(dir.path())?, create()).is_err());
+    // A backend that still holds custody or state keeps the record for review.
+    let (owner, _) = runtime(true, "");
+    assert!(!abandon_unstarted_create(owner, &config(dir.path())?)?);
+    assert!(dir.path().join("foreground-setup.json").exists());
+    // Nothing anywhere: the record goes, and Create starts again.
+    let (owner, _) = runtime(false, "");
+    assert!(abandon_unstarted_create(owner, &config(dir.path())?)?);
+    assert!(std::fs::read_dir(dir.path())?.next().is_none());
+    let (owner, _) = runtime(false, "");
+    let mut setup = ForegroundSetup::begin(owner, config(dir.path())?, create())?;
+    setup.open_authority()?;
+    Ok(())
+}
+
+#[test]
+fn setup_that_reached_its_authority_is_never_abandoned() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let (owner, _) = runtime(false, "");
+    let mut setup = ForegroundSetup::begin(owner, config(dir.path())?, create())?;
+    setup.open_authority()?;
+    drop(setup);
+    let (owner, _) = runtime(false, "");
+    assert!(abandon_unstarted_create(owner, &config(dir.path())?).is_err());
+    assert!(dir.path().join("foreground-setup.json").exists());
     Ok(())
 }

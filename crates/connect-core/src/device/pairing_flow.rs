@@ -194,19 +194,43 @@ impl DeviceController {
     ) -> Result<()> {
         pairing.require_grant(&grant)?;
         let ticket = self.prepare_approved_pairing(card, &grant).await?;
-        pairing.finish(ticket).await?;
         let peer = PairedDevice {
             name: card.host_name.clone(),
             node: card.host_node.clone(),
             ticket: grant.session_ticket,
         };
         if let Some(reference) = &grant.completion {
+            pairing.finish(ticket).await?;
             self.vault
                 .save_completed_pairing(peer, Some(&reference.digest()?), false)?;
             self.publish_members();
             Ok(())
         } else {
-            self.remember_pairing(peer)
+            // Legacy peers have no exact completion readback. Retain the
+            // approved host's connection before sending Finished, as on the
+            // compatible ordinary path. It is a reconnect route, not proof that
+            // the host received Finished. The final reply still decides this
+            // ceremony's result; later traffic rechecks current core trust.
+            let proof = self
+                .session()?
+                .prove_pairing_to(&card.host_node, &peer.ticket)
+                .await?;
+            let trust = self
+                .bridge_client
+                .as_ref()
+                .context("Missing original authority bridge")?
+                .refresh(&mut self.trust)
+                .await?;
+            let own = self
+                .device
+                .as_ref()
+                .context("Missing original membership")?;
+            trust.certificate(own.certificate(), &own.public_key(), chrono::Utc::now())?;
+            proof.require_current(&trust, &card.host_node)?;
+            self.remember_pairing(peer)?;
+            pairing.finish(ticket).await.context(
+                "The connection was saved but final pairing confirmation was not received. Reconnect the saved device; do not enroll again",
+            )
         }
     }
 }

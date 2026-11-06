@@ -421,7 +421,11 @@ el("create-form").addEventListener("submit", (event) => {
       await invoke("network_create", {
         name: input("create-name").value.trim(),
       });
-      message("Your network is ready. Add your phone to connect your devices.");
+      message(
+        phoneHosting
+          ? "Your network is ready. Add another device to share with it."
+          : "Your network is ready. Add your phone to connect your devices.",
+      );
       selectView("devices");
     },
   );
@@ -983,21 +987,37 @@ async function acceptLink(urls: string[] | null) {
   show("join-screen");
   message("Invitation received. Name this device and ask to join.");
 }
+let phoneHosting = false;
+/** This phone runs the network itself: say so where setup says "computer". */
+function usePhoneSetupWording() {
+  phoneHosting = true;
+  el("choose-create").querySelector("strong")!.textContent =
+    "Start on this phone";
+  el("choose-create").querySelector("span:not(.choice-symbol)")!.textContent =
+    "Your phone runs your network while Connect is open.";
+  el("create-screen").querySelector("p")!.textContent =
+    "Your phone runs the network while Connect is open on it. It asks for your screen lock once, to protect the network's main key.";
+  document.querySelector('label[for="computer-name"]')!.textContent =
+    "This phone's name";
+  if (!localStorage.getItem("connect.friendly-name"))
+    input("computer-name").value = "My phone";
+}
 if (isTauri()) {
   void onOpenUrl((urls) => void acceptLink(urls));
   void getCurrent()
     .then(acceptLink)
     .catch(() => {});
-  void invoke<{ runtime_available: boolean }>("network_status").then(
-    (status) => {
-      el<HTMLButtonElement>("choose-create").disabled =
-        !status.runtime_available;
-      visible("choose-create", status.runtime_available);
-      visible("create-unavailable", !status.runtime_available);
-      visible("choose-existing", status.runtime_available);
-      visible("choose-restore", status.runtime_available);
-    },
-  );
+  void invoke<{ runtime_available: boolean; phone: boolean }>(
+    "network_status",
+  ).then((status) => {
+    el<HTMLButtonElement>("choose-create").disabled = !status.runtime_available;
+    visible("choose-create", status.runtime_available);
+    visible("create-unavailable", !status.runtime_available);
+    // Existing networks and recovery files are opened on a computer.
+    visible("choose-existing", status.runtime_available && !status.phone);
+    visible("choose-restore", status.runtime_available && !status.phone);
+    if (status.phone) usePhoneSetupWording();
+  });
   void refresh();
   setInterval(() => {
     if (!document.hidden) void refresh();

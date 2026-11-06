@@ -1,0 +1,66 @@
+{
+  "date": "2026-11-06",
+  "baseline_commit": "aa294e53a35f1c4207395529e40cbae6f893d69f",
+  "branch": "android/owner-app",
+  "scope": "PR 24 follow-up: three local source/disposable-core continuity fixes; existing owner-app and second-device work preserved",
+  "fixes": [
+    {
+      "issue": "Ordinary pairing lost-final-reply dead end",
+      "behavior": "Retain the originally approved host reconnect route after fresh mutual proof and signed authority trust, before Finished. A missing final reply still returns an error. Restart reuses the saved identity/certificate and normal trust enforcement, with no new invite/enrollment. The route is not original-completion evidence; qualified proof recovery remains separate."
+    },
+    {
+      "issue": "Foreground owner rejects a legitimately renewed certificate ID",
+      "behavior": "Keep pinned root/network/member continuity, rebind the managed loopback origin and verify the saved credential against current signed trust before updating the setup checkpoint or finishing. No enrollment or renewal is replayed. Revoked, altered and another node's valid credential refuse."
+    },
+    {
+      "issue": "Expired never-submitted review cannot be retired",
+      "behavior": "Explicit local archival requires the exact digest, expiry and durable unsubmitted state. It preserves the original command/history and creates no transport exchange. Submitted uncertainty still requires fresh authenticated terminal readback. New work needs a separate explicit review; expired Execute stays refused. Display never labels an unsent archive as a checked host result."
+    }
+  ],
+  "checks": {
+    "real_core_renewal_and_invalid_credentials": 4,
+    "foreground_owner_regressions": 7,
+    "ordinary_pairing_including_default_lost_reply_restart": 6,
+    "real_core_requests_commands_and_display": 11,
+    "qualified_original_pairing_recovery": 7,
+    "qualified_command_journal": 6,
+    "default_production_commands_gate": 1,
+    "foreground_setup_guards": 5,
+    "frontend_requests_state": 8
+  },
+  "environment": "WSL Ubuntu-24.04 Rust 1.99; disposable pinned-core Python; Windows Node/TypeScript. Not minimum-toolchain or hosted CI qualification.",
+  "validation_status": "All 55 explicitly selected checks passed; intermediate failures corrected and affected targets rerun. This does not claim workspace, hosted CI or physical acceptance.",
+  "other_checks": [
+    "TypeScript --noEmit",
+    "cargo fmt -p connect-core -- --check",
+    "actionlint focused workflow",
+    "contract check: 419 declarations, zero accepted outcomes",
+    "git diff --check"
+  ],
+  "repeatability": "Focused workflow explicitly selects the new renewal unit-fixture module; existing explicit pairing, recovery, command and frontend targets cover the other regressions. Not dispatched.",
+  "ownership": "Checkout was clean on android/owner-app; aa294e5 second-device helper and f51e0dc PairGrant initialization correction already committed. No checkout switch, competing implementation or edit to that helper.",
+  "unperformed": [
+    "Full workspace test/build",
+    "Full Tauri/Android app compilation or packaging",
+    "Physical phone/lifecycle/security acceptance",
+    "Hosted CI/minimum-toolchain execution"
+  ],
+  "preserved": [
+    "Pinned core semantics",
+    "Public Create and production administrative gates as found on the existing owner-app branch",
+    "Completed read-only membership inspector",
+    "Qualified exact original-completion evidence checks",
+    "Existing app and phone data"
+  ],
+  "not_performed": [
+    "Phone/device/install/reset/security actions",
+    "OS4551 full-app/APK retry or alternative route",
+    "Excluded startup-failure cases or denied metadata/access operations",
+    "Push/publication/merge/deployment"
+  ],
+  "notes": [
+    "This is not evidence that the previously failed hosted node job or the whole workspace is green.",
+    "Intermediate testing caught a joining-device call to a host-only trust helper; corrected to authenticated bridge trust. The qualified legacy fixture was adjusted to retain its reconnect route while still refusing exact original-completion claims."
+  ],
+  "passed_total_this_followup": 55
+}

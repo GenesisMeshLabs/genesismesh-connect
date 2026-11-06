@@ -113,6 +113,10 @@ export function formatBytes(bytes: number) {
   return `${(bytes / 1024 ** power).toFixed(1)} ${units[power - 1]}`;
 }
 export function friendlyProblem(value: string) {
+  // Creating a network on a phone: the screen lock protects its main key.
+  if (/cancelled before anything was saved/i.test(value)) return "Creating your network was cancelled before anything was saved. Try again, and confirm your screen lock when your phone asks.";
+  if (/secure_screen_lock_required/i.test(value)) return "Set a screen lock (PIN, pattern or password) on this phone first. It protects your network’s main key.";
+  if (/device_unlock_required/i.test(value)) return "Unlock your phone, then try again.";
   if (/join link has expired/i.test(value)) return "This invitation has expired. Ask the network owner for a new invitation.";
   if (/Choose a Genesis Mesh join link|Invalid join link|Join link is too long/i.test(value)) return "This invitation isn’t valid. Scan the QR code again or ask the network owner for a new invitation.";
   if (/history context changed|local record.*unavailable|historical record cannot|record no longer belongs/i.test(value)) return "This saved record cannot be checked in the current context. Refresh Activity, or review it on the network computer that handled it.";

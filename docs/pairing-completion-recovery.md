@@ -15,6 +15,14 @@ it whether the original approval completed.
 Qualified pairing explicitly negotiates completion-reference support. Ordinary
 pairing keeps its existing wire messages and stores no completion metadata.
 
+For that ordinary protocol, the client retains the approved host's reconnect
+route after fresh mutual proof and authority trust, before sending Finished.
+Losing the final reply still returns an error, never a confirmed ceremony.
+After restart the saved identity, certificate and route can reconnect through
+the normal current-trust checks without another invitation or enrollment.
+That route is not evidence that the host received the original Finished message;
+exact original-completion claims still require the qualified proof path below.
+
 The host signs one reference covering the network/root pin, host key, candidate
 key, original request ID, name, comparison code and host session endpoint. It
 reserves that reference in its sealed profile before issuing the invitation.

@@ -35,3 +35,10 @@ test("started, unknown and errors preserve uncertainty and do not leak raw diagn
  for(const state of ["in_progress","unconfirmed"] as const) {const copy=requestsCopy({...requestUncertain(value),entry:{...requestUncertain(value).entry!,current_result:{state,waiting_name:null}}});assert.match(copy.next,/original|not send/);}
  assert.doesNotMatch(requestsProblem("C:/private/admin-key.json secret"),/private|admin-key|secret/);assert.match(requestsProblem("busy"),/Wait a moment/);
 });
+
+
+test("an expired unsent archive never implies a checked or executed result",()=>{
+ const view={...value,can_check:false,entry:{...value.entry!,status:"archived" as const,current_result:null,last_result:null,observed_at:null,retained_result:null,retained_at:null}};
+ assert.equal(requestsCopy(view).title,"Expired request closed");assert.match(requestsCopy(view).body,/before it was sent/);
+ assert.equal(canCheckRequest(view),false);assert.equal(requestConfirmed(view),false);
+});

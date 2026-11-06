@@ -36,6 +36,7 @@ export function requestsCopy(value:RequestsOverview):{title:string;body:string;n
   const entry=value.entry;
   if(!entry)return {title:"No saved device request",body:"This device has no saved approval, rejection or waiting-list check.",next:"Your joining permissions are separate. You can view them from Devices."};
   if(entry.status==="reviewed")return {title:"Saved, not sent",body:`You reviewed: ${requestedAction(entry)}. This request has not been sent.`,next:"Sending device approvals from this app is not available yet. Keep this saved request."};
+  if(entry.status==="archived"&&!entry.retained_result)return {title:"Expired request closed",body:"This review expired before it was sent. It was closed on this device without contacting the network host.",next:"A new request needs its own review and approval."};
   if(entry.status==="archived")return {title:"Earlier request retained",body:"This request was closed locally after its result was checked. Its recorded result is kept below.",next:"You can close this view. A later device request has its own review."};
   if(requestConfirmed(value)) {
     const result=entry.current_result!;
