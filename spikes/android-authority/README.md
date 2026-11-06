@@ -34,3 +34,8 @@ recovery, second-device enrollment/revocation, transport integration and
 foreground/background lifecycle remain separate acceptance gates. This owner
 profile requires an unlocked phone with a secure screen lock configured; configure
 credentials only locally, never in a chat or developer command.
+
+The owner storage check requires API30+ atomic no-replace publication. It first
+tests this in a fresh temporary directory using public bytes, without hard links
+or OS permission changes. A lock-only pre-initialization directory is reused only
+when both fixed custody aliases are absent; initialized/unknown state is preserved.

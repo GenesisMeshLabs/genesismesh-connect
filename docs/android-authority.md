@@ -79,6 +79,28 @@ encrypted vault; these tests do not qualify Android Keystore. CI runs them again
 the single pinned core. Native build/installation and actual device acceptance
 are recorded separately in `docs/plan-progress.md`.
 
+## Android state publication
+
+Android app domains forbid hard links. The Android custody adapter therefore
+publishes fsynced staging files with Bionic `renameat2(RENAME_NOREPLACE)` through
+the already-pinned CFFI runtime. Existing targets are refused atomically; there
+is no check-then-overwrite or permission-policy fallback. Desktop publication
+is unchanged. This owner qualification profile requires Android API30 or later
+and a successful private-storage capability probe; the general runtime/client
+minimum is unchanged.
+
+Before owner creation/reopen, the harness verifies publication and collision
+preservation using public bytes in a fresh temporary directory. It never probes
+over existing authority files. A directory containing only the advisory lock
+can enter explicit initial creation only when both fixed native custody aliases
+are absent. Native create rechecks aliases and the core adapter rechecks files
+under its lock. Existing markers, sealed state, staging, unknown files or either
+alias always reopen/refuse; nothing is cleared or replaced. This handles a
+failure before the initialization marker without resetting initialized custody.
+
+These operations change no device security settings. Public Create stays
+disabled; physical evidence is recorded separately from host tests and builds.
+
 ## Dependency gate
 
 Run from the repository root, using a Python environment with pip:

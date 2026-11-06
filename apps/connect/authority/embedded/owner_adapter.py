@@ -45,7 +45,7 @@ class EmbeddedOwner:
     def __init__(self, directory, vault, expected_core_version):
         if version("genesis-mesh") != expected_core_version:
             raise Refused("Update the embedded authority to the pinned release.")
-        self.storage = StateStorage(directory)
+        self.storage = StateStorage(directory, publish_new=getattr(vault, "publish_new", None))
         self.vault = vault
         self.service = self.server = self.thread = None
         self.keys = self.member = self.identity = None

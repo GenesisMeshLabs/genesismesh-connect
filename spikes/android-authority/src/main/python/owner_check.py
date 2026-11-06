@@ -2,12 +2,16 @@
 import hashlib
 import json
 from pathlib import Path
+import tempfile
 
 from owner_adapter import EmbeddedOwner
+from android_storage import AndroidPublisher, check_publication
 
 
 class AndroidVault:
-    def __init__(self, native): self.native = native
+    def __init__(self, native, directory):
+        self.native = native
+        self.publish_new = AndroidPublisher(directory)
     def ready(self): self.native.ready()
     def create(self): self.native.create()
     def seal_owner(self, instance, data): return bytes(self.native.seal_owner(instance, data))
@@ -21,6 +25,15 @@ class AndroidVault:
     def open_member(self, instance, data): return self._open(self.native.open_member, instance, data)
 
 
+def initial_operation(directory, has_custody):
+    """An empty pre-initialization lock is not an initialized authority."""
+    path = Path(directory)
+    if not has_custody and not path.is_symlink():
+        if not path.exists() or (path.is_dir() and {p.name for p in path.iterdir()} <= {".authority-lock"}):
+            return "create"
+    return "reopen"
+
+
 def run(expected_version, directory, native):
     report = {"status": "running", "production_create_enabled": False, "checks": []}
     first = second = None
@@ -30,11 +43,15 @@ def run(expected_version, directory, native):
         if readiness != "ready":
             report.update(status="blocked", stage=stage, readiness=readiness)
             return json.dumps(report)
-        vault = AndroidVault(native)
+        stage = "Atomic private storage"
+        with tempfile.TemporaryDirectory(prefix="gm-storage-probe-", dir=Path(directory).parent) as probe:
+            check_publication(probe)
+        report["checks"].append({"name": stage, "passed": True})
+        vault = AndroidVault(native, directory)
         vault.ready()
         first = EmbeddedOwner(directory, vault, expected_version)
         stage = "Phone-local authority"
-        if Path(directory).exists():
+        if initial_operation(directory, bool(native.hasCustody())) == "reopen":
             identity = first.open()
             report["initial_operation"] = "reopen"
         else:
@@ -62,6 +79,7 @@ def run(expected_version, directory, native):
         report["status"] = "passed"
     except Exception as error:
         report.update(status="failed", stage=stage, exception_type=type(error).__name__)
+        if isinstance(error, OSError): report["errno"] = error.errno
     finally:
         if first is not None: first.close()
         if second is not None: second.close()

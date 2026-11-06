@@ -34,7 +34,7 @@ public final class OwnerKeyVault {
     }
 
     public synchronized String readiness() {
-        if (Build.VERSION.SDK_INT < 28 || keyguard == null) return "unsupported_device";
+        if (Build.VERSION.SDK_INT < 30 || keyguard == null) return "unsupported_device";
         if (!keyguard.isDeviceSecure()) return "secure_screen_lock_required";
         if (keyguard.isDeviceLocked()) return "device_unlock_required";
         return "ready";
@@ -47,6 +47,12 @@ public final class OwnerKeyVault {
         }
         generate(OWNER);
         generate(MEMBER); // A partial failure remains blocked; never delete/recreate existing entries.
+    }
+
+    /** Fixed-alias metadata only. Never infer empty custody from missing files. */
+    public synchronized boolean hasCustody() throws Exception {
+        ready();
+        return keys.containsAlias(OWNER) || keys.containsAlias(MEMBER);
     }
 
     private void generate(String alias) throws Exception {
