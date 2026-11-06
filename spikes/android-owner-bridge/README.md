@@ -99,10 +99,14 @@ complete app/device acceptance follows from this library result.
 The full Windows app build was blocked by Application Control while executing a
 Cargo build script (`OS4551`). That blocked executable was not retried, renamed
 or copied. No complete APK or Android Rust app-boundary build is accepted from
-this run. No publication, merge, install or device operation was performed.
+that build-only run. No publication, merge, install or device operation was
+performed during that source/build continuation.
 
 The earlier Samsung storage/create/process-reopen success used the older root
-custody format. The newer Root Check profile remains preserved and unfinished;
-per-use root authentication, recovery, second-device behavior, lifecycle and
-nontechnical usability remain open. The older result must not be presented as
-acceptance of this bridge or the new root ceremony.
+custody format. A later, separately authorized standalone Root Check run at
+`69a8e17` passed per-use root wrapping, real authority/member creation and cold
+process reopen on the Samsung. All identity/custody/state comparisons matched;
+reopen requested no root authentication. See the [dated observation record](../../docs/evidence/android-root-custody-2026-11-06.json).
+That completed test profile is retained. Recovery/root decryption, second-device
+behavior, app-integrated lifecycle and nontechnical usability remain open. The
+standalone result does not qualify this Tauri bridge or its full app APK.

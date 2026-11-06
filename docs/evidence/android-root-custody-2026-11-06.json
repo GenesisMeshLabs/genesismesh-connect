@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-11-06T16:44:17.7004810Z",
+  "kind": "local_developer_observation",
+  "source_commit": "69a8e17aceadcb367cb44f48dfbdbfa5f4c2d1e1",
+  "package": "org.genesismesh.connect.authoritycheck.rootcheck",
+  "device_model": "Samsung SM-A176B",
+  "device_api": 36,
+  "core_version": "1.9.1",
+  "installed_apk_sha256": "3583f13d87e974efb25937306edfca874ce811ea5cbd88a871023ee9e1315c00",
+  "creation": {
+    "run_id": "a07baf15-2c09-4859-8c07-dd046d674b7d",
+    "status": "passed",
+    "initial_operation": "create",
+    "root_authentication": "authenticated",
+    "engine_checks_passed": 7,
+    "owner_checks_passed": 4,
+    "root_authentication_required": true,
+    "root_validity_seconds": 0,
+    "root_authenticator_types": 3
+  },
+  "cold_process_reopen": {
+    "run_id": "b0ea79d8-d95d-495c-9dd9-928efed34a75",
+    "status": "passed",
+    "initial_operation": "reopen",
+    "root_authentication": "not_requested",
+    "all_four_public_identity_fingerprints_unchanged": true,
+    "certificate_id_unchanged": true,
+    "root_owner_member_ciphertext_sha256_unchanged": true,
+    "committed_state_sha256_unchanged": true
+  },
+  "qualification_network_retained": true,
+  "credential_automated": false,
+  "existing_connect_data_touched": false,
+  "production_create_enabled": false,
+  "full_connect_app_qualified": false,
+  "root_decryption_or_recovery_qualified": false,
+  "second_device_journey_qualified": false,
+  "destructive_interruption_tests_run": false,
+  "publication_or_merge_performed": false,
+  "evidence_limit": "Developer-observed private diagnostic reports and file hashes; not independently verifiable core audit evidence or production readiness."
+}

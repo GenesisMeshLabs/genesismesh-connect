@@ -136,8 +136,8 @@ does not expose a Tauri command or enable Create. Opt-in qualification packaging
 and a private Android plugin now connect it to `ConnectOwner`: the plugin rejects
 frontend invocation, uses a fixed native directory and fences uncertain or stale
 sessions. The default app still has no embedded-owner activation. The Android
-bridge library compiles, but the full Rust/app build and root system-prompt/device
-checks remain open; see [the build-only bridge](../spikes/android-owner-bridge/README.md).
+bridge library compiles, but the full Rust/app build and app-integrated
+system-prompt/lifecycle checks remain open; see [the build-only bridge](../spikes/android-owner-bridge/README.md).
 The focused CI workflow runs an explicit
 allowlist of host real-core and native transport tests, not the full excluded
 startup-failure suite.
@@ -203,6 +203,18 @@ order for both wrapping and unwrapping, with a host regression for exact-cipher
 authorization, denial, cached failures and real GCM context integrity. Root policy
 and the sealed-record format are unchanged. Host tests do not qualify a device.
 See [Android Keystore's AAD/error handling](https://android.googlesource.com/platform/frameworks/base/+/5e1b258dd5beca122cef6dc2cb857bd559db9bc3/keystore/java/android/security/keystore2/AndroidKeyStoreCipherSpiBase.java).
+
+On 6 November 2026, standalone Root Check source `69a8e17` passed on the Samsung
+SM-A176B/API36. Native system confirmation completed, the root was wrapped, and
+the real core created and checked the local authority/member. In-process
+close/reopen passed. After force-stop and cold launch, the check reopened the
+same four public identities and certificate, requested no root authentication,
+and preserved the root/owner/member ciphertext and committed state bytes.
+The completed qualification network is retained. This accepts that positive
+creation/reopen slice only: root decryption/recovery, destructive interruptions,
+second-device enrollment and the full Connect bridge remain unqualified. The
+[observation record](evidence/android-root-custody-2026-11-06.json) contains no
+credential or key material and is not independent core audit evidence.
 
 The owner profile now requires Android 15/API35 to avoid older Android
 unlocked-device-key lifecycle defects. General client Join remains unchanged.

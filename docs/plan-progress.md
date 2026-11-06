@@ -190,14 +190,14 @@ device-loss recovery, app Create or second-device acceptance.
 The checkpoint at `1423db5` separates root ciphertext/custody, leaves the root
 encrypted during ordinary reopen, matches core's founding-key lifetime and
 maintains routine membership through signed intents without automatic write
-replay. Focused host/native and contract CI passed there. The newer GM Root Check
-profile remains an unfinished initialization: no completed owner identity was
-recorded. Its key-policy metadata was inspected, but physical per-use root
-authentication and create/reopen under that root format are **not accepted**.
+replay. Focused host/native and contract CI passed there. At that checkpoint the
+newer GM Root Check profile was an unfinished initialization: no completed owner
+identity was recorded. Key-policy metadata alone did not accept physical per-use
+root authentication or create/reopen under that root format.
 That profile was preserved during the following source/build work. Later on
 6 November, the user authorized clearing only the unfinished GM Root Check test
 data. Two creation retries reached Android's system dialog but timed out without
-local authentication; no completed root-custody network is accepted. The fixed
+local authentication; those attempts did not complete root custody. The fixed
 Root Check package now waits for a local **Start check** tap, so its authentication
 window is not consumed while exchanging chat messages. Connect data is unchanged;
 no automatic custody replacement or reset action is added to either app.
@@ -208,8 +208,17 @@ the profile still contained only initialization state. This accepts the local
 system-confirmation event, not completed root custody or network creation. A
 subsequent fix authenticates the exact cipher before submitting GCM context or
 payload. The host regression reproduces cached pre-authentication AAD failure
-and checks denial plus real GCM context integrity. Device acceptance must be
-recorded separately after the corrected build is tested.
+and checks denial plus real GCM context integrity.
+
+The corrected standalone Root Check build at `69a8e17` then passed on the
+Samsung SM-A176B/API36: local system confirmation, root wrapping, genuine
+phone-local authority/member creation, purpose-separated custody and close/reopen.
+A separate force-stop/cold-process run passed as `reopen` with all four identity
+fingerprints, certificate ID, sealed custody files and committed state unchanged.
+That run requested no root authentication. The completed test network is retained;
+no further reset is authorized by this validation result. These are positive
+qualification-app results, not full Connect, recovery, second-device or general
+background-lifecycle acceptance. See the [dated observation record](evidence/android-root-custody-2026-11-06.json).
 
 The next independent dependency is now implemented behind the opt-in
 `android-owner-qualification` feature and fixed
@@ -250,7 +259,8 @@ even one compatible new certificate stays ambiguous. Schema-2 exact signed
 references are reader-only fixture coverage, not a production writer. Reports
 are local observations, not independent core audit evidence. Focused host tests
 and build-only native compilation support this dependency; the full app build,
-physical root prompt/recovery and end-to-end phone-owner journey remain open.
+root-custody recovery and end-to-end phone-owner journey remain open. The later
+standalone Root Check positive result above does not qualify this app bridge.
 No device state was touched and no publication or merge was performed here.
 
 **“Create and run my network on this Android phone.”** The independent-phone
