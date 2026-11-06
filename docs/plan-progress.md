@@ -15,12 +15,12 @@ manual/assisted/platform acceptance gate; no parity percentage is claimed.
 | CONNECT-02 typed operations | Closed resource/local-history registry, generated schemas, exact access review | General core outcome schemas and manual/assisted parity |
 | CONNECT-03 durable workflows | Access dispatch/readback journal, archives; owner nonce reservations; bounded native client admin-enrollment/status journal | Durable join/renewal/recovery, complete admin enrollment UX/replacement and operation-specific reconciliation |
 | CONNECT-04 prerequisites | Authenticated resource-host release/profile/ownership discovery | General feature, verifier, actor and deployment discovery |
-| CONNECT-05 owner Requests | Authenticated transport; fixed managed-core/target dispatch and fresh candidate verification; native key custody; durable host records and native client same-ID enrollment/status recovery; guided host review and read-only member status/recovery screens | Qualified native user presence for UI mutations; installed host opt-in/review/revocation acceptance; phone request creation/pairing actions, complete recovery, assisted parity and physical gates |
+| CONNECT-05 owner Requests | Authenticated transport; fixed managed-core/target dispatch and fresh candidate verification; native key custody; durable host records and native client same-ID enrollment/status recovery; guided host review and read-only member status/recovery screens; access requests from devices and agents, answered on the owner's Requests card (#29) | Qualified native user presence for UI mutations; installed host opt-in/review/revocation acceptance; phone request creation/pairing actions, complete recovery, assisted parity and physical gates |
 | CONNECT-06 lifecycle | Existing disconnect/reconnect/leave; administrative native-store refusal and cleanup | Physical lock/suspend/force-quit/reboot/network switching and user-presence handling |
-| CONNECT-07 distribution/hosting | Existing Tauri packaging and headless Linux server | Signed fresh-machine installer/update/service/uninstall acceptance and guided host setup |
-| CONNECT-08 continuity | Existing encrypted recovery and server restore | Checkpoints, missing-history reconciliation, restricted restore and old-host fencing |
-| CONNECT-09 agents | Existing member/edge mechanisms | Generic agent onboarding, separate identities/descriptors, allowed/refused real operations and independent revocation |
-| CONNECT-10 general policies | Resource recipients/expiry/size/duration and extra gates | Visual general policy templates/selectors/gates, impact preview and semantic round-trip |
+| CONNECT-07 distribution/hosting | Existing Tauri packaging and headless Linux server; CI builds the full Android owner app with the embedded authority (#25) | Signed fresh-machine installer/update/service/uninstall acceptance and guided host setup |
+| CONNECT-08 continuity | Existing encrypted recovery and server restore; recovery file for a phone-run network, exported after root authentication and restored onto another phone with the same identity (#27) | Physical save/restore on the phone, checkpoints, missing-history reconciliation, restricted restore, and old-host fencing (key succession after a lost phone) |
+| CONNECT-09 agents | `genesismesh-connect-agent`: own identity through pairing, MCP read tools and `ask_for_access`; real-core fixture of two agents on one machine with separate Spaces and independent revocation (#28, #29) | Approving each read on the phone, write/service tools, descriptors and an agent label in the owner's view |
+| CONNECT-10 general policies | Resource recipients/expiry/size/duration and extra gates; plain end choices and a review naming who gains and loses access (#30) | Visual general policy templates/selectors/gates, impact preview and semantic round-trip |
 | CONNECT-11 Activity/evidence | Ordinary local access history, attention filtering, status readback and unsigned record export | Core signed evidence timeline/audit packs/independent verification and execution attribution |
 | CONNECT-12 assistance | Shared typed operation boundary; no model configured or enabled | Opt-in constrained assistance using the exact manual review/authorization/dispatch path and privacy controls |
 
@@ -30,6 +30,37 @@ invocation/freshness, selective disclosure/integrity, interop, fleets,
 succession/HA and exit. The [complete journey mapping](../contract/connect-journeys.json)
 retains their scope and acceptance gaps. Core remains responsible for trust and
 policy semantics; Connect supplies the usable workflows and fixed adapters.
+
+## State on 7 November 2026
+
+Merged from 6 to 7 November (#24 to #30):
+
+- **Phone-run network in the app:** the owner test build
+  (`org.genesismesh.connect.ownerqualification`) offers *Start on this phone*.
+  Create and Open run the foreground setup coordinator; the network reopens at
+  launch and after a stopped session, one setup at a time, never repeating a
+  write. The bridge keeps serving while another screen covers the app, and
+  calls from async commands no longer panic. A Create whose root prompt is
+  declined or times out leaves nothing behind and can be tried again (#25).
+- **Recovery** of a phone-run network onto another phone (#27).
+- **Agents** with their own identity, MCP read tools and independent
+  revocation (#28), and **access requests** answered on the owner's screen (#29).
+- **Everyday UX:** administrator screens hidden until a presence check exists,
+  the comparison code shown large on the joining device, plain wording, name
+  wrapping, accessibility fixes (#26), and a plain Manage access (#30).
+
+Observed on the Samsung SM-A176B (Android 16), owner test build:
+
+| Step | Result |
+| --- | --- |
+| Create through the app, root key behind the system authentication prompt | Passed (build `8a4e85d`) |
+| A second device (headless, in WSL) joins with the comparison code | Passed; the phone's authority issued its certificate |
+| Share a file from the phone | First attempt exposed the async panic fixed in #25; not yet re-run |
+| Create whose prompt timed out | Rolled back and offered a retry with a plain message (builds `9c42045`, `87c6025`) |
+
+Not yet run on the phone: sharing and reading, restart and reopen, saving and
+restoring a recovery file, and removing a device. Each needs the owner at the
+phone to confirm the system prompt. Public Create in the normal app stays off.
 
 ## Independent phone hosting requirement — 5 November 2026
 
