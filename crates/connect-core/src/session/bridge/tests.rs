@@ -872,6 +872,9 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
                     ..
                 } => Ok(serde_json::to_value(space(collection, host, recipients.clone())).unwrap()),
                 crate::owner::OwnerCall::Remove { .. } => Ok(json!(true)),
+                crate::owner::OwnerCall::AskAccess { node, text } => {
+                    Ok(json!({"asked": node, "text": text}))
+                }
                 crate::owner::OwnerCall::Access {
                     host,
                     collection,
@@ -952,14 +955,37 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
             .unshare_space(identity(&f), f.trust()?, collection.clone())
             .await?
     );
+    // A saved device asks the owner in its own words; the owner sees the
+    // authenticated device, never a name it supplied. Empty or multi-line
+    // text is refused before it is sent.
+    client
+        .ask_access(identity(&f), f.trust()?, "The 2025 tax papers".into())
+        .await?;
+    for text in [
+        "",
+        "line one
+line two",
+    ] {
+        assert!(
+            client
+                .ask_access(identity(&f), f.trust()?, text.into())
+                .await
+                .is_err()
+        );
+    }
     let calls = calls.lock().unwrap().clone();
     assert_eq!(
         calls.len(),
-        2,
+        3,
         "Refused requests never reach the owner: {calls:?}"
     );
     assert!(calls[0].starts_with("Share") && calls[0].contains(&format!("host: \"{me}\"")));
     assert!(calls[1].starts_with("Remove") && calls[1].contains(&format!("host: \"{me}\"")));
+    assert!(
+        calls[2].starts_with("AskAccess")
+            && calls[2].contains(&format!("node: \"{me}\""))
+            && calls[2].contains("The 2025 tax papers")
+    );
     assert_eq!(
         client.spaces(identity(&f), f.trust()?).await?.len(),
         1,

@@ -282,6 +282,24 @@ impl BridgeAuthority {
         Ok(space)
     }
 
+    /// Ask the owner for access, in this device's own words.
+    pub async fn ask_access(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+        text: String,
+    ) -> Result<()> {
+        let text = crate::owner::asks::text(&text)?;
+        self.authenticated(
+            identity,
+            trust,
+            Operation::AskAccess,
+            &serde_json::to_value(super::AskAccessRequest { text })?,
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn access_policy(
         &self,
         identity: SessionIdentity,

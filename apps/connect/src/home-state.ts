@@ -22,6 +22,7 @@ export interface HomeStatus {
   can_share: boolean;
   can_share_folder?: boolean;
   administration?: boolean;
+  asks?: HomeAsk[];
   joining: string | null;
   request: { id: string; name: string; node: string; code: string } | null;
   problem: string | null;
@@ -113,6 +114,15 @@ export function formatBytes(bytes: number) {
   const power = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length);
   return `${(bytes / 1024 ** power).toFixed(1)} ${units[power - 1]}`;
 }
+/** A device's or agent's request for access, waiting for the owner. */
+export type HomeAsk = { id: string; node: string; name: string; text: string; at: string };
+
+/** New requests since the last status, to mention once. */
+export function newAsks(before: HomeAsk[] | undefined, now: HomeAsk[] | undefined) {
+  const seen = new Set((before ?? []).map((ask) => ask.id));
+  return (now ?? []).filter((ask) => !seen.has(ask.id));
+}
+
 export function friendlyProblem(value: string) {
   // Creating a network on a phone: the screen lock protects its main key.
   if (/cancelled before anything was saved/i.test(value)) return "Creating your network was cancelled before anything was saved. Try again, and confirm your screen lock when your phone asks.";

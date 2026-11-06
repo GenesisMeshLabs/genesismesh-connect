@@ -383,7 +383,8 @@ async fn exchange(
         | Operation::OwnerControl
         | Operation::PairingCompletion
         | Operation::ShareSpace
-        | Operation::UnshareSpace => {
+        | Operation::UnshareSpace
+        | Operation::AskAccess => {
             let peer = authenticate_for(
                 connection,
                 local_id,
@@ -416,7 +417,8 @@ async fn exchange(
                     Operation::ShareSpace
                     | Operation::UnshareSpace
                     | Operation::AccessPolicy
-                    | Operation::ResourceCapabilities => &budgets.space_changes,
+                    | Operation::ResourceCapabilities
+                    | Operation::AskAccess => &budgets.space_changes,
                     _ => &budgets.collections,
                 })
                 .lock()
@@ -550,7 +552,8 @@ async fn exchange(
                 | Operation::AccessPolicy
                 | Operation::ResourceCapabilities
                 | Operation::ShareSpace
-                | Operation::UnshareSpace => {
+                | Operation::UnshareSpace
+                | Operation::AskAccess => {
                     credentials
                         .trust
                         .certificate(&peer, &credentials.expected_node, Utc::now())?;
@@ -806,6 +809,18 @@ async fn spaces(
                 list.retain(|s| s.collection != request.collection || s.host != node);
             }
             Ok(removed)
+        }
+        Operation::AskAccess => {
+            let request: super::AskAccessRequest = serde_json::from_value(request)?;
+            let text = crate::owner::asks::text(&request.text)?;
+            ask(
+                &owner,
+                crate::owner::OwnerCall::AskAccess {
+                    node: node.to_owned(),
+                    text,
+                },
+            )
+            .await
         }
         _ => anyhow::bail!("Unsupported spaces operation"),
     }

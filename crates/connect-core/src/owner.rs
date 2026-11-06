@@ -1,5 +1,6 @@
 //! Owner-computer orchestration. Only a local inherited pipe reaches the sidecar.
 //! No operator credentials or generic administrative requests cross device links.
+pub mod asks;
 pub mod foreground;
 pub mod inspection;
 pub mod native;
@@ -234,6 +235,12 @@ pub enum OwnerCall {
     Remove {
         host: String,
         collection: String,
+    },
+    /// A saved device or agent asks the owner for access, in its own words.
+    /// Answered by the app on screen; it grants nothing by itself.
+    AskAccess {
+        node: String,
+        text: String,
     },
 }
 pub struct OwnerRequest {
@@ -658,6 +665,9 @@ impl OwnerRuntime {
             OwnerCall::Control { .. } | OwnerCall::PairingCompletion { .. } => anyhow::bail!(
                 "Update the network computer: this host has no owner Requests adapter"
             ),
+            OwnerCall::AskAccess { .. } => {
+                anyhow::bail!("This network computer has no screen to answer access requests")
+            }
             OwnerCall::ResourceCapabilities { host, collection } => {
                 serde_json::to_value(self.resource_capabilities(&host, &collection)?)?
             }

@@ -15,6 +15,8 @@ pub(crate) struct OwnerSlot {
     pub(crate) problem: Option<String>,
     pub(crate) pairing: Option<std::sync::Arc<connect_core::session::pairing::PairHost>>,
     pub(crate) joining: Option<String>,
+    /// Access requests from devices and agents, waiting for the owner.
+    pub(crate) asks: connect_core::owner::asks::Asks,
     /// Held while this phone runs its own network; another setup must not overlap.
     #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
     pub(crate) lease: Option<connect_core::owner::foreground::ForegroundLease>,
@@ -99,6 +101,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             problem: None,
             pairing: None,
             joining: None,
+            asks: Default::default(),
             #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
             lease: None,
         }),
@@ -809,6 +812,15 @@ async fn answer_owner(
     while let Some(request) = requests.recv().await {
         let state = app.state::<WorkflowState>();
         let mut owner = state.slot.lock().await;
+        // An access request waits here for the owner to answer on screen.
+        if let connect_core::owner::OwnerCall::AskAccess { node, text } = &request.call {
+            let result = owner
+                .asks
+                .add_now(node, text)
+                .map(|id| serde_json::json!({ "sent": true, "id": id }));
+            let _ = request.reply.send(result);
+            continue;
+        }
         if let connect_core::owner::OwnerCall::PairingCompletion {
             node,
             certificate,
