@@ -27,6 +27,26 @@ jobs:
         working-directory: apps/connect/authority
         run: >-
           python -m unittest -v
-          test_owner_lifetime test_owner_root test_owner_maintenance test_android_storage
+          test_owner_lifetime test_owner_root test_owner_maintenance test_android_storage test_connect_embedded
           test_embedded_owner.EmbeddedOwnerTests.test_real_create_close_reopen_preserves_all_identities_and_member
           test_embedded_owner.EmbeddedOwnerTests.test_every_private_identity_is_durable_before_core_can_publish_it
+
+  native:
+    name: Native owner transport boundaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the declared minimum Rust
+        run: rustup toolchain install 1.98.0 --profile minimal
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: owner-native-${{ runner.os }}-rust-1.98-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            core-${{ runner.os }}-rust-1.98-
+      - run: cargo +1.98.0 test -p connect-core --test owner_native_transport --locked
+      - run: cargo +1.98.0 test -p connect-core --lib owner::tests --locked

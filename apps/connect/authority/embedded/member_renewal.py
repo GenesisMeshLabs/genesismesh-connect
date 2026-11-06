@@ -45,7 +45,7 @@ def _staged_evidence(owner, certificate):
     recorded = dict(owner.state.get("recovery_evidence", {}))
     unrecorded = owner.storage.check_evidence(recorded, staged, allow_unrecorded=True)
     identity = owner._identity(owner.identity["instance"], owner.genesis, certificate)
-    allowed = {"schema", "revision", "identity", "certificate", "root_sha256", "owner_sha256", "member_sha256", "state_signature", "recovery_evidence"}
+    allowed = {"schema", "revision", "identity", "certificate", "root_sha256", "owner_sha256", "member_sha256", "state_signature", "recovery_evidence", "connect_registry_initialized"}
     for name in unrecorded:
         content = owner.storage.read_staged(name)
         value = json.loads(content)
@@ -56,6 +56,7 @@ def _staged_evidence(owner, certificate):
                 or value.get("root_sha256") != owner.state["root_sha256"]
                 or value.get("owner_sha256") != owner.state["owner_sha256"]
                 or value.get("member_sha256") != owner.state["member_sha256"]
+                or value.get("connect_registry_initialized") != owner.state.get("connect_registry_initialized")
                 or JoinCertificate.model_validate(value["certificate"]) != certificate
                 or not verify_signature(STATE_DOMAIN + encode(body), value.get("state_signature", ""), _public(owner.keys["operator"]))):
             raise Refused("Staged state does not authenticate the recorded core outcome. Existing evidence was preserved.")

@@ -118,6 +118,26 @@ startup-failure revalidation or merge was performed for this repair.
 
 ## Dependency gate
 
+### Application adapter integration boundary
+
+`embedded/connect_owner.py` supplies bounded fixed Connect operations over the
+embedded core, reusing the desktop invitation, Space, policy and revocation
+implementation. Native activation uses routine membership maintenance. Public
+Space metadata is signed and root-bound in a separate private registry; missing
+or changed initialized metadata is refused rather than reset. No attach,
+private-key backup/restore, arbitrary route, filesystem or Python-name operation
+exists on this boundary. Uncertain results stop automatic reuse. The registry
+does not provide hardware anti-rollback protection.
+
+`OwnerRuntime::from_native` is a native-code-only transport seam with existing
+typed operations and readiness checks. It bounds requests/replies, refuses
+key export and desktop import, and stops reuse after an uncertain result. It
+does not register a Tauri command, package Python in Connect, provide a qualified
+Android plugin or enable Create. Those remain the next integration gates after
+the root system-prompt/device checks. The focused CI workflow runs an explicit
+allowlist of host real-core and native transport tests, not the full excluded
+startup-failure suite.
+
 App activation uses `EmbeddedOwner.open_for_use`: an expired membership, or one
 with at most an hour left, is renewed automatically through the same genuine
 core enrollment and signed durable intent as explicit recovery. Identity keys
