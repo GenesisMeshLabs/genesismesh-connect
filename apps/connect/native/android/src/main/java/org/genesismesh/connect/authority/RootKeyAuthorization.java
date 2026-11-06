@@ -14,10 +14,13 @@ import javax.crypto.Cipher;
 /** A fresh system prompt authorizes the exact Keystore operation, never a Boolean permission. */
 public final class RootKeyAuthorization {
     private final WeakReference<Activity> activity;
+    private volatile String outcome = "not_requested";
 
     public RootKeyAuthorization(Activity activity) { this.activity = new WeakReference<>(activity); }
+    public String status() { return outcome; }
 
     public void authorize(Cipher cipher, String action) throws Exception {
+        outcome = "preparing";
         if (Looper.myLooper() == Looper.getMainLooper()) {
             throw new IllegalStateException("Root authentication must not block the main thread.");
         }
@@ -31,10 +34,12 @@ public final class RootKeyAuthorization {
         AtomicBoolean active = new AtomicBoolean(true);
         host.runOnUiThread(() -> {
             if (!active.get() || host.isFinishing() || host.isDestroyed() || !host.hasWindowFocus()) {
+                outcome = "foreground_required";
                 completed.countDown();
                 return;
             }
             try {
+                outcome = "authentication_pending";
                 new BiometricPrompt.Builder(host).setTitle(action)
                     .setSubtitle("Genesis Mesh · confirm this one root-key operation")
                     .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG
@@ -43,16 +48,26 @@ public final class RootKeyAuthorization {
                         new BiometricPrompt.AuthenticationCallback() {
                             @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
                                 BiometricPrompt.CryptoObject crypto = result.getCryptoObject();
-                                if (active.get() && crypto != null && crypto.getCipher() == cipher) accepted.set(true);
+                                if (active.get() && crypto != null && crypto.getCipher() == cipher) {
+                                    accepted.set(true);
+                                    outcome = "authenticated";
+                                } else outcome = "cipher_mismatch";
                                 completed.countDown();
                             }
-                            @Override public void onAuthenticationError(int code, CharSequence ignored) { completed.countDown(); }
+                            @Override public void onAuthenticationError(int code, CharSequence ignored) {
+                                if (active.get()) outcome = "authentication_error";
+                                completed.countDown();
+                            }
                         });
-            } catch (RuntimeException ignored) { completed.countDown(); }
+            } catch (RuntimeException ignored) { outcome = "prompt_unavailable"; completed.countDown(); }
         });
         boolean authorized = false;
         try {
-            if (!completed.await(120, TimeUnit.SECONDS) || !accepted.get()) {
+            if (!completed.await(120, TimeUnit.SECONDS)) {
+                outcome = "timed_out";
+                throw new IllegalStateException("Root-key authentication was not completed. Existing state was preserved.");
+            }
+            if (!accepted.get()) {
                 throw new IllegalStateException("Root-key authentication was not completed. Existing state was preserved.");
             }
             authorized = true;

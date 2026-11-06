@@ -21,6 +21,8 @@ jobs:
       - name: Install the single pinned core release
         run: 'python -m pip install --only-binary=:all: -r apps/connect/authority/core-requirements.txt'
       - run: python -m pip check
+      - name: Android KeyInfo per-use policy regression (no device/custody access)
+        run: python -m unittest discover -s scripts/tests -p test_android_root_policy.py -v
       # Deliberately enumerate the permitted checks. Do not discover or invoke
       # the full embedded-owner suite, which includes excluded startup failures.
       - name: Focused real-core checks with test-only encrypted custody

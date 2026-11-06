@@ -85,4 +85,6 @@ def run(expected_version, directory, native):
     finally:
         if first is not None: first.close()
         if second is not None: second.close()
+        report["root_policy"] = str(native.rootPolicyStatus())
+        report["root_authentication"] = str(native.rootAuthenticationStatus())
     return json.dumps(report)

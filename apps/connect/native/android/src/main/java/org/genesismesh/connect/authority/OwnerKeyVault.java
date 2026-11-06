@@ -91,8 +91,8 @@ public final class OwnerKeyVault {
         if (ROOT.equals(alias)) {
             KeyInfo info = (KeyInfo) SecretKeyFactory.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
                 .getKeySpec(key, KeyInfo.class);
-            if (!info.isUserAuthenticationRequired() || info.getUserAuthenticationValidityDurationSeconds() != 0
-                    || info.getUserAuthenticationType() != (KeyProperties.AUTH_BIOMETRIC_STRONG | KeyProperties.AUTH_DEVICE_CREDENTIAL)) {
+            if (!RootKeyPolicy.isPerUse(info.isUserAuthenticationRequired(), info.getUserAuthenticationValidityDurationSeconds(),
+                    info.getUserAuthenticationType(), KeyProperties.AUTH_BIOMETRIC_STRONG | KeyProperties.AUTH_DEVICE_CREDENTIAL)) {
                 throw new IllegalStateException("Root custody requires per-operation device authentication.");
             }
         }
@@ -137,6 +137,20 @@ public final class OwnerKeyVault {
         if (rootAuthorization == null) throw new IllegalStateException("Root use requires native user authentication.");
         rootAuthorization.authorize(cipher, action);
         ready();
+    }
+
+    /** Bounded nonsecret diagnostics; no key bytes, aliases or platform error text. */
+    public synchronized String rootPolicyStatus() {
+        try {
+            ready();
+            if (!keys.containsAlias(ROOT)) return "missing";
+            key(ROOT);
+            return "per_use";
+        } catch (Exception ignored) { return "unavailable_or_unqualified"; }
+    }
+
+    public String rootAuthenticationStatus() {
+        return rootAuthorization == null ? "unavailable" : rootAuthorization.status();
     }
 
     public synchronized byte[] seal_root(String instance, byte[] value) throws Exception { return seal(ROOT, "Root", instance, value); }
