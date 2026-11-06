@@ -83,15 +83,25 @@ availability. The full Create workflow remains disabled until those gates pass.
 Embedded owner adapter progress on 6 November 2026 (PR #22): fixed in-memory core
 initialization, signed self-enrollment, purpose-separated Android Keystore custody
 and create/open/close persistence are implemented behind the developer harness.
-Twelve Windows host tests pass using the real core and explicitly test-only
+Twenty-three Windows host tests pass using the real core and explicitly test-only
 encrypted custody, including interrupted creation/key generation, missing/corrupt
 state or keys, domain swaps, erased profile with existing custody, lock contention,
 revoked/missing membership, invalid names and stable public identities. These are
 not Android hardware or end-user acceptance results.
 
+Review reproductions also drove bounded HTTP shutdown, durable key sealing before
+first core use, and explicit member-credential recovery. Time-controlled host/core
+tests cover exact expiry, the former grace boundary, owner reopen days later,
+fresh core re-enrollment with unchanged identity keys, expired-certificate refusal,
+lost replies, failed commits, delayed reconciliation, tampered intents and explicit
+cancel/retry without automatic write replay. Incomplete requests terminate;
+unsettled handlers retain keys and the exclusive state lock until safe shutdown.
+These are hosted/host simulations, not physical elapsed-time or lifecycle tests.
+
 The first Samsung attempt passed the seven runtime checks, then was refused by
-the native device readiness guard before creating an owner network. Secure screen
-lock/unlock state is being clarified locally. Real Android create/reopen and
+the native device readiness guard before creating an owner network. Its specific
+result is `secure_screen_lock_required`; configuring a credential is a local user
+step. Real Android create/reopen and
 process-restart identity acceptance remain pending; production Create stays off.
 
 **“Create and run my network on this Android phone.”** The independent-phone

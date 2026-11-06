@@ -3,7 +3,8 @@
 This vault deliberately has no Android qualification claim and is not packaged.
 """
 import hashlib
-from contextlib import closing
+from contextlib import closing, contextmanager, ExitStack
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,20 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 sys.path.insert(0, str(Path(__file__).with_name("embedded")))
 from owner_adapter import EmbeddedOwner, Refused
 from core_release import required_core_version
+
+
+@contextmanager
+def core_time(at):
+    """Advance loaded adapter/core clocks in host tests only, never production code."""
+    import member_renewal
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None): return at.astimezone(tz) if tz else at.replace(tzinfo=None)
+    with ExitStack() as stack:
+        for name, module in list(sys.modules.items()):
+            if (name in ("owner_adapter", "member_renewal") or name.startswith("genesis_mesh.")) and getattr(module, "datetime", None) is datetime:
+                stack.enter_context(patch.object(module, "datetime", Clock))
+        yield
 
 
 class TestVault:
@@ -287,6 +302,144 @@ class EmbeddedOwnerTests(unittest.TestCase):
         with patch("owner_adapter.NetworkAuthorityService", side_effect=construct):
             owner.create("Durable before use")
         self.assertEqual(observed, [True])
+
+    def test_owner_reopens_across_member_expiry_without_authorizing_expired_membership(self):
+        owner = self.owner(); identity = owner.create("Expiry boundaries")
+        expires = owner.certificate.expires_at; owner.close()
+        for offset, status in ((timedelta(seconds=-1), "active"), (timedelta(), "renewal_required"),
+                               (timedelta(minutes=5, seconds=1), "renewal_required"), (timedelta(days=5), "renewal_required")):
+            with self.subTest(offset=offset), core_time(expires + offset):
+                self.assertEqual(owner.open(), identity)
+                self.assertEqual(owner.member_status(), status)
+                if status == "active": self.assertTrue(owner.check_member())
+                else:
+                    with self.assertRaisesRegex(Refused, "Renew the member"): owner.check_member()
+                owner.close()
+
+    def test_explicit_owner_recovery_uses_core_and_preserves_every_identity_key(self):
+        owner = self.owner(); identity = owner.create("Explicit member recovery")
+        expires = owner.certificate.expires_at; owner.close()
+        with core_time(expires + timedelta(minutes=6)):
+            self.assertEqual(owner.open(), identity)
+            before = {name: (self.root / name).read_bytes() for name in ("owner.sealed", "member.sealed")}
+            renewed = owner.renew_member()
+            self.assertNotEqual(renewed["certificate_id"], identity["certificate_id"])
+            self.assertEqual({k:v for k,v in renewed.items() if k != "certificate_id"}, {k:v for k,v in identity.items() if k != "certificate_id"})
+            self.assertEqual({name: (self.root / name).read_bytes() for name in before}, before)
+            self.assertTrue(owner.check_member())
+            from genesis_mesh.crypto.node_auth import sign_node_request
+            import uuid
+            old = sign_node_request({"cert_id":identity["certificate_id"], "node_public_key":identity["member_public_key"],
+                "timestamp":(expires + timedelta(minutes=6)).isoformat(),
+                "nonce":str(uuid.uuid4())}, owner.member)
+            response = owner.session.post(owner.origin + "/heartbeat", json=old, timeout=3)
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.json()["error"]["code"], "certificate_expired")
+            owner.close()
+            self.assertEqual(owner.open(), renewed)
+            self.assertTrue(owner.check_member())
+
+    def _uncertain_member_recovery(self, failure):
+        owner = self.owner(); identity = owner.create("Uncertain member recovery")
+        expires = owner.certificate.expires_at; owner.close()
+        with core_time(expires + timedelta(minutes=6)):
+            owner.open(); before = (self.root / "state.json").read_bytes()
+            if failure == "commit": target, method = owner.storage, "replace_state"
+            else: target, method = owner, "_enroll_member"
+            original = getattr(target, method)
+            def uncertain(*args, **kwargs):
+                if failure == "reply": original(*args, **kwargs)
+                raise OSError("Injected uncertain local outcome")
+            with patch.object(target, method, side_effect=uncertain):
+                with self.assertRaises(OSError): owner.renew_member()
+            self.assertEqual((self.root / "state.json").read_bytes(), before)
+            count = len(owner.service.db.get_certs_by_node_key(identity["member_public_key"]))
+            self.assertEqual(count, 2)
+            with self.assertRaisesRegex(Refused, "must not be replayed"): owner.renew_member()
+            self.assertEqual(len(owner.service.db.get_certs_by_node_key(identity["member_public_key"])), count)
+            owner.close()
+            with self.assertRaises(Refused): self.owner().open()
+            recovered = self.owner()
+            with patch.object(recovered, "_enroll_member", side_effect=AssertionError("No write replay")):
+                renewed = recovered.reconcile_member()
+            self.assertEqual({k:v for k,v in renewed.items() if k != "certificate_id"}, {k:v for k,v in identity.items() if k != "certificate_id"})
+            self.assertNotEqual(renewed["certificate_id"], identity["certificate_id"])
+            self.assertEqual(len(recovered.service.db.get_certs_by_node_key(identity["member_public_key"])), count)
+            self.assertTrue(recovered.check_member())
+            self.assertFalse((self.root / "member-renewal.json").exists())
+
+    def test_lost_join_reply_reconciles_the_core_outcome_without_issuing_again(self):
+        self._uncertain_member_recovery("reply")
+
+    def test_failed_state_commit_reconciles_the_core_outcome_without_issuing_again(self):
+        self._uncertain_member_recovery("commit")
+
+    def test_current_member_is_not_reissued_and_revoked_member_cannot_be_recovered(self):
+        owner = self.owner(); identity = owner.create("No unnecessary reissue")
+        with self.assertRaisesRegex(Refused, "does not need renewal"): owner.renew_member()
+        self.assertFalse((self.root / "member-renewal.json").exists())
+        expires = owner.certificate.expires_at
+        with core_time(expires + timedelta(minutes=6)):
+            with owner.service.db.conn:
+                owner.service.db.conn.execute("UPDATE issued_certs SET status='revoked' WHERE cert_id=?", (identity["certificate_id"],))
+            with self.assertRaisesRegex(Refused, "revoked member"): owner.renew_member()
+            self.assertFalse((self.root / "member-renewal.json").exists())
+
+    def test_expired_uncertain_outcome_is_recovered_without_granting_expired_access(self):
+        owner = self.owner(); identity = owner.create("Delayed reconciliation")
+        expires = owner.certificate.expires_at; owner.close()
+        with core_time(expires + timedelta(minutes=6)):
+            owner.open()
+            enroll = owner._enroll_member
+            def lost(): enroll(); raise OSError("Lost reply")
+            with patch.object(owner, "_enroll_member", side_effect=lost):
+                with self.assertRaises(OSError): owner.renew_member()
+            owner.close()
+        with core_time(expires + timedelta(days=3)):
+            recovered = self.owner()
+            with patch.object(recovered, "_enroll_member", side_effect=AssertionError("No automatic reissue")):
+                recovered.reconcile_member()
+            self.assertEqual(recovered.member_status(), "renewal_required")
+            with self.assertRaises(Refused): recovered.check_member()
+            fresh = recovered.renew_member()
+            self.assertTrue(recovered.check_member())
+            self.assertEqual(fresh["member_public_key"], identity["member_public_key"])
+            self.assertEqual(fresh["root_public_key"], identity["root_public_key"])
+
+    def test_unperformed_recovery_requires_explicit_cancellation_before_retry(self):
+        owner = self.owner(); identity = owner.create("No replay after no outcome")
+        expires = owner.certificate.expires_at; owner.close()
+        with core_time(expires + timedelta(minutes=6)):
+            owner.open()
+            with patch.object(owner, "_enroll_member", side_effect=OSError("Before core write")):
+                with self.assertRaises(OSError): owner.renew_member()
+            owner.close()
+            recovered = self.owner()
+            with patch.object(recovered, "_enroll_member", side_effect=AssertionError("No replay")):
+                with self.assertRaisesRegex(Refused, "not repeated"): recovered.reconcile_member()
+            self.assertTrue((self.root / "member-renewal.json").exists())
+            self.assertEqual(recovered.cancel_member_recovery(), {"status":"cancelled", "identity":identity})
+            self.assertEqual(recovered.member_status(), "renewal_required")
+            fresh = recovered.renew_member()
+            self.assertEqual(fresh["member_public_key"], identity["member_public_key"])
+            self.assertTrue(recovered.check_member())
+
+    def test_completed_outcome_cannot_be_discarded_or_unsigned_intent_replayed(self):
+        owner = self.owner(); owner.create("Authenticated recovery intent")
+        expires = owner.certificate.expires_at; owner.close()
+        with core_time(expires + timedelta(minutes=6)):
+            owner.open()
+            with patch.object(owner.storage, "replace_state", side_effect=OSError("Commit lost")):
+                with self.assertRaises(OSError): owner.renew_member()
+            owner.close()
+            with self.assertRaisesRegex(Refused, "Core recorded"): self.owner().cancel_member_recovery()
+            intent_path = self.root / "member-renewal.json"
+            original = intent_path.read_bytes(); intent = json.loads(original)
+            intent["operation"] = "tampered"; intent_path.write_text(json.dumps(intent))
+            with self.assertRaisesRegex(Refused, "intent is invalid"): self.owner().reconcile_member()
+            self.assertTrue(intent_path.exists())
+            intent_path.write_bytes(original)
+            self.assertTrue(self.owner().reconcile_member())
 
 
 if __name__ == "__main__": unittest.main()

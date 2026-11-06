@@ -35,6 +35,27 @@ checks signatures, keys, policy, member certificate and the existing database
 before starting core; it never creates a replacement database for an old network.
 Complete snapshot rollback protection and recovery remain separate work.
 
+Identity keys are durably sealed before the authority starts or enrolls its member.
+Public credential state is authenticated with an application-domain operator
+signature. An expired member credential does not prevent loading owner custody,
+but it grants no member access. Explicit owner recovery uses signed core admin
+invite plus proof-of-possession join, preserving every identity key. This is
+owner-authorized re-enrollment, not an extension of an expired certificate or a
+relaxation of the core node renewal grace. Revoked/missing membership is refused.
+The authority key's own validity/succession remains a separate lifecycle gate.
+
+A signed application-local recovery intent is persisted before any enrollment
+write. Uncertain outcomes block ordinary reopen and automatic retry. Explicit
+reconciliation adopts only a genuine, already-issued core certificate; even an
+expired outcome can be recorded without granting expired access. Cancellation
+is explicit and permitted only when core has no enrollment outcome. These local
+intent signatures are not independent core audit evidence.
+
+Loopback serving has bounded connections and socket reads. Shutdown closes input,
+waits a bounded time for handlers to settle, and retains custody/state exclusivity
+if a handler has not finished. It never closes the database or releases its state
+lock while an operation can still write.
+
 The isolated engine APK exercises this adapter with genuine Android Keystore.
 On first use it creates only its private qualification network; later starts
 reopen it. Within each check it closes/reopens and compares public identities,

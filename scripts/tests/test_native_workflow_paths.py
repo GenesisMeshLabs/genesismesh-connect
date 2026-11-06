@@ -34,6 +34,7 @@ class WorkflowPathTests(unittest.TestCase):
             "scripts/tests/test_android_apk.py", "scripts/android-authority-native.lock.json",
             "scripts/android-authority-sources.lock.json", "scripts/android-authority-patches/example.patch",
             "apps/connect/authority/embedded/owner_adapter.py", "apps/connect/authority/embedded/state_storage.py",
+            "apps/connect/authority/embedded/local_server.py", "apps/connect/authority/embedded/member_renewal.py",
             "apps/connect/authority/test_embedded_owner.py",
             "apps/connect/native/android/src/main/java/org/genesismesh/connect/authority/OwnerKeyVault.java",
         }

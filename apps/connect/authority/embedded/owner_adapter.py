@@ -50,6 +50,7 @@ class EmbeddedOwner:
         self.service = self.server = self.thread = None
         self.keys = self.member = self.identity = None
         self.state = self.state_bytes = self.certificate = self.genesis = self.policy = None
+        self.renewal_pending = False
         self.mutex = threading.RLock()
         self.session = requests.Session()
         self.session.trust_env = False
@@ -107,11 +108,14 @@ class EmbeddedOwner:
                 raise
 
     def open(self):
+        return self._open()
+
+    def _open(self, *, allow_renewal=False):
         with self.mutex:
             self.vault.ready()
             self.storage.acquire()
             try:
-                self.storage.check_files()
+                self.storage.check_files(allow_renewal=allow_renewal)
                 state_bytes = self.storage.read("state.json")
                 state = json.loads(state_bytes)
                 if type(state["schema"]) is not int or state["schema"] != 2:
@@ -134,7 +138,9 @@ class EmbeddedOwner:
                 genesis = GenesisBlock.model_validate(payload["genesis"])
                 policy = PolicyManifest.model_validate(payload["policy"])
                 certificate = JoinCertificate.model_validate(state["certificate"])
-                self._verify(genesis, policy, certificate)
+                # Owner custody is independent of a member credential's expiry.
+                # Loading an expired certificate never authorizes member operations.
+                self._verify(genesis, policy, certificate, require_current=False)
                 identity = self._identity(instance, genesis, certificate)
                 if identity != state["identity"]: raise Refused("Saved authority identity does not match its protected keys.")
                 database = self.storage.path("authority.db")
@@ -153,13 +159,14 @@ class EmbeddedOwner:
                 self.identity = identity
                 self.genesis, self.policy, self.certificate = genesis, policy, certificate
                 self.state, self.state_bytes = state, state_bytes
+                self.renewal_pending = self.storage.path("member-renewal.json").exists()
                 self._start(genesis)
                 return dict(identity)
             except Exception:
                 self.close()
                 raise
 
-    def _verify(self, genesis, policy, certificate):
+    def _verify(self, genesis, policy, certificate, *, require_current=True):
         na = genesis.network_authority
         now = datetime.now(timezone.utc)
         if (public(self.keys["root"]) != genesis.root_public_key or public(self.keys["na"]) != na.public_key
@@ -168,7 +175,9 @@ class EmbeddedOwner:
                 or not policy.signatures or not all(verify_model_signature(policy, s, na.public_key) for s in policy.signatures)
                 or genesis.policy_manifest.hash != "sha256:" + hashlib.sha256(policy.to_canonical_json().encode()).hexdigest()
                 or certificate.node_public_key != public(self.member) or certificate.network_name != genesis.network_name
-                or certificate.roles != ["role:client"] or not certificate.is_valid()
+                or certificate.roles != ["role:client"] or certificate.issued_at > certificate.expires_at
+                or certificate.issued_at - timedelta(minutes=5) > now
+                or (require_current and not (certificate.is_valid(now) and certificate.issued_at <= now < certificate.expires_at))
                 or certificate.issued_by != NA_ID or not certificate.signatures
                 or not all(verify_model_signature(certificate, s, na.public_key) for s in certificate.signatures)):
             raise Refused("The protected network identity or membership is invalid.")
@@ -185,8 +194,8 @@ class EmbeddedOwner:
             "validity_hours": 24, "timestamp": datetime.now(timezone.utc).isoformat(), "nonce": str(uuid.uuid4())}, self.member)
         return JoinCertificate.model_validate(self._post("/join", body))
 
-    def _commit_certificate(self, certificate, *, create=False):
-        self._verify(self.genesis, self.policy, certificate)
+    def _commit_certificate(self, certificate, *, create=False, require_current=True):
+        self._verify(self.genesis, self.policy, certificate, require_current=require_current)
         identity = self._identity(self.identity["instance"], self.genesis, certificate)
         state = {**self.state, "identity": identity, "certificate": certificate.model_dump(mode="json")}
         state.pop("state_signature", None)
@@ -226,12 +235,34 @@ class EmbeddedOwner:
         with self.mutex:
             self.vault.ready()
             if self.identity is None: raise Refused("Open the authority first.")
+            if self.renewal_pending: raise Refused("Reconcile the pending membership operation first.")
+            if self.member_status() != "active": raise Refused("Renew the member credential before using it.")
             body = {"cert_id": self.identity["certificate_id"], "node_public_key": public(self.member),
                     "status": "connect-owner", "timestamp": datetime.now(timezone.utc).isoformat(), "nonce": str(uuid.uuid4())}
             self._post("/heartbeat", sign_node_request(body, self.member))
             denied = self.session.post(self.origin + "/heartbeat", json={**body, "nonce": str(uuid.uuid4())}, timeout=5)
             if denied.status_code != 401: raise Refused("Unsigned membership request was not refused.")
             return True
+
+    def member_status(self):
+        if self.certificate is None: raise Refused("Open the authority first.")
+        now = datetime.now(timezone.utc)
+        return "active" if self.certificate.is_valid(now) and self.certificate.issued_at <= now < self.certificate.expires_at else "renewal_required"
+
+    def renew_member(self):
+        """Explicit owner-authorized credential recovery; never regenerates an identity key."""
+        from member_renewal import renew
+        return renew(self)
+
+    def reconcile_member(self):
+        """Recover only a credential the real core already issued, without repeating a write."""
+        from member_renewal import reconcile
+        return reconcile(self)
+
+    def cancel_member_recovery(self):
+        """Explicitly abandon only an operation with no completed core enrollment."""
+        from member_renewal import cancel
+        return cancel(self)
 
     def close(self):
         with self.mutex:
@@ -246,5 +277,6 @@ class EmbeddedOwner:
                 self.service = None
             self.keys = self.member = self.identity = None
             self.state = self.state_bytes = self.certificate = self.genesis = self.policy = None
+            self.renewal_pending = False
             self.session.close()
             self.storage.release()

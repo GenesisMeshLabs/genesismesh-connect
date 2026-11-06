@@ -47,7 +47,7 @@ class StateStorage:
 
     def path(self, name):
         # Only adapter constants may name files; never accept a frontend path.
-        if name not in {"state.json", "initializing.json", "owner.sealed", "member.sealed", "authority.db"}:
+        if name not in {"state.json", "initializing.json", "owner.sealed", "member.sealed", "authority.db", "member-renewal.json"}:
             raise Refused("Unsupported authority state file.")
         return self.directory / name
 
@@ -95,9 +95,10 @@ class StateStorage:
             raise Refused("Missing or oversized authority state.")
         return content
 
-    def check_files(self):
+    def check_files(self, *, allow_renewal=False):
         allowed = {".authority-lock", "state.json", "owner.sealed", "member.sealed",
                    "authority.db", "authority.db-wal", "authority.db-shm", "authority.db-journal"}
+        if allow_renewal: allowed.add("member-renewal.json")
         if any(p.name not in allowed or p.is_symlink() or not p.is_file() for p in self.directory.iterdir()):
             raise Refused("Authority setup was interrupted or storage needs attention. Existing identity was preserved.")
 
