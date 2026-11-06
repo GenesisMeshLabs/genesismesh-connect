@@ -18,6 +18,8 @@
 /vendor/tauri-plugin-view/android/build/
 /vendor/tauri-plugin-view/android/.gradle/
 **/node_modules/
+/apps/connect/test-results/
+/apps/connect/playwright-report/
 /dist/
 **/dist/
 **/gen/schemas/

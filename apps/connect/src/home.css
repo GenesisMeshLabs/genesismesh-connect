@@ -685,3 +685,14 @@
 #activity-detail-exact { white-space:pre-wrap; overflow-wrap:anywhere; }
 .activity-detail-actions { position:sticky; bottom:0; background:#15241f; padding-block:12px; flex-wrap:wrap; }
 @media (max-width:650px) { .home-navigation button { padding-inline:8px; min-width:0; } .activity-detail-actions button { flex:1 1 100%; } }
+/* Local administrator review uses the same dialog and cards as sharing. */
+.host-admin-dialog{width:min(720px,calc(100vw - 32px));max-height:90dvh;overflow:auto}
+.host-admin-dialog h2{margin:0}.host-admin-dialog h3{margin:0 0 12px}
+.host-admin-section{margin:24px 0}.host-admin-notice{padding:16px;border:1px solid var(--border,#466249);border-radius:12px;background:var(--panel,#1b2b20)}
+.host-admin-entry{padding:20px;border:1px solid var(--border,#466249);border-radius:14px;margin:12px 0}
+.host-admin-entry ul,.host-admin-dialog ul{padding-left:22px}.host-admin-entry li{margin:8px 0}
+.host-admin-entry details{margin:12px 0}.host-admin-fingerprint{overflow-wrap:anywhere;font-size:.85rem}
+.host-admin-review-lines{display:grid;grid-template-columns:160px 1fr;gap:12px 18px;margin:20px 0}
+.host-admin-review-lines dt{font-weight:600}.host-admin-review-lines dd{margin:0;overflow-wrap:anywhere}
+.host-admin-footer{display:flex;align-items:center;gap:16px;border-top:1px solid var(--border,#466249);margin-top:24px;padding-top:16px}
+@media(max-width:540px){.host-admin-review-lines{grid-template-columns:1fr;gap:6px}.host-admin-review-lines dd{margin-bottom:10px}.host-admin-footer{align-items:start;flex-direction:column}.host-admin-entry{padding:16px}}

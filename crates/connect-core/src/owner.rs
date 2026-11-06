@@ -37,6 +37,20 @@ pub(crate) fn required_core_version() -> Result<&'static str> {
         .context("Missing packaged authority version")
 }
 impl RuntimeCapabilities {
+    pub fn require_pairing(&self, pin: &crate::authority::TrustPin) -> Result<()> {
+        ensure!(
+            self.schema == 1
+                && self.transport == "local_inherited_pipe"
+                && self.core_version == required_core_version()?
+                && &self.pin == pin
+                && self
+                    .operations
+                    .iter()
+                    .any(|op| op == "connect.pairing.requests.v1"),
+            "Update the managed network computer before using pairing Requests"
+        );
+        Ok(())
+    }
     pub fn require_access_update(&self, pin: &crate::authority::TrustPin) -> Result<()> {
         let expected = required_core_version()?;
         ensure!(
@@ -216,6 +230,11 @@ pub struct OwnerRuntime {
     awaiting: bool,
 }
 impl OwnerRuntime {
+    pub fn pairing_ready(&mut self, pin: &crate::authority::TrustPin) -> Result<()> {
+        let readiness: RuntimeCapabilities =
+            serde_json::from_value(self.request(json!({"op":"pairing_ready"}))?)?;
+        readiness.require_pairing(pin)
+    }
     pub fn resource_capabilities(
         &mut self,
         host: &str,

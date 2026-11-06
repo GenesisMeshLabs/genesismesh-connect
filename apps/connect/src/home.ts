@@ -1,5 +1,7 @@
 import { setupServices } from "./services";
 import { setupActivity } from "./access-activity";
+import { setupHostAdministration } from "./host-admin";
+import { setupClientAdministration } from "./client-admin";
 import { visibleSpaces, sortedFiles, type LibraryFilter } from "./library-state";
 import { setupSharing } from "./sharing";
 import { sharingChoices } from "./sharing-state";
@@ -84,6 +86,7 @@ function show(next: string) {
     visible(name, name === next);
 }
 function selectView(next: string) {
+  if(next!=="devices"){hostAdministration.close();clientAdministration.close();}
   // An unsaved connection choice is dropped when leaving Settings.
   if (next !== "settings") connectionDirty = false;
   currentView=next;
@@ -151,6 +154,9 @@ function render(status: HomeStatus) {
   renderConnection(status);
   visible("recovery-card", status.owner && status.configured);
   visible("add-device-button", status.owner && status.devices.length < 32);
+  visible("host-admin-card",status.owner);
+  visible("client-admin-card",!status.owner&&status.configured);
+  clientAdministration.observeContext(JSON.stringify([status.activity_scope,status.devices.find(d=>d.authority_connection)?.id]),!status.owner&&status.configured);
   visible("share-button", !status.disconnected && status.devices.length > 0 && sharingChoices(status).length > 0);
   // Without listed folders, a device browses the selected device's one folder.
   const legacy = !status.spaces.length && !!status.peer && !status.owner;
@@ -1011,6 +1017,8 @@ if (isTauri()) {
 }
 
 const services = setupServices(() => current, refresh, message);
+const hostAdministration=setupHostAdministration();
+const clientAdministration=setupClientAdministration();
 const activity = setupActivity(()=>current,()=>currentView==="activity",refresh,message,services.access);
 setupSharing(() => current, refresh, message, sendTo);
 

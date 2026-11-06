@@ -11,6 +11,31 @@ from genesis_mesh.crypto import generate_keypair
 
 
 class OwnerTests(unittest.TestCase):
+    def test_pairing_readiness_requires_live_core_operator_and_invite_roles(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            owner = Owner(Path(directory)/"owner")
+            try:
+                with self.assertRaises(Refused): owner.pairing_ready()
+                info = owner.create("Pairing Requests")
+                ready = owner.pairing_ready()
+                self.assertEqual(ready["pin"], info["pin"])
+                self.assertEqual(ready["operations"], ["connect.pairing.requests.v1"])
+                key_id = owner.config["operator"]["key_id"]
+                with patch.dict(owner.service.operator_key_tiers, {key_id:"standard"}):
+                    with self.assertRaises(Refused): owner.pairing_ready()
+                    # The real fixed core route independently refuses edge invites.
+                    with self.assertRaises(Refused): owner.invite(generate_keypair().public_key_b64, True)
+                with patch.dict(owner.service.operator_public_keys, {key_id:generate_keypair().public_key_b64}):
+                    with self.assertRaises(Refused): owner.pairing_ready()
+                with patch.object(owner.service.db, "is_operator_key_revoked", return_value=True):
+                    with self.assertRaises(Refused): owner.pairing_ready()
+                with patch.object(owner.service, "_validate_roles", return_value=(False,"unknown role")):
+                    with self.assertRaises(Refused): owner.pairing_ready()
+                with patch.object(owner, "service", None):
+                    with self.assertRaises(Refused): owner.pairing_ready()
+            finally: owner.close()
+
     def test_resource_capabilities_require_current_host_and_actual_managed_prerequisites(self):
         import uuid
         from unittest.mock import patch
