@@ -58,6 +58,14 @@ class StateStorage:
             finally: os.close(descriptor)
 
     def write_new(self, name, content):
+        self._write(name, content, replace=False)
+
+    def replace_state(self, content, expected):
+        if self.read("state.json") != expected:
+            raise Refused("Authority state changed before commit.")
+        self._write("state.json", content, replace=True)
+
+    def _write(self, name, content, *, replace):
         if self.lock is None or not isinstance(content, bytes) or not 0 < len(content) <= 65536:
             raise Refused("Invalid authority state write.")
         descriptor, pending = tempfile.mkstemp(prefix=".state-", dir=self.directory)
@@ -66,7 +74,8 @@ class StateStorage:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.link(pending, self.path(name))  # No replacement, including after an interrupted create.
+            if replace: os.replace(pending, self.path(name))
+            else: os.link(pending, self.path(name))  # Creation never replaces prior state.
             self.sync()
         finally:
             Path(pending).unlink(missing_ok=True)

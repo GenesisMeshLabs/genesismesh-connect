@@ -18,7 +18,7 @@ import unicodedata
 
 from nacl.signing import SigningKey
 import requests
-from genesis_mesh.crypto import generate_keypair, sign_model, verify_model_signature
+from genesis_mesh.crypto import generate_keypair, sign_model, verify_model_signature, sign_data, verify_signature
 from genesis_mesh.crypto.admin_auth import sign_admin_request
 from genesis_mesh.crypto.node_auth import sign_node_request
 from genesis_mesh.models import GenesisBlock, NetworkAuthority, PolicyManifestRef, PolicyManifest, JoinCertificate
@@ -28,6 +28,7 @@ from state_storage import StateStorage, Refused, encode
 from local_server import LocalServer
 
 NA_ID, OPERATOR_ID, ROOT_ID = "connect-na", "connect-owner", "connect-root"
+STATE_DOMAIN = b"GenesisMesh.Connect.EmbeddedOwner.State.v1\0"
 
 
 def public(key):
@@ -48,6 +49,7 @@ class EmbeddedOwner:
         self.vault = vault
         self.service = self.server = self.thread = None
         self.keys = self.member = self.identity = None
+        self.state = self.state_bytes = self.certificate = self.genesis = self.policy = None
         self.mutex = threading.RLock()
         self.session = requests.Session()
         self.session.trust_env = False
@@ -62,7 +64,7 @@ class EmbeddedOwner:
                 if {p.name for p in self.storage.directory.iterdir()} != {".authority-lock"}:
                     raise Refused("Existing authority state must be reopened or recovered, never replaced.")
                 instance = str(uuid.uuid4())
-                self.storage.write_new("initializing.json", encode({"schema": 1, "instance": instance}))
+                self.storage.write_new("initializing.json", encode({"schema": 2, "instance": instance}))
                 self.vault.create()  # Refuses missing-state/existing-key and partial-key situations.
                 root, na, operator, member = [generate_keypair().private_key for _ in range(4)]
                 now = datetime.now(timezone.utc)
@@ -77,30 +79,26 @@ class EmbeddedOwner:
                 genesis.signatures.append(sign_model(genesis, root, ROOT_ID))
                 self.keys = {"root": root, "na": na, "operator": operator}
                 self.member = member
-                self._start(genesis)
-                self.service.db.save_policy(policy, active=True)
-                invite = self._admin("/admin/invite", {"roles": ["role:client"], "recipient_public_key": public(member),
-                                                      "max_validity_hours": 24, "token_expiry_hours": 1})
-                body = sign_node_request({"node_public_key": public(member), "invite_token": invite["token_id"],
-                    "validity_hours": 24, "timestamp": now.isoformat(), "nonce": str(uuid.uuid4())}, member)
-                certificate = JoinCertificate.model_validate(self._post("/join", body))
-                self._verify(genesis, policy, certificate)
-                payload = {"schema": 1, "instance": instance, "genesis": genesis.model_dump(mode="json"),
-                    "policy": policy.model_dump(mode="json"), "certificate": certificate.model_dump(mode="json"),
+                payload = {"schema": 2, "instance": instance, "genesis": genesis.model_dump(mode="json"),
+                    "policy": policy.model_dump(mode="json"),
                     "keys": {name: base64.b64encode(bytes(key)).decode() for name, key in self.keys.items()}}
                 owner_sealed = bytes(self.vault.seal_owner(instance, encode(payload)))
-                member_sealed = bytes(self.vault.seal_member(instance, encode({"schema": 1, "instance": instance,
+                member_sealed = bytes(self.vault.seal_member(instance, encode({"schema": 2, "instance": instance,
                                               "seed": base64.b64encode(bytes(member)).decode()})))
+                # Durably seal every identity key before core can publish or use it.
                 self.storage.write_new("owner.sealed", owner_sealed)
                 self.storage.write_new("member.sealed", member_sealed)
+                self._start(genesis)
+                self.service.db.save_policy(policy, active=True)
+                certificate = self._enroll_member()
+                self._verify(genesis, policy, certificate)
+                self.genesis, self.policy = genesis, policy
                 self.identity = self._identity(instance, genesis, certificate)
-                self.service.db.conn.execute("PRAGMA wal_checkpoint(FULL)")
-                descriptor = os.open(self.storage.path("authority.db"), os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
-                try: os.fsync(descriptor)
-                finally: os.close(descriptor)
-                self.storage.write_new("state.json", encode({"schema": 1, "identity": self.identity,
+                self.state = {"schema": 2, "revision": 1, "identity": self.identity,
+                    "certificate": certificate.model_dump(mode="json"),
                     "owner_sha256": hashlib.sha256(owner_sealed).hexdigest(),
-                    "member_sha256": hashlib.sha256(member_sealed).hexdigest()}))
+                    "member_sha256": hashlib.sha256(member_sealed).hexdigest()}
+                self._commit_certificate(certificate, create=True)
                 self.storage.path("initializing.json").unlink()
                 self.storage.sync()
                 return dict(self.identity)
@@ -114,8 +112,10 @@ class EmbeddedOwner:
             self.storage.acquire()
             try:
                 self.storage.check_files()
-                state = json.loads(self.storage.read("state.json"))
-                if state["schema"] != 1: raise Refused("Unsupported authority state.")
+                state_bytes = self.storage.read("state.json")
+                state = json.loads(state_bytes)
+                if type(state["schema"]) is not int or state["schema"] != 2:
+                    raise Refused("Unsupported authority state. Existing data was preserved.")
                 instance = state["identity"]["instance"]
                 if str(uuid.UUID(instance)) != instance: raise Refused("Invalid authority identity.")
                 owner_sealed, member_sealed = [self.storage.read(n) for n in ("owner.sealed", "member.sealed")]
@@ -124,13 +124,16 @@ class EmbeddedOwner:
                     raise Refused("Authority storage was changed. Existing state was preserved.")
                 payload = json.loads(bytes(self.vault.open_owner(instance, owner_sealed)))
                 member = json.loads(bytes(self.vault.open_member(instance, member_sealed)))
-                if any(p["schema"] != 1 or p["instance"] != instance for p in (payload, member)):
+                if any(p["schema"] != 2 or p["instance"] != instance for p in (payload, member)):
                     raise Refused("Authority custody does not match this network.")
                 self.keys = {name: seed(payload["keys"][name]) for name in ("root", "na", "operator")}
                 self.member = seed(member["seed"])
+                signed = {k: v for k, v in state.items() if k != "state_signature"}
+                if not verify_signature(STATE_DOMAIN + encode(signed), state["state_signature"], public(self.keys["operator"])):
+                    raise Refused("The authority state signature is invalid.")
                 genesis = GenesisBlock.model_validate(payload["genesis"])
                 policy = PolicyManifest.model_validate(payload["policy"])
-                certificate = JoinCertificate.model_validate(payload["certificate"])
+                certificate = JoinCertificate.model_validate(state["certificate"])
                 self._verify(genesis, policy, certificate)
                 identity = self._identity(instance, genesis, certificate)
                 if identity != state["identity"]: raise Refused("Saved authority identity does not match its protected keys.")
@@ -148,6 +151,8 @@ class EmbeddedOwner:
                     if len(saved) != 1 or PolicyManifest.model_validate_json(saved[0][0]) != policy:
                         raise Refused("The persisted policy does not match this authority profile.")
                 self.identity = identity
+                self.genesis, self.policy, self.certificate = genesis, policy, certificate
+                self.state, self.state_bytes = state, state_bytes
                 self._start(genesis)
                 return dict(identity)
             except Exception:
@@ -172,6 +177,29 @@ class EmbeddedOwner:
         return {"instance": instance, "network_name": genesis.network_name, "root_public_key": genesis.root_public_key,
                 "authority_public_key": genesis.network_authority.public_key, "operator_public_key": public(self.keys["operator"]),
                 "member_public_key": certificate.node_public_key, "certificate_id": certificate.cert_id}
+
+    def _enroll_member(self):
+        invite = self._admin("/admin/invite", {"roles": ["role:client"], "recipient_public_key": public(self.member),
+                                              "max_validity_hours": 24, "token_expiry_hours": 1})
+        body = sign_node_request({"node_public_key": public(self.member), "invite_token": invite["token_id"],
+            "validity_hours": 24, "timestamp": datetime.now(timezone.utc).isoformat(), "nonce": str(uuid.uuid4())}, self.member)
+        return JoinCertificate.model_validate(self._post("/join", body))
+
+    def _commit_certificate(self, certificate, *, create=False):
+        self._verify(self.genesis, self.policy, certificate)
+        identity = self._identity(self.identity["instance"], self.genesis, certificate)
+        state = {**self.state, "identity": identity, "certificate": certificate.model_dump(mode="json")}
+        state.pop("state_signature", None)
+        if not create: state["revision"] += 1
+        state["state_signature"] = sign_data(STATE_DOMAIN + encode(state), self.keys["operator"])
+        self.service.db.conn.execute("PRAGMA wal_checkpoint(FULL)")
+        descriptor = os.open(self.storage.path("authority.db"), os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
+        try: os.fsync(descriptor)
+        finally: os.close(descriptor)
+        content = encode(state)
+        if create: self.storage.write_new("state.json", content)
+        else: self.storage.replace_state(content, self.state_bytes)
+        self.state, self.state_bytes, self.identity, self.certificate = state, content, identity, certificate
 
     def _start(self, genesis):
         self.service = NetworkAuthorityService(genesis_block=genesis, na_private_key=self.keys["na"],
@@ -217,5 +245,6 @@ class EmbeddedOwner:
                 self.service.db.close()
                 self.service = None
             self.keys = self.member = self.identity = None
+            self.state = self.state_bytes = self.certificate = self.genesis = self.policy = None
             self.session.close()
             self.storage.release()

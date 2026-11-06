@@ -269,5 +269,24 @@ class EmbeddedOwnerTests(unittest.TestCase):
         self.assertIsNone(owner.storage.lock)
         self.assertEqual(self.owner().open(), identity)
 
+    def test_every_private_identity_is_durable_before_core_can_publish_it(self):
+        import owner_adapter
+        real_service = owner_adapter.NetworkAuthorityService
+        observed = []
+        owner = self.owner()
+        def construct(*args, **kwargs):
+            instance = json.loads((self.root / "initializing.json").read_bytes())["instance"]
+            saved = json.loads(self.vault.open_owner(instance, (self.root / "owner.sealed").read_bytes()))
+            member = json.loads(self.vault.open_member(instance, (self.root / "member.sealed").read_bytes()))
+            for name, private in owner.keys.items():
+                self.assertEqual(owner_adapter.public(owner_adapter.seed(saved["keys"][name])), owner_adapter.public(private))
+            self.assertEqual(owner_adapter.public(owner_adapter.seed(member["seed"])), owner_adapter.public(owner.member))
+            self.assertFalse((self.root / "authority.db").exists())
+            observed.append(True)
+            return real_service(*args, **kwargs)
+        with patch("owner_adapter.NetworkAuthorityService", side_effect=construct):
+            owner.create("Durable before use")
+        self.assertEqual(observed, [True])
+
 
 if __name__ == "__main__": unittest.main()
