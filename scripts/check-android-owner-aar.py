@@ -13,7 +13,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = {"android_connect_owner.pyc", "android_storage.pyc", "connect_owner.pyc", "core-requirements.txt",
            "core_release.pyc", "local_server.pyc", "member_renewal.pyc", "owner.pyc", "owner_adapter.pyc",
-           "protection.pyc", "state_storage.pyc"}
+           "protection.pyc", "state_storage.pyc", "membership_inspection.pyc"}
 
 
 def check(path):
@@ -39,7 +39,7 @@ def check(path):
                 or manifest.find("uses-sdk").attrib.get("{http://schemas.android.com/apk/res/android}minSdkVersion") != "35"):
             raise ValueError("Expected the isolated build-only library manifest")
         with zipfile.ZipFile(io.BytesIO(aar.read("classes.jar"))) as classes:
-            for name in ("OwnerQualificationPlugin", "OwnerSessionGuard", "OwnerKeyVault", "RootKeyAuthorization", "RootKeyPolicy"):
+            for name in ("OwnerQualificationPlugin", "OwnerSessionGuard", "RecoveryInspectionGuard", "OwnerKeyVault", "RootKeyAuthorization", "RootKeyPolicy"):
                 if f"org/genesismesh/connect/authority/{name}.class" not in classes.namelist():
                     raise ValueError("A required native bridge class was not compiled")
         with zipfile.ZipFile(io.BytesIO(aar.read("assets/chaquopy/app.imy"))) as app:

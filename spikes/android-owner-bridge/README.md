@@ -23,6 +23,13 @@ the qualification session currently stops conservatively on Activity stop/destro
 
 ## Source generation and app build
 
+The native-only `inspectMembership` path has its own single-use read sessions.
+It does not reuse, close or unpoison the writer, and it is still rejected from
+frontend invocation. It reads the fixed existing profile without a publisher,
+root authorization, authority startup or a state-changing action. The strict
+report is at most 4 KiB; busy/changed snapshots and unsettled journals are refused.
+See [inspection semantics and the legacy intent limitation](../../docs/android-authority.md#read-only-interrupted-membership-inspection).
+
 From `apps/connect`, after `npm ci`, run:
 
 ```text
@@ -75,10 +82,19 @@ exact Python file inventory, core pin/metadata and arm64 16 KiB native ELF/RELRO
 
 ## Recorded validation and remaining gates
 
-On 6 November 2026 the library assembled successfully. Its 11 application files
+On 6 November 2026 the initial library assembled successfully. Its 11 application files
 and 74 native objects passed inventory/alignment inspection. Three bootstrap,
 three correlation, four transport, one Java session-guard and two packaging host
 checks passed. These host fixtures do not qualify Android Keystore or presence.
+
+The subsequent read-only inspection dependency compiles into the same build-only
+library with 12 application files (including `membership_inspection.pyc`) and the
+separate `RecoveryInspectionGuard` class. All 74 native objects pass the existing
+arm64/16 KiB checks. Host-only inspection fixtures preserve every profile file's
+bytes, inventory and modification time, and forbid activation/network/root use.
+They test a signed exact-outcome reference only in disposable setup; the existing
+production intent format cannot confirm that linkage. No recovery action or
+complete app/device acceptance follows from this library result.
 
 The full Windows app build was blocked by Application Control while executing a
 Cargo build script (`OS4551`). That blocked executable was not retried, renamed

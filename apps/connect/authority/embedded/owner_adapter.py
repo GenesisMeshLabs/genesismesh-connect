@@ -140,44 +140,54 @@ class EmbeddedOwner:
             self._verify(self.genesis, self.policy, self.certificate)
             return dict(self.identity)
 
+    def _read_saved(self, *, allow_renewal=False):
+        """Authenticate saved custody only, under a held lock; never start core."""
+        if self.storage.lock is None: raise Refused("Lock the saved authority before inspection.")
+        staged = self.storage.check_files(allow_renewal=allow_renewal)
+        state_bytes = self.storage.read("state.json")
+        state = json.loads(state_bytes)
+        if type(state["schema"]) is not int or state["schema"] != 3:
+            raise Refused("This pre-release authority needs an explicit root-custody migration. Existing data was preserved.")
+        instance = state["identity"]["instance"]
+        if str(uuid.UUID(instance)) != instance: raise Refused("Invalid authority identity.")
+        self.vault.require_root_custody()  # Fixed-alias metadata only, no root decryption.
+        root_sealed, owner_sealed, member_sealed = [self.storage.read(n) for n in ("root.sealed", "owner.sealed", "member.sealed")]
+        if (hashlib.sha256(root_sealed).hexdigest() != state["root_sha256"]
+                or hashlib.sha256(owner_sealed).hexdigest() != state["owner_sha256"]
+                or hashlib.sha256(member_sealed).hexdigest() != state["member_sha256"]):
+            raise Refused("Authority storage was changed. Existing state was preserved.")
+        payload = json.loads(bytes(self.vault.open_owner(instance, owner_sealed)))
+        member = json.loads(bytes(self.vault.open_member(instance, member_sealed)))
+        if any(p["schema"] != 3 or p["instance"] != instance for p in (payload, member)):
+            raise Refused("Authority custody does not match this network.")
+        if set(payload["keys"]) != {"na", "operator"}:
+            raise Refused("Daily authority custody must not contain the root key.")
+        self.keys = {name: seed(payload["keys"][name]) for name in ("na", "operator")}
+        self.member = seed(member["seed"])
+        signed = {k: v for k, v in state.items() if k != "state_signature"}
+        if not verify_signature(STATE_DOMAIN + encode(signed), state["state_signature"], public(self.keys["operator"])):
+            raise Refused("The authority state signature is invalid.")
+        self.storage.check_evidence(state.get("recovery_evidence", {}), staged, allow_unrecorded=allow_renewal)
+        genesis = GenesisBlock.model_validate(payload["genesis"])
+        policy = PolicyManifest.model_validate(payload["policy"])
+        certificate = JoinCertificate.model_validate(state["certificate"])
+        # Owner custody is independent of a member credential's expiry.
+        # Loading an expired certificate never authorizes member operations.
+        self._verify(genesis, policy, certificate, require_current=False)
+        identity = self._identity(instance, genesis, certificate)
+        if identity != state["identity"]: raise Refused("Saved authority identity does not match its protected keys.")
+        self.identity = identity
+        self.genesis, self.policy, self.certificate = genesis, policy, certificate
+        self.state, self.state_bytes = state, state_bytes
+        self.renewal_pending = self.storage.path("member-renewal.json").exists()
+
     def _open(self, *, allow_renewal=False):
         with self.mutex:
             self.vault.ready()
             self.storage.acquire()
             try:
-                staged = self.storage.check_files(allow_renewal=allow_renewal)
-                state_bytes = self.storage.read("state.json")
-                state = json.loads(state_bytes)
-                if type(state["schema"]) is not int or state["schema"] != 3:
-                    raise Refused("This pre-release authority needs an explicit root-custody migration. Existing data was preserved.")
-                instance = state["identity"]["instance"]
-                if str(uuid.UUID(instance)) != instance: raise Refused("Invalid authority identity.")
-                self.vault.require_root_custody()  # Fixed-alias metadata only, no root decryption.
-                root_sealed, owner_sealed, member_sealed = [self.storage.read(n) for n in ("root.sealed", "owner.sealed", "member.sealed")]
-                if (hashlib.sha256(root_sealed).hexdigest() != state["root_sha256"]
-                        or hashlib.sha256(owner_sealed).hexdigest() != state["owner_sha256"]
-                        or hashlib.sha256(member_sealed).hexdigest() != state["member_sha256"]):
-                    raise Refused("Authority storage was changed. Existing state was preserved.")
-                payload = json.loads(bytes(self.vault.open_owner(instance, owner_sealed)))
-                member = json.loads(bytes(self.vault.open_member(instance, member_sealed)))
-                if any(p["schema"] != 3 or p["instance"] != instance for p in (payload, member)):
-                    raise Refused("Authority custody does not match this network.")
-                if set(payload["keys"]) != {"na", "operator"}:
-                    raise Refused("Daily authority custody must not contain the root key.")
-                self.keys = {name: seed(payload["keys"][name]) for name in ("na", "operator")}
-                self.member = seed(member["seed"])
-                signed = {k: v for k, v in state.items() if k != "state_signature"}
-                if not verify_signature(STATE_DOMAIN + encode(signed), state["state_signature"], public(self.keys["operator"])):
-                    raise Refused("The authority state signature is invalid.")
-                self.storage.check_evidence(state.get("recovery_evidence", {}), staged, allow_unrecorded=allow_renewal)
-                genesis = GenesisBlock.model_validate(payload["genesis"])
-                policy = PolicyManifest.model_validate(payload["policy"])
-                certificate = JoinCertificate.model_validate(state["certificate"])
-                # Owner custody is independent of a member credential's expiry.
-                # Loading an expired certificate never authorizes member operations.
-                self._verify(genesis, policy, certificate, require_current=False)
-                identity = self._identity(instance, genesis, certificate)
-                if identity != state["identity"]: raise Refused("Saved authority identity does not match its protected keys.")
+                self._read_saved(allow_renewal=allow_renewal)
+                genesis, policy, certificate, identity = self.genesis, self.policy, self.certificate, self.identity
                 database = self.storage.path("authority.db")
                 if database.is_symlink() or not database.is_file() or database.stat().st_size == 0:
                     raise Refused("The existing authority database is missing.")
@@ -191,10 +201,6 @@ class EmbeddedOwner:
                     saved = db.execute("SELECT policy_json FROM policy_versions WHERE active=1").fetchall()
                     if len(saved) != 1 or PolicyManifest.model_validate_json(saved[0][0]) != policy:
                         raise Refused("The persisted policy does not match this authority profile.")
-                self.identity = identity
-                self.genesis, self.policy, self.certificate = genesis, policy, certificate
-                self.state, self.state_bytes = state, state_bytes
-                self.renewal_pending = self.storage.path("member-renewal.json").exists()
                 self._start(genesis)
                 return dict(identity)
             except Exception:

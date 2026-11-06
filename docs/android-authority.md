@@ -151,6 +151,37 @@ never replayed on reopen. Revoked membership is not re-enrolled. The low-level
 `open` operation remains read-only for recovery tools. This does not enable
 Create in the main app or make a background-availability promise.
 
+### Read-only interrupted-membership inspection
+
+A separate native-only inspection path reads an existing protected profile and
+signed renewal intent without activating the authority. It uses a fresh inspection
+session, never the uncertain writer session, and does not clear that writer's
+poisoned state. The profile must be idle: an active owner lock, changed snapshot,
+nonempty SQLite WAL/journal, invalid evidence or bounded-history limit produces
+an unavailable/ambiguous observation. Inspection never checkpoints or repairs
+the database, creates a lock file, renews, enrolls, reconciles, cancels, resets,
+commits state or decrypts the root. Only daily owner/member custody is opened.
+
+The bounded typed report distinguishes an exact linked recorded outcome, no
+new issuance observed in the snapshot, ambiguous/invalid evidence, and no pending
+update. Authenticated reports carry the network/device identity, operation UUID
+and signed-intent digest. None of these statuses authorizes a retry or adoption;
+even a matching expired certificate remains expired.
+
+Existing schema-1 intents lack an exact operation-to-certificate link. A single
+new compatible certificate therefore remains ambiguous. The reader also accepts
+a schema-2 signed reference containing the exact certificate ID and digest; this
+is exercised only by disposable real-core fixtures. No production schema-2 writer
+or recovery action is introduced, and existing activation/reconciliation fences
+remain unchanged. That reference is a local authenticated observation, not an
+independently verifiable core audit receipt or proof of complete issuance history.
+
+Host checks cover scope/signature/reference failures, multiple or missing
+outcomes, revoked/expired/future certificates, journal refusal, unchanged file
+bytes/inventory/mtime, and preservation of poisoned-session/activation fences.
+The private Java/Kotlin/Python library compiles with the inspector included;
+this does not qualify a complete Android app or physical custody/recovery.
+
 ### Separate root custody
 
 New embedded profiles use schema 3: `root.sealed` is wrapped under a separate

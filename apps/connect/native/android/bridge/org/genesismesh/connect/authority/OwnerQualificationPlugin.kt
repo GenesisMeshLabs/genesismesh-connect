@@ -16,6 +16,7 @@ import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /** Registered only by the opt-in qualification feature. Rust rejects every frontend invoke. */
 @TauriPlugin
@@ -44,6 +45,17 @@ class OwnerQualificationPlugin(private val activity: Activity) : Plugin(activity
 
     @Command fun begin(invoke: Invoke) = submit(invoke, true)
     @Command fun exchange(invoke: Invoke) = submit(invoke, false)
+
+    @Command fun inspectMembership(invoke: Invoke) {
+        try {
+            val value = args(invoke)
+            require(value["request"].textValue() == "{\"op\":\"inspect_membership\"}" && value["budget_ms"].intValue() <= 30000)
+            OwnerQualificationEngine.inspections.reserve(value["session"].textValue(), value["sequence"].longValue(), OwnerQualificationEngine.guard)
+            val epoch = OwnerQualificationEngine.lifecycle.get()
+            val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(value["budget_ms"].longValue())
+            OwnerQualificationEngine.enqueue { OwnerQualificationEngine.inspect(activity, invoke, value, epoch, deadline) }
+        } catch (_: Exception) { invoke.reject("A fresh read-only inspection session is required.") }
+    }
 
     private fun submit(invoke: Invoke, begin: Boolean) {
         try {
@@ -75,11 +87,32 @@ class OwnerQualificationPlugin(private val activity: Activity) : Plugin(activity
 /** Process-wide owner and bounded serial executor survive Activity recreation without replay. */
 private object OwnerQualificationEngine {
     val guard = OwnerSessionGuard()
+    val inspections = RecoveryInspectionGuard()
+    val lifecycle = AtomicLong()
     private val worker = ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, ArrayBlockingQueue<Runnable>(4))
     private var owner: PyObject? = null
     private var module: PyObject? = null
 
     fun enqueue(action: () -> Unit) { worker.execute(action) }
+
+    fun inspect(activity: Activity, invoke: Invoke, value: JsonNode, epoch: Long, deadline: Long) {
+        try {
+            require(!activity.isFinishing && !activity.isDestroyed && activity.hasWindowFocus()
+                && lifecycle.get() == epoch && System.nanoTime() < deadline)
+            val context = activity.applicationContext
+            if (!Python.isStarted()) Python.start(AndroidPlatform(context))
+            val inspector = Python.getInstance().getModule("android_connect_owner")
+            val directory = File(context.noBackupFilesDir, "connect-owner-qualification").absolutePath
+            // No RootKeyAuthorization, mutable owner/session or normal guard is reused.
+            val result = inspector.callAttr("inspect_membership", directory, OwnerKeyVault(context)).toString()
+            require(result.toByteArray(Charsets.UTF_8).size <= 4096 + 16)
+            require(!activity.isFinishing && !activity.isDestroyed && activity.hasWindowFocus()
+                && lifecycle.get() == epoch && System.nanoTime() < deadline)
+            val reply = JSObject().put("schema", 1).put("session", value["session"].textValue())
+                .put("sequence", value["sequence"].longValue()).put("reply", JSObject(result))
+            invoke.resolve(JSObject(reply.toString()))
+        } catch (_: Exception) { invoke.reject("Read-only inspection is unavailable. Existing state was preserved.") }
+    }
 
     fun perform(activity: Activity, invoke: Invoke, value: JsonNode, begin: Boolean, deadline: Long) {
         val session = value["session"].textValue()
@@ -119,6 +152,7 @@ private object OwnerQualificationEngine {
     }
 
     fun stopForLifecycle() {
+        lifecycle.incrementAndGet()
         guard.stop()
         try { enqueue { try { close() } catch (_: Exception) { /* Retain unsettled owner; never recreate. */ } } }
         catch (_: Exception) { /* Session is fenced even if the queue is full. */ }

@@ -6,6 +6,15 @@ import unittest
 
 
 class OwnerBridgeTests(unittest.TestCase):
+    def test_readonly_inspection_cannot_reuse_or_unpoison_writer_session(self):
+        root = Path(__file__).parents[2]
+        with tempfile.TemporaryDirectory() as folder:
+            subprocess.run(["javac", "--release", "8", "-d", folder,
+                str(root / "apps/connect/native/android/src/main/java/org/genesismesh/connect/authority/OwnerSessionGuard.java"),
+                str(root / "apps/connect/native/android/src/main/java/org/genesismesh/connect/authority/RecoveryInspectionGuard.java"),
+                str(root / "spikes/android-authority/tests/RecoveryInspectionGuardTest.java")], check=True, timeout=30)
+            subprocess.run(["java", "-cp", folder, "org.genesismesh.connect.authority.RecoveryInspectionGuardTest"], check=True, timeout=20)
+
     def test_serial_native_session_refuses_replay_scope_changes_and_reactivation(self):
         root = Path(__file__).parents[2]
         with tempfile.TemporaryDirectory() as folder:

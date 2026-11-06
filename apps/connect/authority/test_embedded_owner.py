@@ -35,7 +35,7 @@ def core_time(at):
         def now(cls, tz=None): return at.astimezone(tz) if tz else at.replace(tzinfo=None)
     with ExitStack() as stack:
         for name, module in list(sys.modules.items()):
-            if (name in ("owner_adapter", "member_renewal") or name.startswith("genesis_mesh.")) and getattr(module, "datetime", None) is datetime:
+            if (name in ("owner_adapter", "member_renewal", "membership_inspection") or name.startswith("genesis_mesh.")) and getattr(module, "datetime", None) is datetime:
                 stack.enter_context(patch.object(module, "datetime", Clock))
         yield
 

@@ -223,6 +223,22 @@ publication, merge or deployment was performed for this continuation.
 
 See [build-only bridge instructions](../spikes/android-owner-bridge/README.md).
 
+A subsequent local Phase 1 dependency adds fresh read-only pending-membership
+inspection. It authenticates saved daily custody and signed intent, then checks
+an idle offline core database without starting an authority or writing state.
+The typed result distinguishes an exact linked outcome, no new issuance observed,
+ambiguous/invalid evidence and no pending intent. Inspection cannot unpoison a
+writer, approve recovery, retry enrollment or clear the intent. An active lock or
+unsettled WAL/journal is refused rather than repaired.
+
+Legacy schema-1 intents cannot establish the exact operation-to-outcome link;
+even one compatible new certificate stays ambiguous. Schema-2 exact signed
+references are reader-only fixture coverage, not a production writer. Reports
+are local observations, not independent core audit evidence. Focused host tests
+and build-only native compilation support this dependency; the full app build,
+physical root prompt/recovery and end-to-end phone-owner journey remain open.
+No device state was touched and no publication or merge was performed here.
+
 **“Create and run my network on this Android phone.”** The independent-phone
 proof above is required alongside the optional server profile. Native dependency
 qualification and lifecycle work remain open; no unsupported Create button is

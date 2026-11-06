@@ -1,5 +1,6 @@
 //! Native-only bridge in an opt-in qualification package; no app activation.
 use anyhow::{Result, ensure};
+use connect_core::owner::inspection::MembershipInspection;
 use connect_core::owner::{NativeOwnerTransport, OwnerRuntime, native::NativeSession};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -50,6 +51,22 @@ struct Handshake {
     core_version: String,
     native_only: bool,
     production_create_enabled: bool,
+}
+
+/// Separate native read path. Never wraps/reuses an OwnerRuntime, calls close,
+/// activates core, or resets a poisoned writer. No frontend command is registered.
+#[allow(dead_code)]
+pub(crate) fn inspect_pending_membership<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<MembershipInspection> {
+    let state = app.state::<AndroidOwner<R>>();
+    let mut reader = Transport {
+        handle: state.0.clone(),
+        session: NativeSession::new(),
+    };
+    let result = reader.call("inspectMembership", json!({"op":"inspect_membership"}))?;
+    reader.session.poison();
+    MembershipInspection::parse(result)
 }
 
 /// Worker-thread native qualification entry only. It is deliberately not called
