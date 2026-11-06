@@ -73,7 +73,7 @@ Process-wide execution and unique run IDs prevent stale activity results;
 a deterministic Java regression covers overlapping runs and delayed UI updates.
 Physical recreation/process-death tests remain separate and unperformed.
 
-The harness creates no network or owner identity. This does not qualify authority
+At that runtime-only revision, the harness created no network or owner identity. It did not qualify authority
 creation, owner custody, persisted hosted identity, actual authority decisions,
 second-device enrollment/revocation, production library support, or lifecycle
 availability. The full Create workflow remains disabled until those gates pass.
@@ -172,16 +172,128 @@ staging file, and indexes its digest in signed local state. Ordinary open refuse
 unrecorded staging; unsigned or changed staging is refused without discarding it.
 These are hosted/host simulations, not physical elapsed-time or lifecycle tests.
 
-The first Samsung attempt passed the seven runtime checks, then was refused by
+The first Samsung attempt at that revision passed the seven runtime checks, then was refused by
 the native device readiness guard before creating an owner network. Its specific
 result is `secure_screen_lock_required`; configuring a credential is a local user
 step. Real Android create/reopen and
-process-restart identity acceptance remain pending; production Create stays off.
+process-restart identity acceptance were pending at that checkpoint; production Create stayed off.
+
+### Later storage proof and separate root/integration gates — 6 November 2026
+
+The Android atomic-publication repair at `3a1c7e9` subsequently passed genuine
+phone-local create/close/reopen on the Samsung SM-A176B/API36, followed by a cold
+process launch with unchanged root, authority, operator and member fingerprints
+and certificate ID. That was the earlier combined-root custody format. It proves
+that positive storage/persistence slice, not the newer per-use root ceremony,
+device-loss recovery, app Create or second-device acceptance.
+
+The checkpoint at `1423db5` separates root ciphertext/custody, leaves the root
+encrypted during ordinary reopen, matches core's founding-key lifetime and
+maintains routine membership through signed intents without automatic write
+replay. Focused host/native and contract CI passed there. At that checkpoint the
+newer GM Root Check profile was an unfinished initialization: no completed owner
+identity was recorded. Key-policy metadata alone did not accept physical per-use
+root authentication or create/reopen under that root format.
+That profile was preserved during the following source/build work. Later on
+6 November, the user authorized clearing only the unfinished GM Root Check test
+data. Two creation retries reached Android's system dialog but timed out without
+local authentication; those attempts did not complete root custody. The fixed
+Root Check package now waits for a local **Start check** tap, so its authentication
+window is not consumed while exchanging chat messages. Connect data is unchanged;
+no automatic custody replacement or reset action is added to either app.
+
+The first manually started check recorded native root authentication as
+`authenticated`, followed by `IllegalBlockSizeException` while wrapping the root;
+the profile still contained only initialization state. This accepts the local
+system-confirmation event, not completed root custody or network creation. A
+subsequent fix authenticates the exact cipher before submitting GCM context or
+payload. The host regression reproduces cached pre-authentication AAD failure
+and checks denial plus real GCM context integrity.
+
+The corrected standalone Root Check build at `69a8e17` then passed on the
+Samsung SM-A176B/API36: local system confirmation, root wrapping, genuine
+phone-local authority/member creation, purpose-separated custody and close/reopen.
+A separate force-stop/cold-process run passed as `reopen` with all four identity
+fingerprints, certificate ID, sealed custody files and committed state unchanged.
+That run requested no root authentication. The completed test network is retained;
+no further reset is authorized by this validation result. These are positive
+qualification-app results, not full Connect, recovery, second-device or general
+background-lifecycle acceptance. See the [dated observation record](evidence/android-root-custody-2026-11-06.json).
+
+The next independent dependency is now implemented behind the opt-in
+`android-owner-qualification` feature and fixed
+`org.genesismesh.connect.ownerqualification` identifier. A private native bridge
+connects `NativeOwnerTransport` to `ConnectOwner`, using native-selected no-backup
+storage and the existing vault. Registration activates nothing. A Rust catch-all
+rejects frontend plugin commands; no automatic startup, public Create or
+administrative mutation path is enabled. Native calls reserve their session and
+sequence before dispatch, have bounded queues/deadlines/replies, reject stale or
+foreign outcomes, and stop reuse after uncertainty. Lifecycle stop/destroy fences
+the session and queues shutdown; reopening is not automatic. This conservative
+qualification behavior also needs physical review around system-authentication
+screens. It is not a background or continuous-availability promise.
+
+This continuation's permitted host checks passed: three real-core bootstrap
+tests, three correlation tests, four existing transport tests, one native session
+guard test and two isolated packaging tests. The Android Kotlin/Java bridge and
+whitelisted Python closure compiled into a build-only AAR against the pinned
+Tauri SDK; all 74 packaged native objects passed 16 KiB ELF/RELRO inspection.
+The full Windows Android-app build stopped because Application Control blocked
+a Cargo build script (`OS4551`). It was not retried or bypassed. The Android Rust
+app boundary and complete APK therefore remain uncompiled/unaccepted locally.
+No device operation, install, data/key reset, excluded startup-failure suite,
+publication, merge or deployment was performed for this continuation.
+
+See [build-only bridge instructions](../spikes/android-owner-bridge/README.md).
+
+A subsequent local Phase 1 dependency adds fresh read-only pending-membership
+inspection. It authenticates saved daily custody and signed intent, then checks
+an idle offline core database without starting an authority or writing state.
+The typed result distinguishes an exact linked outcome, no new issuance observed,
+ambiguous/invalid evidence and no pending intent. Inspection cannot unpoison a
+writer, approve recovery, retry enrollment or clear the intent. An active lock or
+unsettled WAL/journal is refused rather than repaired.
+
+Legacy schema-1 intents cannot establish the exact operation-to-outcome link;
+even one compatible new certificate stays ambiguous. Schema-2 exact signed
+references are reader-only fixture coverage, not a production writer. Reports
+are local observations, not independent core audit evidence. Focused host tests
+and build-only native compilation support this dependency; the full app build,
+root-custody recovery and end-to-end phone-owner journey remain open. The later
+standalone Root Check positive result above does not qualify this app bridge.
+No device state was touched and no publication or merge was performed here.
 
 **“Create and run my network on this Android phone.”** The independent-phone
 proof above is required alongside the optional server profile. Native dependency
 qualification and lifecycle work remain open; no unsupported Create button is
 enabled by the plan update.
+
+A subsequent local source/host-fixture slice adds the portable foreground
+setup/open coordinator. Native embedded discovery replaces desktop-file
+assumptions on this path. Durable reservations bind one authority setup and one
+saved device; lost invitations or unfinished enrollment are not replayed. Fresh
+Open can finish an already persisted matching credential and rebind only the
+same pin/device to a new loopback port. Five refusal fixtures and seven explicit
+disposable real-core fixtures pass; existing native/inspection checks also pass.
+The disabled private Android workflow factory now calls `android_owner::prepare`;
+it is not invoked by frontend commands or startup. Source glue defers saved
+local-owner maintenance until rebinding. Full-app compilation, actual phone
+setup/lifecycle, recovery and second-device acceptance remain open; no device,
+reset, installation, publication or merge operation occurred in this slice.
+
+The next isolated host chain uses that embedded `ForegroundNetwork` for two
+separate sealed profiles through the actual comparison-code ceremony, QUIC
+authority bridge and core enrollment. Six integration fixtures passed after
+exposing/fixing four gaps: approval callback replay after an uncertain response,
+pairing retries during pending enrollment, client relationship persistence
+before final confirmation, and local commit using pre-revocation trust. Local
+consumer actions now share the tested portable pairing orchestration; Requests
+retains its controller checks and shares the fresh candidate-trust check.
+With the prior focused regressions and shared-gate test, 29 checks passed.
+This is [source/host integration evidence](android-authority.md#embedded-owner-comparison-code-pairing-chain),
+not physical second-device, human comparison or first-use acceptance. App-shell
+compilation, phone lifecycle and full recovery remain open. Gates, inspector and
+retained app/phone data are unchanged; nothing was installed or published.
 
 **“Use my phone to review and approve a new device joining my network.”**
 
@@ -204,3 +316,92 @@ installation, physical lifecycle and first-time usability as separate facts.
 Current Windows Application Control and unperformed mobile/signing/device gates
 remain explicit. A compiled adapter or signed intent is not evidence that a
 nontechnical person completed the installed-app workflow.
+
+## Embedded protected-resource chain — 6 November 2026
+
+The qualified lost-confirmation recovery from `76885bd` now leads to actual
+protected operations, rather than only diagnostic messages. Six explicitly
+selected disposable host fixtures use the embedded `ForegroundNetwork`, genuine
+comparison-code pairing and core enrollment, sealed independent profiles, and
+real Iroh QUIC. They cover:
+
+- Nested folders and verified multi-window binary downloads in both directions,
+  after the joining client reopens and explicitly finishes its original pairing.
+  Each listing and download window reaches the genuine core decision route.
+- A paired, cryptographically authenticated member without that folder's
+  permission receives neither a directory page nor any file output.
+- Narrowing the full-file size policy stops the next window at the confirmed
+  offset. An explicit later policy version permits the same snapshot to resume.
+- Revocation refuses protected metadata and further download bytes even before
+  cached diagnostic-session trust is refreshed. Normal shutdown of an already
+  running authority also refuses further protected operations.
+- A joined device creates a TCP service through the authenticated bridge and the
+  fixed embedded owner adapter. A real echo works; wrong kind/collection never
+  reaches the target; a live policy change closes the stream and refuses new
+  connections. A stale policy version cannot overwrite the newer one.
+
+The TCP fixture reproduced excessive stack use in the composed forwarding path.
+Moving its two bounded I/O buffers to the heap fixed that failure on the normal
+test stack without changing protocol, authorization, buffer capacity or shared
+byte-budget rules. Both existing service-limit unit tests pass alongside the six
+resource fixtures. These are eight checks run for this slice; the earlier
+41-check recovery checkpoint is historical evidence, not a newly rerun total.
+
+[Validation record](evidence/embedded-resources-2026-11-06.json).
+The focused workflow selects these exact source/host checks for future CI; no
+hosted run was dispatched. This is not installed-app, physical-phone,
+nontechnical-user or full lifecycle acceptance. Public Create/administration/
+recovery gates and the completed read-only membership inspector remain unchanged.
+No device data was accessed, reset or installed; no blocked app-boundary build,
+excluded startup-failure test, publication, merge or deployment was attempted.
+
+## Native phone Requests commands — 6 November 2026
+
+The next client dependency now retains the exact reviewed List/Approve/Reject
+pairing command before its first send. It is bound to the protected profile,
+network/root, authority host, member, separate administrative key, current grant,
+original nonce/digest and candidate. A native presence seam gates dispatch; the
+production adapter is unavailable and no mutation IPC is registered.
+
+Interrupted/lost replies or reopen permit only authenticated Result readback for
+that same operation. Current observation, historical observation and retained
+terminal outcome remain separate. Matching membership/relationships or an Active
+enrollment do not prove execution. Explicit retirement freshly checks a terminal
+result and preserves history before a separate new review may occur.
+
+The real embedded-core/QUIC fixtures cover the three pairing actions, changed
+candidate, review/presence refusal, lost replies/restart, expiry, grant revocation
+before/immediately after dispatch, controller membership revocation, and an
+independent local approval that must not be attributed to the old command.
+See [native coordinator contract](owner-client-commands.md) and the
+[dated validation record](evidence/owner-client-commands-2026-11-06.json).
+
+Phone-local authority hosting remains required and optional hosting stays
+optional. This library qualification does not complete app-shell, installed
+native presence, physical Requests, lifecycle, assisted or first-use acceptance.
+The completed membership inspector, pairing-completion recovery and production
+gates are preserved. No device operation or blocked full-app retry is implied.
+
+## Saved device-request story — 6 November 2026
+
+Devices now provides a read-only saved-request view: the original action, result
+at last check, retained history and one explicit Check status action. It links to
+joining permissions separately and keeps review codes/check timestamps in
+details. The display distinguishes unsent, unknown, in-progress, confirmed,
+retired, missing, damaged and unsupported states. A queue result stays a saved
+snapshot. No review, signing, Execute, archive or presence-provider IPC is added;
+production device-approval controls stay locked.
+
+The native projection derives current profile/host/network/key context and
+matches the exact saved reference around readback. Empty status checks create no
+command or administrative key. Browser lifecycle tests fence late results after
+close, Escape, navigation and network changes; errors retain historical evidence
+and untrusted names remain plain text. Phone-width layout was visually reviewed
+using a local browser fixture, with simulated native responses clearly separate
+from the real-core native checks.
+
+[Validation record](evidence/requests-display-2026-11-06.json) separates source,
+browser, embedded-core/QUIC and unperformed app/physical gates. The focused CI
+workflow explicitly selects the display/coordinator and browser files; no hosted
+run, device operation or full-app build retry was performed. Phone-local hosting
+remains required, and optional NAS/server hosting stays optional.

@@ -5,9 +5,14 @@ pub(crate) mod owner_store;
 mod sealed_store;
 #[cfg(target_os = "linux")]
 pub use sealed_store::{MASTER_KEY_CREDENTIAL, use_sealed_store};
+mod admin_commands;
 mod admin_control;
 mod admin_enrollment;
 mod enrollment_display;
+mod requests_display;
+pub use requests_display::*;
+pub mod pairing_completion;
+mod pairing_flow;
 pub use enrollment_display::*;
 mod admin_vault;
 mod lifecycle;
@@ -457,6 +462,10 @@ impl DeviceController {
 
     pub async fn enroll(&mut self, invite: &str) -> Result<()> {
         self.require_connected()?;
+        ensure!(
+            !self.vault.pending(),
+            "Review the saved enrollment outcome; it must not be repeated"
+        );
         ensure!(self.device.is_none(), "This device is already enrolled");
         ensure!(
             self.bridge_client.is_some() || self.authority.is_some(),
@@ -484,6 +493,10 @@ impl DeviceController {
     }
     pub async fn enroll_host(&mut self, invite: &str) -> Result<()> {
         self.require_connected()?;
+        ensure!(
+            !self.vault.pending(),
+            "Review the saved enrollment outcome; it must not be repeated"
+        );
         ensure!(
             self.device.is_none(),
             "Choose sharing host enrollment before enrolling this profile"
@@ -881,7 +894,28 @@ impl DeviceController {
         card: crate::session::pairing::PairCard,
         name: String,
     ) -> Result<crate::session::pairing::PairClient> {
+        self.request_pairing_mode(card, name, false).await
+    }
+    /// Native qualification opt-in; ordinary pairing and public UI do not enable recovery.
+    pub async fn request_recoverable_pairing(
+        &mut self,
+        card: crate::session::pairing::PairCard,
+        name: String,
+    ) -> Result<crate::session::pairing::PairClient> {
+        pairing_completion::qualified()?;
+        self.request_pairing_mode(card, name, true).await
+    }
+    async fn request_pairing_mode(
+        &mut self,
+        card: crate::session::pairing::PairCard,
+        name: String,
+        recoverable: bool,
+    ) -> Result<crate::session::pairing::PairClient> {
         self.require_connected()?;
+        ensure!(
+            !self.vault.pending(),
+            "Review the saved enrollment before starting another pairing"
+        );
         ensure!(
             self.vault.pin() == &card.pin && self.device.is_none(),
             "This device already belongs to a network. Its identity was preserved."
@@ -890,8 +924,14 @@ impl DeviceController {
         if self.vault.network_connectivity() != card.connectivity() {
             self.vault.save_network_connectivity(card.connectivity())?;
         }
-        crate::session::pairing::PairClient::request(card, &self.vault.key(), &mut self.trust, name)
-            .await
+        crate::session::pairing::PairClient::request_mode(
+            card,
+            &self.vault.key(),
+            &mut self.trust,
+            name,
+            recoverable,
+        )
+        .await
     }
 
     /// Only an already-enrolled device can adopt the bridge. Complete one

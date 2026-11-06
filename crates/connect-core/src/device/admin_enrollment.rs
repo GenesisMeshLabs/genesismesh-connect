@@ -21,7 +21,7 @@ impl DeviceController {
         }
         self.saved_owner_enrollment().map(Some)
     }
-    async fn current_enrollment_binding(&mut self) -> Result<EnrollmentBinding> {
+    pub(super) async fn current_enrollment_binding(&mut self) -> Result<EnrollmentBinding> {
         let expected = self.enrollment_binding()?;
         let trust = self.refresh_inner(false).await?;
         let own = self.device.as_ref().context("Join this device first")?;
@@ -34,7 +34,7 @@ impl DeviceController {
         );
         Ok(expected)
     }
-    fn enrollment_binding(&self) -> Result<EnrollmentBinding> {
+    pub(super) fn enrollment_binding(&self) -> Result<EnrollmentBinding> {
         self.require_connected()?;
         ensure!(
             self.device.is_some() && self.bridge_client.is_some() && !self.network_computer(),

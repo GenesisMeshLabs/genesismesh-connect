@@ -10,6 +10,7 @@ require(pin.startsWith("genesis-mesh=="))
 val coreVersion = pin.substringAfter("==")
 val wheelhouse = file(providers.gradleProperty("runtimeWheelhouse").get())
 val requirements = file(providers.gradleProperty("runtimeRequirements").get())
+val rootQualification = providers.gradleProperty("rootCustodyQualification").orNull == "true"
 
 android {
     namespace = "org.genesismesh.connect.authoritycheck"
@@ -17,6 +18,8 @@ android {
     buildToolsVersion = "36.0.0"
     defaultConfig {
         applicationId = "org.genesismesh.connect.authoritycheck"
+        if (rootQualification) applicationIdSuffix = ".rootcheck"
+        manifestPlaceholders["qualificationLabel"] = if (rootQualification) "GM Root Check" else "GM Engine Check"
         minSdk = 24
         targetSdk = 36
         versionCode = 1

@@ -183,6 +183,9 @@ mod tests {
             own_connectivity: None,
             session_port: None,
             bridge_port: None,
+            pairing_completions: Vec::new(),
+            pending_completion: None,
+            completion_bindings: Default::default(),
         }
     }
     #[test]

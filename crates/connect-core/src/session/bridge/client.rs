@@ -454,6 +454,32 @@ impl BridgeAuthority {
     /// An operation that can safely be asked again, asked once more when the
     /// network computer cancelled it in flight: it does so whenever it
     /// refreshes its own credentials, every 30 seconds.
+    pub(crate) async fn pairing_completion(
+        &self,
+        identity: SessionIdentity,
+        trust: TrustSnapshot,
+        query: &crate::device::pairing_completion::CompletionQuery,
+    ) -> Result<crate::device::pairing_completion::CompletionAnswer> {
+        crate::device::pairing_completion::qualified()?;
+        query.check()?;
+        // Read-only, but one explicit request: no automatic replay or finish.
+        let value = self
+            .authenticated(
+                identity,
+                trust,
+                Operation::PairingCompletion,
+                &serde_json::to_value(query)?,
+            )
+            .await?;
+        ensure!(
+            serde_json::to_vec(&value)?.len() <= 16 * 1024,
+            "Completion answer is too large"
+        );
+        let answer: crate::device::pairing_completion::CompletionAnswer =
+            serde_json::from_value(value)?;
+        answer.check(query)?;
+        Ok(answer)
+    }
     async fn retried(
         &self,
         identity: SessionIdentity,

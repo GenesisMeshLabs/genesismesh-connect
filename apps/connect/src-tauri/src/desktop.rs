@@ -67,7 +67,10 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let profile = app.path().app_data_dir()?.join("device");
     // Native UI smoke tests use a disposable profile without touching the user's
     // device. Release builds always use the OS application data directory.
-    #[cfg(debug_assertions)]
+    #[cfg(all(
+        debug_assertions,
+        not(all(target_os = "android", feature = "android-owner-qualification"))
+    ))]
     let profile = match std::env::var_os("CONNECT_TEST_PROFILE") {
         Some(path) => {
             let path = PathBuf::from(path);
@@ -84,10 +87,24 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Ok(())
     };
+    // This marker defers startup only; native custody discovery establishes
+    // ownership. Explicit foreground Open must rebind before maintenance.
+    let deferred_owner = cfg!(all(
+        target_os = "android",
+        feature = "android-owner-qualification"
+    )) && profile.parent().is_some_and(|parent| {
+        parent.join("foreground-setup.json").exists()
+            || parent.join("foreground-setup.lock").exists()
+    });
     let (controller, problem) = if let Err(error) = cleanup {
         (
             None,
             Some(format!("Could not finish leaving the network: {error}")),
+        )
+    } else if deferred_owner {
+        (
+            None,
+            Some("Open your phone network in the foreground before reconnecting.".into()),
         )
     } else if profile.exists() {
         match DeviceController::open(&profile) {

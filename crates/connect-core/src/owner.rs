@@ -1,5 +1,8 @@
 //! Owner-computer orchestration. Only a local inherited pipe reaches the sidecar.
 //! No operator credentials or generic administrative requests cross device links.
+pub mod foreground;
+pub mod inspection;
+pub mod native;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -17,6 +20,16 @@ pub struct OwnerInfo {
     pub url: String,
     pub pin: crate::authority::TrustPin,
     pub managed: bool,
+}
+
+/// Fixed embedded discovery, without desktop files or authority activation.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddedStatus {
+    pub configured: bool,
+    pub running: bool,
+    pub foreground_only: bool,
+    pub production_create_enabled: bool,
 }
 
 /// Readiness of the fixed adapter reached over our inherited local pipe.
@@ -40,7 +53,10 @@ impl RuntimeCapabilities {
     pub fn require_pairing(&self, pin: &crate::authority::TrustPin) -> Result<()> {
         ensure!(
             self.schema == 1
-                && self.transport == "local_inherited_pipe"
+                && matches!(
+                    self.transport.as_str(),
+                    "local_inherited_pipe" | "local_android_embedded"
+                )
                 && self.core_version == required_core_version()?
                 && &self.pin == pin
                 && self
@@ -54,7 +70,11 @@ impl RuntimeCapabilities {
     pub fn require_access_update(&self, pin: &crate::authority::TrustPin) -> Result<()> {
         let expected = required_core_version()?;
         ensure!(
-            self.schema == 1 && self.transport == "local_inherited_pipe",
+            self.schema == 1
+                && matches!(
+                    self.transport.as_str(),
+                    "local_inherited_pipe" | "local_android_embedded"
+                ),
             "Update the network computer: its Connect adapter is incompatible"
         );
         ensure!(
@@ -184,6 +204,11 @@ pub fn orphaned(
 /// a device's behalf. The host is always the authenticated device.
 #[derive(Debug)]
 pub enum OwnerCall {
+    PairingCompletion {
+        node: String,
+        certificate: Value,
+        query: crate::device::pairing_completion::CompletionQuery,
+    },
     Control {
         node: String,
         certificate: Value,
@@ -222,18 +247,51 @@ pub type OwnerHandle = tokio::sync::mpsc::Sender<OwnerRequest>;
 /// Copying a large authority database takes longer than ordinary operations.
 const RECOVERY_LIMIT: Duration = Duration::from_secs(600);
 
+/// Trusted native application adapter, never an IPC command or remote proxy.
+/// Implementations serialize fixed operations and keep custody inside native code.
+pub trait NativeOwnerTransport: Send {
+    fn request(&mut self, request: Value) -> Result<Value>;
+    fn close(&mut self);
+}
+
 pub struct OwnerRuntime {
-    child: Child,
+    child: Option<Child>,
     input: Option<ChildStdin>,
     replies: mpsc::Receiver<Value>,
     /// A request was sent and its final reply has not been read.
     awaiting: bool,
+    native: Option<Box<dyn NativeOwnerTransport>>,
+    native_failed: bool,
 }
 impl OwnerRuntime {
+    pub fn embedded_status(&mut self) -> Result<EmbeddedStatus> {
+        ensure!(
+            self.native.is_some(),
+            "Embedded discovery requires a native backend"
+        );
+        let status: EmbeddedStatus = serde_json::from_value(self.request(json!({"op":"status"}))?)?;
+        ensure!(
+            status.foreground_only && !status.production_create_enabled,
+            "Unsupported embedded authority profile"
+        );
+        Ok(status)
+    }
     pub fn pairing_ready(&mut self, pin: &crate::authority::TrustPin) -> Result<()> {
         let readiness: RuntimeCapabilities =
             serde_json::from_value(self.request(json!({"op":"pairing_ready"}))?)?;
         readiness.require_pairing(pin)
+    }
+    /// Only the native app selects this backend; frontend input cannot supply it.
+    pub fn from_native(transport: Box<dyn NativeOwnerTransport>) -> Self {
+        let (_, replies) = mpsc::channel();
+        Self {
+            child: None,
+            input: None,
+            replies,
+            awaiting: false,
+            native: Some(transport),
+            native_failed: false,
+        }
     }
     pub fn resource_capabilities(
         &mut self,
@@ -319,10 +377,12 @@ impl OwnerRuntime {
             }
         });
         let runtime = Self {
-            child,
+            child: Some(child),
             input: Some(input),
             replies,
             awaiting: false,
+            native: None,
+            native_failed: false,
         };
         let hello = runtime
             .replies
@@ -343,11 +403,41 @@ impl OwnerRuntime {
     /// its final reply arrived (a timeout, say), the runtime is stopped for
     /// good: a late reply must never be read as the answer to a later request.
     fn request_within(&mut self, request: Value, limit: Duration) -> Result<Value> {
+        if let Some(native) = self.native.as_mut() {
+            ensure!(
+                !self.native_failed,
+                "Restart Connect to review the unfinished local operation"
+            );
+            ensure!(
+                !matches!(
+                    request.get("op").and_then(Value::as_str),
+                    Some("backup" | "restore" | "attach")
+                ),
+                "This native authority does not export keys or import desktop settings"
+            );
+            ensure!(
+                serde_json::to_vec(&request)?.len() <= 16 * 1024,
+                "Network setup request is too large"
+            );
+            let outcome = native.request(request).and_then(|reply| {
+                ensure!(
+                    serde_json::to_vec(&reply)?.len() <= 512 * 1024,
+                    "Network reply is too large"
+                );
+                Ok(reply)
+            });
+            if outcome.is_err() {
+                self.native_failed = true;
+            }
+            return outcome;
+        }
         let outcome = self.exchange(request, limit);
         if outcome.is_err() && self.awaiting {
             self.input.take();
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            if let Some(child) = self.child.as_mut() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
         }
         outcome
     }
@@ -430,7 +520,14 @@ impl OwnerRuntime {
     /// Whether the authority process is still running and usable. It is not
     /// after it exited, or after a request it never answered.
     pub fn is_running(&mut self) -> bool {
-        self.input.is_some() && matches!(self.child.try_wait(), Ok(None))
+        if self.native.is_some() {
+            return !self.native_failed;
+        }
+        self.input.is_some()
+            && self
+                .child
+                .as_mut()
+                .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
     }
     /// Stage the network for a recovery file: files inside the owner's private
     /// directory, the owner keys only in this reply.
@@ -538,7 +635,7 @@ impl OwnerRuntime {
     /// Answer one bridge request.
     pub fn answer(&mut self, call: OwnerCall) -> Result<Value> {
         Ok(match call {
-            OwnerCall::Control { .. } => anyhow::bail!(
+            OwnerCall::Control { .. } | OwnerCall::PairingCompletion { .. } => anyhow::bail!(
                 "Update the network computer: this host has no owner Requests adapter"
             ),
             OwnerCall::ResourceCapabilities { host, collection } => {
@@ -590,17 +687,23 @@ impl OwnerRuntime {
 }
 impl Drop for OwnerRuntime {
     fn drop(&mut self) {
+        if let Some(native) = self.native.as_mut() {
+            native.close();
+        }
+        let Some(child) = self.child.as_mut() else {
+            return;
+        };
         // EOF lets the managed authority close its server and SQLite database.
         self.input.take();
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
-            if matches!(self.child.try_wait(), Ok(Some(_))) {
+            if matches!(child.try_wait(), Ok(Some(_))) {
                 return;
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 

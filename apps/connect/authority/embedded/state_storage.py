@@ -11,13 +11,23 @@ import re
 class Refused(RuntimeError):
     pass
 
+STATE_FILES = frozenset({"state.json", "initializing.json", "root.sealed", "owner.sealed", "member.sealed", "authority.db", "member-renewal.json"})
 
 class StateStorage:
-    def __init__(self, directory):
+    def __init__(self, directory, *, publish_new=None):
         self.directory = Path(directory).absolute()
         self.lock = None
+        self.readonly = False
+        self.publish_new = os.link if publish_new is None else publish_new
 
     def acquire(self, *, create=False):
+        self._acquire(create=create, readonly=False)
+
+    def acquire_readonly(self):
+        """Lock an existing profile without creating a lock, directory or state."""
+        self._acquire(create=False, readonly=True)
+
+    def _acquire(self, *, create, readonly):
         if self.lock is not None:
             raise Refused("The authority is already open.")
         if create:
@@ -27,7 +37,8 @@ class StateStorage:
         path = self.directory / ".authority-lock"
         if path.is_symlink():
             raise Refused("Authority storage links are not permitted.")
-        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        flags = os.O_RDONLY if readonly else os.O_RDWR | os.O_CREAT
+        descriptor = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), 0o600)
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise Refused("Invalid authority lock.")
@@ -38,6 +49,7 @@ class StateStorage:
                 import fcntl
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.lock = descriptor
+            self.readonly = readonly
         except Exception:
             os.close(descriptor)
             raise Refused("Another authority is using this storage.") from None
@@ -49,11 +61,12 @@ class StateStorage:
 
     def path(self, name):
         # Only adapter constants may name files; never accept a frontend path.
-        if name not in {"state.json", "initializing.json", "owner.sealed", "member.sealed", "authority.db", "member-renewal.json"}:
+        if name not in STATE_FILES:
             raise Refused("Unsupported authority state file.")
         return self.directory / name
 
     def sync(self):
+        if self.readonly: raise Refused("Inspection cannot sync authority state.")
         if os.name != "nt":
             descriptor = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
             try: os.fsync(descriptor)
@@ -68,7 +81,7 @@ class StateStorage:
         self._write("state.json", content, replace=True)
 
     def _write(self, name, content, *, replace):
-        if self.lock is None or not isinstance(content, bytes) or not 0 < len(content) <= 65536:
+        if self.readonly or self.lock is None or not isinstance(content, bytes) or not 0 < len(content) <= 65536:
             raise Refused("Invalid authority state write.")
         descriptor, pending = tempfile.mkstemp(prefix=".state-", dir=self.directory)
         try:
@@ -77,7 +90,7 @@ class StateStorage:
                 stream.flush()
                 os.fsync(stream.fileno())
             if replace: os.replace(pending, self.path(name))
-            else: os.link(pending, self.path(name))  # Creation never replaces prior state.
+            else: self.publish_new(pending, self.path(name))  # Creation never replaces prior state.
             self.sync()
         finally:
             Path(pending).unlink(missing_ok=True)
@@ -105,7 +118,7 @@ class StateStorage:
         return content
 
     def check_files(self, *, allow_renewal=False):
-        allowed = {".authority-lock", "state.json", "owner.sealed", "member.sealed",
+        allowed = {".authority-lock", "state.json", "root.sealed", "owner.sealed", "member.sealed",
                    "authority.db", "authority.db-wal", "authority.db-shm", "authority.db-journal"}
         if allow_renewal: allowed.add("member-renewal.json")
         staged = []

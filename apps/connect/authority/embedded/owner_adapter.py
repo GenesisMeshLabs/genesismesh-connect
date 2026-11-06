@@ -45,7 +45,7 @@ class EmbeddedOwner:
     def __init__(self, directory, vault, expected_core_version):
         if version("genesis-mesh") != expected_core_version:
             raise Refused("Update the embedded authority to the pinned release.")
-        self.storage = StateStorage(directory)
+        self.storage = StateStorage(directory, publish_new=getattr(vault, "publish_new", None))
         self.vault = vault
         self.service = self.server = self.thread = None
         self.keys = self.member = self.identity = None
@@ -65,7 +65,7 @@ class EmbeddedOwner:
                 if {p.name for p in self.storage.directory.iterdir()} != {".authority-lock"}:
                     raise Refused("Existing authority state must be reopened or recovered, never replaced.")
                 instance = str(uuid.uuid4())
-                self.storage.write_new("initializing.json", encode({"schema": 2, "instance": instance}))
+                self.storage.write_new("initializing.json", encode({"schema": 3, "instance": instance}))
                 self.vault.create()  # Refuses missing-state/existing-key and partial-key situations.
                 root, na, operator, member = [generate_keypair().private_key for _ in range(4)]
                 now = datetime.now(timezone.utc)
@@ -77,26 +77,33 @@ class EmbeddedOwner:
                     root_public_key=public(root), network_authority=NetworkAuthority(public_key=public(na),
                     valid_from=now, valid_to=now + timedelta(days=90)), allowed_transports=["quic"],
                     policy_manifest=PolicyManifestRef(hash="sha256:" + hashlib.sha256(policy.to_canonical_json().encode()).hexdigest()))
+                # Root custody has a separate auth-per-use wrapping key. Seal it
+                # before founding use; ordinary open never asks to decrypt it.
+                root_sealed = bytes(self.vault.seal_root(instance, encode({"schema": 3, "instance": instance,
+                    "seed": base64.b64encode(bytes(root)).decode()})))
+                self.storage.write_new("root.sealed", root_sealed)
                 genesis.signatures.append(sign_model(genesis, root, ROOT_ID))
-                self.keys = {"root": root, "na": na, "operator": operator}
+                del root  # PyNaCl/Python cannot promise zeroization of all copies.
+                self.keys = {"na": na, "operator": operator}
                 self.member = member
-                payload = {"schema": 2, "instance": instance, "genesis": genesis.model_dump(mode="json"),
+                payload = {"schema": 3, "instance": instance, "genesis": genesis.model_dump(mode="json"),
                     "policy": policy.model_dump(mode="json"),
                     "keys": {name: base64.b64encode(bytes(key)).decode() for name, key in self.keys.items()}}
                 owner_sealed = bytes(self.vault.seal_owner(instance, encode(payload)))
-                member_sealed = bytes(self.vault.seal_member(instance, encode({"schema": 2, "instance": instance,
+                member_sealed = bytes(self.vault.seal_member(instance, encode({"schema": 3, "instance": instance,
                                               "seed": base64.b64encode(bytes(member)).decode()})))
                 # Durably seal every identity key before core can publish or use it.
                 self.storage.write_new("owner.sealed", owner_sealed)
                 self.storage.write_new("member.sealed", member_sealed)
+                self.genesis, self.policy = genesis, policy
                 self._start(genesis)
                 self.service.db.save_policy(policy, active=True)
                 certificate = self._enroll_member()
                 self._verify(genesis, policy, certificate)
-                self.genesis, self.policy = genesis, policy
                 self.identity = self._identity(instance, genesis, certificate)
-                self.state = {"schema": 2, "revision": 1, "identity": self.identity,
+                self.state = {"schema": 3, "revision": 1, "identity": self.identity,
                     "certificate": certificate.model_dump(mode="json"),
+                    "root_sha256": hashlib.sha256(root_sealed).hexdigest(),
                     "owner_sha256": hashlib.sha256(owner_sealed).hexdigest(),
                     "member_sha256": hashlib.sha256(member_sealed).hexdigest()}
                 self._commit_certificate(certificate, create=True)
@@ -108,42 +115,79 @@ class EmbeddedOwner:
                 raise
 
     def open(self):
+        """Low-level custody/readback; never writes or replays membership work."""
         return self._open()
+
+    def open_for_use(self):
+        """App activation: renew routine membership, preserve uncertain outcomes.
+
+        Recovery/readback uses open/_open, never this activation operation. Only
+        a fresh, unambiguous renewal can be automatic; an existing intent needs
+        explicit reconciliation before any further membership write.
+        """
+        with self.mutex:
+            self.vault.ready()
+            intent = self.storage.path("member-renewal.json")
+            if self.renewal_pending or intent.exists() or intent.is_symlink():
+                raise Refused("The previous membership update needs review. Check its saved result before trying again.")
+            if self.identity is None: self._open()
+            if self.certificate.expires_at - datetime.now(timezone.utc) <= timedelta(hours=1):
+                try:
+                    self.renew_member()
+                except Exception:
+                    self.close()
+                    raise Refused("The membership update could not be confirmed. Review its saved result; it was not repeated.") from None
+            self._verify(self.genesis, self.policy, self.certificate)
+            return dict(self.identity)
+
+    def _read_saved(self, *, allow_renewal=False):
+        """Authenticate saved custody only, under a held lock; never start core."""
+        if self.storage.lock is None: raise Refused("Lock the saved authority before inspection.")
+        staged = self.storage.check_files(allow_renewal=allow_renewal)
+        state_bytes = self.storage.read("state.json")
+        state = json.loads(state_bytes)
+        if type(state["schema"]) is not int or state["schema"] != 3:
+            raise Refused("This pre-release authority needs an explicit root-custody migration. Existing data was preserved.")
+        instance = state["identity"]["instance"]
+        if str(uuid.UUID(instance)) != instance: raise Refused("Invalid authority identity.")
+        self.vault.require_root_custody()  # Fixed-alias metadata only, no root decryption.
+        root_sealed, owner_sealed, member_sealed = [self.storage.read(n) for n in ("root.sealed", "owner.sealed", "member.sealed")]
+        if (hashlib.sha256(root_sealed).hexdigest() != state["root_sha256"]
+                or hashlib.sha256(owner_sealed).hexdigest() != state["owner_sha256"]
+                or hashlib.sha256(member_sealed).hexdigest() != state["member_sha256"]):
+            raise Refused("Authority storage was changed. Existing state was preserved.")
+        payload = json.loads(bytes(self.vault.open_owner(instance, owner_sealed)))
+        member = json.loads(bytes(self.vault.open_member(instance, member_sealed)))
+        if any(p["schema"] != 3 or p["instance"] != instance for p in (payload, member)):
+            raise Refused("Authority custody does not match this network.")
+        if set(payload["keys"]) != {"na", "operator"}:
+            raise Refused("Daily authority custody must not contain the root key.")
+        self.keys = {name: seed(payload["keys"][name]) for name in ("na", "operator")}
+        self.member = seed(member["seed"])
+        signed = {k: v for k, v in state.items() if k != "state_signature"}
+        if not verify_signature(STATE_DOMAIN + encode(signed), state["state_signature"], public(self.keys["operator"])):
+            raise Refused("The authority state signature is invalid.")
+        self.storage.check_evidence(state.get("recovery_evidence", {}), staged, allow_unrecorded=allow_renewal)
+        genesis = GenesisBlock.model_validate(payload["genesis"])
+        policy = PolicyManifest.model_validate(payload["policy"])
+        certificate = JoinCertificate.model_validate(state["certificate"])
+        # Owner custody is independent of a member credential's expiry.
+        # Loading an expired certificate never authorizes member operations.
+        self._verify(genesis, policy, certificate, require_current=False)
+        identity = self._identity(instance, genesis, certificate)
+        if identity != state["identity"]: raise Refused("Saved authority identity does not match its protected keys.")
+        self.identity = identity
+        self.genesis, self.policy, self.certificate = genesis, policy, certificate
+        self.state, self.state_bytes = state, state_bytes
+        self.renewal_pending = self.storage.path("member-renewal.json").exists()
 
     def _open(self, *, allow_renewal=False):
         with self.mutex:
             self.vault.ready()
             self.storage.acquire()
             try:
-                staged = self.storage.check_files(allow_renewal=allow_renewal)
-                state_bytes = self.storage.read("state.json")
-                state = json.loads(state_bytes)
-                if type(state["schema"]) is not int or state["schema"] != 2:
-                    raise Refused("Unsupported authority state. Existing data was preserved.")
-                instance = state["identity"]["instance"]
-                if str(uuid.UUID(instance)) != instance: raise Refused("Invalid authority identity.")
-                owner_sealed, member_sealed = [self.storage.read(n) for n in ("owner.sealed", "member.sealed")]
-                if (hashlib.sha256(owner_sealed).hexdigest() != state["owner_sha256"]
-                        or hashlib.sha256(member_sealed).hexdigest() != state["member_sha256"]):
-                    raise Refused("Authority storage was changed. Existing state was preserved.")
-                payload = json.loads(bytes(self.vault.open_owner(instance, owner_sealed)))
-                member = json.loads(bytes(self.vault.open_member(instance, member_sealed)))
-                if any(p["schema"] != 2 or p["instance"] != instance for p in (payload, member)):
-                    raise Refused("Authority custody does not match this network.")
-                self.keys = {name: seed(payload["keys"][name]) for name in ("root", "na", "operator")}
-                self.member = seed(member["seed"])
-                signed = {k: v for k, v in state.items() if k != "state_signature"}
-                if not verify_signature(STATE_DOMAIN + encode(signed), state["state_signature"], public(self.keys["operator"])):
-                    raise Refused("The authority state signature is invalid.")
-                self.storage.check_evidence(state.get("recovery_evidence", {}), staged, allow_unrecorded=allow_renewal)
-                genesis = GenesisBlock.model_validate(payload["genesis"])
-                policy = PolicyManifest.model_validate(payload["policy"])
-                certificate = JoinCertificate.model_validate(state["certificate"])
-                # Owner custody is independent of a member credential's expiry.
-                # Loading an expired certificate never authorizes member operations.
-                self._verify(genesis, policy, certificate, require_current=False)
-                identity = self._identity(instance, genesis, certificate)
-                if identity != state["identity"]: raise Refused("Saved authority identity does not match its protected keys.")
+                self._read_saved(allow_renewal=allow_renewal)
+                genesis, policy, certificate, identity = self.genesis, self.policy, self.certificate, self.identity
                 database = self.storage.path("authority.db")
                 if database.is_symlink() or not database.is_file() or database.stat().st_size == 0:
                     raise Refused("The existing authority database is missing.")
@@ -157,10 +201,6 @@ class EmbeddedOwner:
                     saved = db.execute("SELECT policy_json FROM policy_versions WHERE active=1").fetchall()
                     if len(saved) != 1 or PolicyManifest.model_validate_json(saved[0][0]) != policy:
                         raise Refused("The persisted policy does not match this authority profile.")
-                self.identity = identity
-                self.genesis, self.policy, self.certificate = genesis, policy, certificate
-                self.state, self.state_bytes = state, state_bytes
-                self.renewal_pending = self.storage.path("member-renewal.json").exists()
                 self._start(genesis)
                 return dict(identity)
             except Exception:
@@ -170,18 +210,32 @@ class EmbeddedOwner:
     def _verify(self, genesis, policy, certificate, *, require_current=True):
         na = genesis.network_authority
         now = datetime.now(timezone.utc)
-        if (public(self.keys["root"]) != genesis.root_public_key or public(self.keys["na"]) != na.public_key
-                or not na.valid_from <= now <= na.valid_to
-                or not genesis.signatures or not all(verify_model_signature(genesis, s, genesis.root_public_key) for s in genesis.signatures)
-                or not policy.signatures or not all(verify_model_signature(policy, s, na.public_key) for s in policy.signatures)
-                or genesis.policy_manifest.hash != "sha256:" + hashlib.sha256(policy.to_canonical_json().encode()).hexdigest()
-                or certificate.node_public_key != public(self.member) or certificate.network_name != genesis.network_name
-                or certificate.roles != ["role:client"] or certificate.issued_at > certificate.expires_at
-                or certificate.issued_at - timedelta(minutes=5) > now
-                or (require_current and not (certificate.is_valid(now) and certificate.issued_at <= now < certificate.expires_at))
-                or certificate.issued_by != NA_ID or not certificate.signatures
-                or not all(verify_model_signature(certificate, s, na.public_key) for s in certificate.signatures)):
-            raise Refused("The protected network identity or membership is invalid.")
+        if public(self.keys["na"]) != na.public_key:
+            raise Refused("The protected authority key does not match the founding record.")
+        # Core displays, but does not enforce, the founding authority key's
+        # legacy end date. Successor-key lifetimes remain core's responsibility.
+        if na.valid_from - timedelta(minutes=5) > now:
+            raise Refused("The founding authority key is not valid yet. Check this device's clock.")
+        if not genesis.signatures or not all(verify_model_signature(genesis, s, genesis.root_public_key) for s in genesis.signatures):
+            raise Refused("The founding record signature is invalid.")
+        if not policy.signatures or not all(verify_model_signature(policy, s, na.public_key) for s in policy.signatures):
+            raise Refused("The protected policy signature is invalid.")
+        if genesis.policy_manifest.hash != "sha256:" + hashlib.sha256(policy.to_canonical_json().encode()).hexdigest():
+            raise Refused("The protected policy does not match the founding record.")
+        if certificate.node_public_key != public(self.member) or certificate.network_name != genesis.network_name:
+            raise Refused("The membership does not match this device or network.")
+        if certificate.roles != ["role:client"]:
+            raise Refused("The protected membership roles are invalid.")
+        if certificate.issued_at > certificate.expires_at:
+            raise Refused("The protected membership validity window is invalid.")
+        if certificate.issued_at - timedelta(minutes=5) > now:
+            raise Refused("The membership was issued in the future. Check this device's clock.")
+        if require_current and not (certificate.is_valid(now) and certificate.issued_at <= now < certificate.expires_at):
+            raise Refused("The protected membership is expired or not active yet.")
+        if certificate.issued_by != NA_ID:
+            raise Refused("The protected membership issuer is invalid.")
+        if not certificate.signatures or not all(verify_model_signature(certificate, s, na.public_key) for s in certificate.signatures):
+            raise Refused("The protected membership signature is invalid.")
 
     def _identity(self, instance, genesis, certificate):
         return {"instance": instance, "network_name": genesis.network_name, "root_public_key": genesis.root_public_key,

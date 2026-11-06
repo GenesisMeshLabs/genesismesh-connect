@@ -79,7 +79,278 @@ encrypted vault; these tests do not qualify Android Keystore. CI runs them again
 the single pinned core. Native build/installation and actual device acceptance
 are recorded separately in `docs/plan-progress.md`.
 
+## Android state publication
+
+Android app domains forbid hard links. The Android custody adapter therefore
+publishes fsynced staging files with Bionic `renameat2(RENAME_NOREPLACE)` through
+the already-pinned CFFI runtime. Existing targets are refused atomically; there
+is no check-then-overwrite or permission-policy fallback. Desktop publication
+is unchanged. This owner qualification profile requires Android API35 or later
+and a successful private-storage capability probe; the general runtime/client
+minimum is unchanged.
+
+Before owner creation/reopen, the harness verifies publication and collision
+preservation using public bytes in a fresh temporary directory. It never probes
+over existing authority files. A directory containing only the advisory lock
+can enter explicit initial creation only when both fixed native custody aliases
+are absent. Native create rechecks aliases and the core adapter rechecks files
+under its lock. Existing markers, sealed state, staging, unknown files or either
+alias always reopen/refuse; nothing is cleared or replaced. This handles a
+failure before the initialization marker without resetting initialized custody.
+
+These operations change no device security settings. Public Create stays
+disabled; physical evidence is recorded separately from host tests and builds.
+
+On 6 November 2026, source `3a1c7e9` passed on the physical Samsung SM-A176B
+(API36) in the isolated engine-check package. The in-place update preserved
+application data. Atomic publication/collision preservation, genuine local
+authority/member checks, purpose-separated custody and close/reopen passed.
+A separate cold process launch reopened the existing qualification network with
+the same four public identity fingerprints and certificate ID. The source and
+installed APK hashes and both run IDs/fingerprints are retained locally under
+the isolated storage-fix worktree's ignored `temp/` directory.
+
+This qualifies that positive storage/create/reopen/process-persistence slice,
+not public Connect Create, device reboot/lock/suspend, missing/corrupt custody,
+recovery, second-device integration or nontechnical usability. Production mobile
+Create stays disabled. No PIN automation, permission changes, app-data reset,
+startup-failure revalidation or merge was performed for this repair.
+
 ## Dependency gate
+
+### Application adapter integration boundary
+
+`embedded/connect_owner.py` supplies bounded fixed Connect operations over the
+embedded core, reusing the desktop invitation, Space, policy and revocation
+implementation. Native activation uses routine membership maintenance. Public
+Space metadata is signed and root-bound in a separate private registry; missing
+or changed initialized metadata is refused rather than reset. No attach,
+private-key backup/restore, arbitrary route, filesystem or Python-name operation
+exists on this boundary. Uncertain results stop automatic reuse. The registry
+does not provide hardware anti-rollback protection.
+
+`OwnerRuntime::from_native` is a native-code-only transport seam with existing
+typed operations and readiness checks. It bounds requests/replies, refuses
+key export and desktop import, and stops reuse after an uncertain result. It
+does not expose a Tauri command or enable Create. Opt-in qualification packaging
+and a private Android plugin now connect it to `ConnectOwner`: the plugin rejects
+frontend invocation, uses a fixed native directory and fences uncertain or stale
+sessions. The default app still has no embedded-owner activation. The Android
+bridge library compiles, but the full Rust/app build and app-integrated
+system-prompt/lifecycle checks remain open; see [the build-only bridge](../spikes/android-owner-bridge/README.md).
+The focused CI workflow runs an explicit
+allowlist of host real-core and native transport tests, not the full excluded
+startup-failure suite.
+
+App activation uses `EmbeddedOwner.open_for_use`: an expired membership, or one
+with at most an hour left, is renewed automatically through the same genuine
+core enrollment and signed durable intent as explicit recovery. Identity keys
+and root ciphertext stay unchanged; a healthy reopen issues nothing. An existing
+intent or an uncertain reply requires explicit readback/reconciliation and is
+never replayed on reopen. Revoked membership is not re-enrolled. The low-level
+`open` operation remains read-only for recovery tools. This does not enable
+Create in the main app or make a background-availability promise.
+
+### Foreground setup/open coordination
+
+`owner::foreground::ForegroundSetup` is a portable native-only coordinator over
+an injected `OwnerRuntime` and the existing `DeviceController`. Its native
+configuration selects fixed `device`, `foreground-setup.json` and
+`foreground-setup.lock` paths beneath OS-private application storage. Embedded
+authority discovery uses the strict native `status` response, not `owner.json`
+or a desktop executable. Create and Open are separate choices; Open never
+falls back to creation, and Create refuses any existing device, journal or
+configured authority custody.
+
+The exclusive bounded journal reserves every nonrepeatable stage before work:
+
+| Saved stage | Allowed continuation after an explicit fresh Open |
+| --- | --- |
+| Authority reserved | Open protected existing custody if native discovery finds it; otherwise stop for review |
+| Authority ready | Reserve device preparation before creating one profile |
+| Device preparing | Open the existing saved profile; missing/invalid state is preserved for review |
+| Device ready | Invite the exact bound node once, after saving the reservation |
+| Invitation reserved | Stop for review; a lost invitation is not issued again |
+| Enrollment reserved | Finish only from an already saved matching host credential; otherwise stop for review |
+| Ready | Open the same pin/node/credential and rebind to the current numeric-loopback origin |
+
+Existing invitation and host-enrollment implementations perform the actual
+core work. The coordinator stores no invite tokens, private keys or authority
+URLs in the progress journal. Invitations live briefly in zeroizing memory;
+cancelled enrollment retains the controller's existing pending marker. Errors
+fence that coordinator instance, and journal changes are checked before further
+work. A completed result retains an exclusive journal lease alongside its runtime
+and controller. Expired or unexpectedly changed saved credentials require
+maintenance/review; this slice adds no automatic re-enrollment or recovery action.
+Progress is local state, not authorization, rollback protection or independent
+core audit evidence. Resource use still follows the ordinary core checks.
+
+Under the disabled Android qualification feature, the private workflow factory
+calls `android_owner::prepare`, runs blocking native work on a worker, and uses
+the existing async enrollment path. Native code canonicalizes the OS-selected
+application directory; debug profile overrides do not select this configuration.
+Saved local-owner startup is deferred until explicit foreground Open can rebind
+the controller, avoiding maintenance against a stale loopback port. Ordinary
+desktop startup and member-phone joining remain on their existing paths. No
+frontend command, public Create/admin gate or automatic startup invokes the
+factory. The completed membership inspector remains unchanged and read-only.
+
+Validation is source/host-fixture-only: five portable refusal tests and seven
+explicit disposable real-core fixtures cover identity-preserving reopen,
+forced port changes, lost replies, interrupted device preparation, cancelled
+enrollment and readback of saved completion without another invitation. They
+use test-only encrypted custody and an explicitly selected disposable sealed
+device store, not Android Keystore. The focused workflow repeats these exact
+fixtures; it does not discover excluded startup-failure tests. The Android app
+boundary/full APK, physical lifecycle, recovery and second-device journey remain
+unperformed for this coordinator. The completed Root Check network is untouched.
+
+### Embedded-owner comparison-code pairing chain
+
+The next host integration uses the completed `ForegroundNetwork` as the only
+authority for its owner profile and an independently protected second device.
+The second profile is prepared with `prepare_remote`: it receives no local NA
+URL or operator credentials. Its comparison-code ceremony, signed host proof,
+grant delivery, enrollment and trust refresh use the existing QUIC pairing and
+authority-bridge paths to that embedded core. Fixtures use local connectivity
+and actual loopback QUIC sockets, with no public relay dependency.
+
+Shared `DeviceController` pairing-flow methods now drive both the app-shell
+consumer flow and these fixtures. The exact request ID, node key, display name
+and six-digit comparison code are checked under the existing PairHost gate
+before a core invitation. An approval is reserved before its native callback;
+an error or lost response cannot release that reservation for another invite.
+This reservation belongs to a temporary, non-restorable pairing endpoint, not
+a durable approval journal. Restart ends that ceremony and its old request;
+a new ceremony requires a new explicit review. Decline issues no invitation.
+
+The joining device's existing encrypted enrollment-pending marker now blocks
+another enrollment or pairing attempt. A failed final confirmation retains the
+same node, saved credential and bridge route, but the client stores its paired
+relationship only after observing confirmation. This is an incomplete outcome
+for explicit review, not permission to repeat enrollment. Recovery of that
+outcome is not implemented by these changes.
+
+Before the owner remembers or confirms a candidate, it proves the exact peer
+over QUIC and checks that certificate against freshly fetched core trust. The
+same candidate check is shared with Requests commit verification. No await lies
+between that fresh verification and the local relationship write. A genuine
+core revocation during joining therefore refuses commit even when earlier
+session snapshots still authenticate. After trust refresh, a previously paired
+revoked member is refused by both sides' QUIC paths. Stored names or prior
+pairing do not override membership or resource policy.
+
+Six explicit disposable real-core fixtures cover exact-target rejection and
+approval, decline, an unobserved native invitation response, interrupted
+enrollment, an unobserved final confirmation and revocation before/after commit.
+Test-only HTTP path counters check that enrollment is not repeated; tokens,
+request bodies and private keys are not logged. The previous seven coordinator
+fixtures, fifteen focused native/type/refusal checks and one shared-gate test
+also pass: 29 Rust checks in this source/host slice. Four negative fixtures
+failed before the bounded fixes and pass afterward. CI explicitly selects the
+fixture files; no broad startup-failure suite is discovered.
+
+These observations prove the bounded host chain, not two physical devices,
+human comparison or first-use acceptance. App-shell wiring is source-reviewed,
+not a new full-app/Android boundary build. Public Create/admin gates and the
+read-only recovery inspector are unchanged. No phone state, install/reset,
+publication, merge, deployment or blocked build retry occurred.
+The exchanged diagnostic messages qualify session membership checks, not
+additional file/service policy or resource-sharing journeys.
+
+### Read-only interrupted-membership inspection
+
+A separate native-only inspection path reads an existing protected profile and
+signed renewal intent without activating the authority. It uses a fresh inspection
+session, never the uncertain writer session, and does not clear that writer's
+poisoned state. The profile must be idle: an active owner lock, changed snapshot,
+nonempty SQLite WAL/journal, invalid evidence or bounded-history limit produces
+an unavailable/ambiguous observation. Inspection never checkpoints or repairs
+the database, creates a lock file, renews, enrolls, reconciles, cancels, resets,
+commits state or decrypts the root. Only daily owner/member custody is opened.
+
+The bounded typed report distinguishes an exact linked recorded outcome, no
+new issuance observed in the snapshot, ambiguous/invalid evidence, and no pending
+update. Authenticated reports carry the network/device identity, operation UUID
+and signed-intent digest. None of these statuses authorizes a retry or adoption;
+even a matching expired certificate remains expired.
+
+Existing schema-1 intents lack an exact operation-to-certificate link. A single
+new compatible certificate therefore remains ambiguous. The reader also accepts
+a schema-2 signed reference containing the exact certificate ID and digest; this
+is exercised only by disposable real-core fixtures. No production schema-2 writer
+or recovery action is introduced, and existing activation/reconciliation fences
+remain unchanged. That reference is a local authenticated observation, not an
+independently verifiable core audit receipt or proof of complete issuance history.
+
+Host checks cover scope/signature/reference failures, multiple or missing
+outcomes, revoked/expired/future certificates, journal refusal, unchanged file
+bytes/inventory/mtime, and preservation of poisoned-session/activation fences.
+The private Java/Kotlin/Python library compiles with the inspector included;
+this does not qualify a complete Android app or physical custody/recovery.
+
+### Separate root custody
+
+New embedded profiles use schema 3: `root.sealed` is wrapped under a separate
+Android Keystore alias, with authentication required for each cryptographic
+operation. A native `BiometricPrompt.CryptoObject` binds a fresh strong biometric
+or screen-lock confirmation to that exact cipher operation. Daily owner custody
+contains only authority/operator keys; the member has a separate envelope.
+Ordinary reopen checks root-ciphertext integrity, the root alias policy and the
+public signed founding record, and never decrypts the root. No root export or
+generic signing command is added. Root signing in Python cannot promise complete
+memory zeroization; this is wrapped software identity custody, not a hardware
+Ed25519 signing implementation.
+
+Per-use root operations authenticate the initialized cipher before sending any
+GCM authenticated context or payload. Android's provider can cache an early AAD
+failure and report it later from `doFinal`; a successful prompt cannot repair
+that already-failed operation. The shared `ProtectedRecordCipher` keeps this
+order for both wrapping and unwrapping, with a host regression for exact-cipher
+authorization, denial, cached failures and real GCM context integrity. Root policy
+and the sealed-record format are unchanged. Host tests do not qualify a device.
+See [Android Keystore's AAD/error handling](https://android.googlesource.com/platform/frameworks/base/+/5e1b258dd5beca122cef6dc2cb857bd559db9bc3/keystore/java/android/security/keystore2/AndroidKeyStoreCipherSpiBase.java).
+
+On 6 November 2026, standalone Root Check source `69a8e17` passed on the Samsung
+SM-A176B/API36. Native system confirmation completed, the root was wrapped, and
+the real core created and checked the local authority/member. In-process
+close/reopen passed. After force-stop and cold launch, the check reopened the
+same four public identities and certificate, requested no root authentication,
+and preserved the root/owner/member ciphertext and committed state bytes.
+The completed qualification network is retained. This accepts that positive
+creation/reopen slice only: root decryption/recovery, destructive interruptions,
+second-device enrollment and the full Connect bridge remain unqualified. The
+[observation record](evidence/android-root-custody-2026-11-06.json) contains no
+credential or key material and is not independent core audit evidence.
+
+The owner profile now requires Android 15/API35 to avoid older Android
+unlocked-device-key lifecycle defects. General client Join remains unchanged.
+Schema-2 qualification profiles are preserved and refused before decryption;
+an explicit migration/recovery ceremony is not implemented. Qualify new custody
+without touching the installed old profile by building the isolated engine APK
+with `-ProotCustodyQualification=true` and installing with `-AppKind RootCheck`.
+Its fixed package is `org.genesismesh.connect.authoritycheck.rootcheck`.
+Creation asks for system authentication on the phone; never enter its credential
+through automation. Root succession, mobile recovery and production Create
+remain gated.
+
+References: [Android auth-per-use crypto](https://developer.android.com/reference/android/hardware/biometrics/BiometricPrompt.CryptoObject),
+[Keystore authentication and unlocked-device policy](https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec.Builder).
+
+Root policy qualification accepts both per-use timeout representations: `-1`
+in the public KeyInfo documentation and `0` in current Keystore2. It still
+requires authentication and the exact strong-biometric/device-credential types,
+rejects positive cached-authentication windows and binds every use to its
+own system CryptoObject prompt. See [KeyInfo](https://developer.android.com/reference/android/security/keystore/KeyInfo)
+and [AOSP Keystore2 metadata](https://github.com/aosp-mirror/platform_frameworks_base/blob/master/keystore/java/android/security/keystore2/AndroidKeyStoreSecretKeyFactorySpi.java).
+
+The embedded owner follows core's founding-key lifetime semantics: the genesis
+authority's legacy `valid_to` is informational. Its `valid_from` retains a
+five-minute clock tolerance. This does not relax successor-key lifetimes or
+membership validity. A real-core, controlled-clock regression reopens the same
+identity on day 91 while refusing the expired member credential. Verification
+reports the particular signature, key binding, time, policy or membership check
+that failed, without including private values.
 
 Run from the repository root, using a Python environment with pip:
 
@@ -210,3 +481,19 @@ References: [Chaquopy Gradle integration](https://chaquo.com/chaquopy/doc/curren
 [Chaquopy package guidance](https://chaquo.com/chaquopy/doc/current/faq.html),
 [cibuildwheel Android builds](https://cibuildwheel.pypa.io/en/latest/platforms/),
 [Android 16 KiB support](https://developer.android.com/guide/practices/page-sizes).
+
+### Protected operations through the embedded host
+
+The disposable embedded-host chain now covers nested folder browsing and
+multi-window file transfer in both directions, including a client that reopened
+and explicitly recovered its original pairing completion. It also covers a real
+TCP service shared by a joined device through the authority bridge. Policy
+narrowing, stale edits, missing permission, revocation and a normal authority
+shutdown are refusal cases, with confirmed download bytes preserved.
+
+The bounded service I/O buffers now live on the heap, after the real TCP fixture
+reproduced excessive stack use. No protocol or authority limits changed.
+See the [dated host validation record](evidence/embedded-resources-2026-11-06.json)
+and focused `foreground_resources` target. These source/host checks do not
+complete the physical phone or app-shell gates above, and no production gate is
+enabled by their success.

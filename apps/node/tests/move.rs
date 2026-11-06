@@ -111,6 +111,7 @@ fn a_desktop_network_moves_onto_a_server_and_its_phone_keeps_working() -> Result
     let completion = pair.approve(
         &request.id,
         PairGrant {
+            completion: None,
             invitation,
             route: BridgeRoute {
                 host_node: host.node_public_key.clone(),

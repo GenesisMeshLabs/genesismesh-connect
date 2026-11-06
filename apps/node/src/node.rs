@@ -679,6 +679,7 @@ async fn approve(node: &Shared, id: &str) -> Result<()> {
         node.device.start(&request.node).await?;
         let status = node.device.status()?;
         let grant = PairGrant {
+            completion: None,
             invitation,
             route: BridgeRoute {
                 host_node: status.node_public_key,

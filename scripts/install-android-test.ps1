@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Apk,
-    [ValidateSet('Connect', 'EngineCheck')][string]$AppKind = 'Connect',
+    [ValidateSet('Connect', 'EngineCheck', 'RootCheck')][string]$AppKind = 'Connect',
     [string]$DeviceSerial,
     [string]$SdkRoot = "$env:LOCALAPPDATA\Android\Sdk",
     [string]$JavaHome = 'C:\Program Files\Android\Android Studio\jbr',
@@ -11,7 +11,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $connectRoot = Split-Path -Parent $PSScriptRoot
-$package = if ($AppKind -eq 'EngineCheck') { 'org.genesismesh.connect.authoritycheck' } else { 'org.genesismesh.connect.qualification' }
+$package = switch ($AppKind) {
+    'EngineCheck' { 'org.genesismesh.connect.authoritycheck' }
+    'RootCheck' { 'org.genesismesh.connect.authoritycheck.rootcheck' }
+    default { 'org.genesismesh.connect.qualification' }
+}
 $apkPath = (Resolve-Path -LiteralPath $Apk).Path
 if (-not (Test-Path -LiteralPath $apkPath -PathType Leaf)) { throw 'Provide an APK file.' }
 $adb = Join-Path $SdkRoot 'platform-tools\adb.exe'

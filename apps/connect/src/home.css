@@ -696,3 +696,8 @@
 .host-admin-review-lines dt{font-weight:600}.host-admin-review-lines dd{margin:0;overflow-wrap:anywhere}
 .host-admin-footer{display:flex;align-items:center;gap:16px;border-top:1px solid var(--border,#466249);margin-top:24px;padding-top:16px}
 @media(max-width:540px){.host-admin-review-lines{grid-template-columns:1fr;gap:6px}.host-admin-review-lines dd{margin-bottom:10px}.host-admin-footer{align-items:start;flex-direction:column}.host-admin-entry{padding:16px}}
+
+/* Keep the saved-request story and its primary readback action in view on phones. */
+#client-requests-dialog .host-admin-footer {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+#client-requests-check {grid-column:1 / -1}
+#client-requests-dialog .host-admin-footer button {width:100%;padding:12px 8px}

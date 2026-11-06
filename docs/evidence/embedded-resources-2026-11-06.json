@@ -1,0 +1,72 @@
+{
+  "date": "2026-11-06",
+  "baseline_commit": "76885bd1cbbb9fc82adbba70df7371aee028b2d3",
+  "scope": "Disposable embedded foreground authority, native fixed adapter, independent sealed profiles and real QUIC/core resource operations; no device or full-app boundary",
+  "toolchain": "WSL Ubuntu-24.04, rustc 1.99.0 (b940084d7 2026-09-28)",
+  "dependency_pins": [
+    "crates/connect-core/Cargo.toml",
+    "apps/connect/authority/core-requirements.txt"
+  ],
+  "checks": {
+    "foreground_resources": 6,
+    "existing_service_limit_units": 2
+  },
+  "passed_total_this_slice": 8,
+  "prior_checkpoint": {
+    "commit": "76885bd1cbbb9fc82adbba70df7371aee028b2d3",
+    "passed_recorded": 41,
+    "status": "Historical checkpoint; not rerun or counted as new checks in this slice"
+  },
+  "scenarios": [
+    "Client reopens after lost final reply, explicitly finishes original pairing without another invitation/join, then nested browsing and multi-window binary downloads work in both directions with exact bytes and SHA256.",
+    "Actual core evaluation path is observed for listing and every download window, including requests from a sharing member using only the authority bridge.",
+    "A paired cryptographically authenticated member without resource permission gets no directory response or file output.",
+    "Narrowing the full-file byte policy stops the next transfer window without extending staging; an explicit new policy version permits the same snapshot to resume.",
+    "Genuine member revocation stops metadata and further file output before cached diagnostic endpoint trust is refreshed, without re-enrollment.",
+    "Normal shutdown of an already-running embedded authority refuses protected metadata and further download bytes while cached diagnostic transport remains available.",
+    "A joined device shares a real local TCP echo service through the authenticated bridge and native adapter. Wrong kind/collection do not dial its target; an explicit policy change closes its active stream and blocks new target connections; a stale version edit is refused."
+  ],
+  "fix": {
+    "symptom": "The composed real TCP integration fixture overflowed the ordinary test-thread stack with inline service I/O buffers.",
+    "change": "Allocate the same two 64-KiB buffers on the heap rather than embedding them in composed async stack frames.",
+    "validation": "The same unboxed service journey passes on the normal stack after the change; both existing target-limit and shared-byte-budget tests pass.",
+    "unchanged": [
+      "protocol",
+      "cryptographic checks",
+      "core policy semantics",
+      "shared bidirectional byte budget",
+      "buffer capacity"
+    ]
+  },
+  "other_checks": [
+    "cargo fmt --all --check",
+    "actionlint focused workflow",
+    "connect-contract check: 419 declarations, zero complete accepted outcomes",
+    "git diff --check"
+  ],
+  "automation": {
+    "workflow": ".github/workflows/android-owner-focused.yml",
+    "target": "crates/connect-core/tests/foreground_resources.rs",
+    "feature": "pairing-completion-recovery",
+    "fixture_python_env": "CONNECT_FOREGROUND_FIXTURE_PYTHON",
+    "dispatch": "Not dispatched; repeatable commands added locally"
+  },
+  "unperformed": [
+    "Full app boundary and physical Android/iPhone testing",
+    "Public first-use/administration/recovery acceptance",
+    "Phone lock/suspend/reboot or background availability",
+    "Independent audit or execution-evidence export",
+    "Minimum-toolchain hosted CI for this local commit"
+  ],
+  "preserved": [
+    "Production Create/admin/recovery gates",
+    "Completed read-only membership inspector",
+    "Retained phone/Connect/qualification data"
+  ],
+  "excluded_actions": [
+    "Device operations or installation/reset",
+    "OS4551-blocked full-app/APK retry or alternate route",
+    "Excluded startup-failure cases or denied access/CLI operations",
+    "Push/publication/merge/deploy"
+  ]
+}

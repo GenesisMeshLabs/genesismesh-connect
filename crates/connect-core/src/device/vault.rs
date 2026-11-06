@@ -1,3 +1,4 @@
+use super::pairing_completion::{ClientCompletion, CompletionReference, HostCompletion};
 use crate::authority::TrustPin;
 use crate::session::bridge::BridgeRoute;
 #[cfg(windows)]
@@ -110,6 +111,46 @@ struct Record {
     #[serde(default)]
     #[zeroize(skip)]
     bridge_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[zeroize(skip)]
+    pairing_completions: Vec<HostCompletion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[zeroize(skip)]
+    pending_completion: Option<ClientCompletion>,
+    #[serde(
+        default,
+        deserialize_with = "completion_bindings",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    #[zeroize(skip)]
+    completion_bindings: std::collections::BTreeMap<String, String>,
+}
+
+fn completion_bindings<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<std::collections::BTreeMap<String, String>, D::Error> {
+    struct UniqueBindings;
+    impl<'de> serde::de::Visitor<'de> for UniqueBindings {
+        type Value = std::collections::BTreeMap<String, String>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("up to 32 unique original pairing bindings")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> std::result::Result<Self::Value, A::Error> {
+            let mut values = Self::Value::new();
+            while let Some((node, digest)) = map.next_entry::<String, String>()? {
+                if values.len() >= 32 || values.insert(node, digest).is_some() {
+                    return Err(serde::de::Error::custom(
+                        "Ambiguous or oversized pairing bindings",
+                    ));
+                }
+            }
+            Ok(values)
+        }
+    }
+    deserializer.deserialize_map(UniqueBindings)
 }
 
 pub(super) struct Vault {
@@ -118,6 +159,9 @@ pub(super) struct Vault {
 }
 
 impl Vault {
+    pub(super) fn storage_id(&self) -> &str {
+        &self.record.storage_id
+    }
     pub fn create(path: &Path, authority: Option<String>, pin: TrustPin) -> Result<Self> {
         let mut seed = Zeroizing::new([0; 32]);
         getrandom::fill(seed.as_mut())?;
@@ -148,6 +192,9 @@ impl Vault {
             own_connectivity: None,
             session_port: None,
             bridge_port: None,
+            pairing_completions: Vec::new(),
+            pending_completion: None,
+            completion_bindings: Default::default(),
         };
         persist(path, &record, true)?;
         Ok(Self {
@@ -322,6 +369,16 @@ impl Vault {
             },
         })
     }
+    pub fn existing_transport(&self) -> Result<crate::connectivity::Transport> {
+        Ok(crate::connectivity::Transport {
+            key: iroh::SecretKey::from(
+                self.record
+                    .transport_seed
+                    .ok_or_else(|| anyhow::anyhow!("Original pairing transport key is missing"))?,
+            ),
+            port: self.record.session_port,
+        })
+    }
     pub fn save_transport_port(&mut self, bridge: bool, port: Option<u16>) -> Result<()> {
         let saved = if bridge {
             self.record.bridge_port
@@ -403,6 +460,7 @@ impl Vault {
         );
         self.update(|record| {
             record.peers.retain(|p| p.node != node);
+            record.completion_bindings.remove(node);
             if record.peer.as_deref() == Some(node) {
                 record.peer = record.peers.first().map(|p| p.node.clone());
             }
@@ -581,23 +639,136 @@ impl Vault {
         self.update(|record| record.consumer_mode = true)
     }
     pub fn save_pairing(&mut self, peer: super::PairedDevice) -> Result<()> {
+        self.save_completed_pairing(peer, None, false)
+    }
+    /// Relationship and causal completion evidence share one sealed atomic write.
+    pub fn save_completed_pairing(
+        &mut self,
+        peer: super::PairedDevice,
+        digest: Option<&str>,
+        host: bool,
+    ) -> Result<()> {
         validate_peer(&peer)?;
         ensure!(
             self.record.peers.len() < 32 || self.record.peers.iter().any(|p| p.node == peer.node),
             "This network computer supports up to 32 saved devices"
         );
+        if let Some(digest) = digest {
+            if host {
+                let found = self.host_completion(digest)?;
+                ensure!(
+                    found.reference.target.node == peer.node && found.member_endpoint.is_none(),
+                    "Original host completion is missing or already committed"
+                );
+            } else {
+                let found = self.client_completion()?;
+                ensure!(
+                    found.reference.digest()? == digest && found.reference.host == peer.node,
+                    "Original client completion is missing or conflicting"
+                );
+            }
+        }
+        let endpoint = crate::session::ticket_endpoint(&peer.ticket)?.to_string();
         self.update(|record| {
+            // Ordinary relationship writes never inherit old approval attribution.
+            record.completion_bindings.remove(&peer.node);
+            if let Some(digest) = digest {
+                record
+                    .completion_bindings
+                    .insert(peer.node.clone(), digest.into());
+                if host {
+                    record
+                        .pairing_completions
+                        .iter_mut()
+                        .find(|c| c.reference.digest().ok().as_deref() == Some(digest))
+                        .expect("checked reference")
+                        .member_endpoint = Some(endpoint);
+                } else {
+                    record
+                        .pending_completion
+                        .as_mut()
+                        .expect("checked client reference")
+                        .finished = true;
+                }
+            }
             record.peer = Some(peer.node.clone());
             record.peers.retain(|p| p.node != peer.node);
             record.members.retain(|m| m.node != peer.node);
             record.peers.push(peer.clone());
-            // Paired devices come first within the 32 a session allows.
             record
                 .members
                 .truncate(32usize.saturating_sub(record.peers.len()));
             record.paired = Some(peer);
             record.auto_connect = true;
         })
+    }
+    pub fn reserve_completion(&mut self, reference: CompletionReference) -> Result<()> {
+        reference.check()?;
+        ensure!(
+            self.record.pairing_completions.len() < 32
+                && self
+                    .record
+                    .pairing_completions
+                    .iter()
+                    .all(|c| c.reference.target.request_id != reference.target.request_id),
+            "Original pairing reference already reserved or history is full"
+        );
+        self.update(|record| {
+            record.pairing_completions.push(HostCompletion {
+                reference,
+                member_endpoint: None,
+            })
+        })
+    }
+    pub fn save_client_completion(
+        &mut self,
+        reference: CompletionReference,
+        host_name: String,
+    ) -> Result<()> {
+        reference.check()?;
+        ensure!(
+            self.record.pending_completion.is_none(),
+            "Review the original pairing completion first"
+        );
+        self.update(|record| {
+            record.pending_completion = Some(ClientCompletion {
+                reference,
+                host_name,
+                finished: false,
+            })
+        })
+    }
+    pub fn client_completion(&self) -> Result<&ClientCompletion> {
+        self.record.pending_completion.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Original pairing completion reference is missing; membership is not approval"
+            )
+        })
+    }
+    pub fn host_completion(&self, digest: &str) -> Result<&HostCompletion> {
+        let mut found = self
+            .record
+            .pairing_completions
+            .iter()
+            .filter(|c| c.reference.digest().ok().as_deref() == Some(digest));
+        let record = found
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Original host approval evidence is missing"))?;
+        ensure!(
+            found.next().is_none(),
+            "Original host approval evidence is ambiguous"
+        );
+        Ok(record)
+    }
+    pub fn require_completion_binding(&self, node: &str, digest: &str) -> Result<()> {
+        ensure!(
+            self.record
+                .completion_bindings
+                .get(node)
+                .is_some_and(|d| d == digest),
+            "Original relationship evidence is missing or superseded"
+        );
+        Ok(())
     }
     fn update(&mut self, edit: impl FnOnce(&mut Record)) -> Result<()> {
         let mut next = self.record.clone();
@@ -642,6 +813,35 @@ fn check_shares(shares: &[crate::session::sharing::ShareConfig]) -> Result<()> {
 }
 
 fn migrate_peers(record: &mut Record) -> Result<()> {
+    let own = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        SigningKey::from_bytes(&record.seed)
+            .verifying_key()
+            .to_bytes(),
+    );
+    ensure!(
+        record.pairing_completions.len() <= 32 && record.completion_bindings.len() <= 32,
+        "Pairing completion history is too large"
+    );
+    let mut ids = std::collections::BTreeSet::new();
+    for evidence in &record.pairing_completions {
+        evidence
+            .reference
+            .require_scope(&record.pin, &own, &evidence.reference.target.node)?;
+        ensure!(
+            ids.insert(&evidence.reference.target.request_id),
+            "Ambiguous original pairing evidence"
+        );
+        if let Some(endpoint) = &evidence.member_endpoint {
+            let _: iroh::EndpointId = endpoint.parse()?;
+        }
+    }
+    if let Some(evidence) = &record.pending_completion {
+        evidence
+            .reference
+            .require_scope(&record.pin, &evidence.reference.host, &own)?;
+        crate::session::pairing::valid_name(&evidence.host_name)?;
+    }
     // A profile from before Spaces shared one folder.
     if record.shares.is_empty()
         && let Some(share) = record.saved_share.take()
@@ -663,6 +863,39 @@ fn migrate_peers(record: &mut Record) -> Result<()> {
     for peer in record.peers.iter().chain(&record.members) {
         validate_peer(peer)?;
         ensure!(nodes.insert(&peer.node), "Duplicate saved device identity");
+    }
+    for (node, digest) in &record.completion_bindings {
+        let known = record.pairing_completions.iter().any(|c| {
+            c.reference.target.node == *node
+                && c.member_endpoint.is_some()
+                && c.reference.digest().ok().as_ref() == Some(digest)
+        }) || record.pending_completion.as_ref().is_some_and(|c| {
+            c.finished
+                && c.reference.host == *node
+                && c.reference.digest().ok().as_ref() == Some(digest)
+        });
+        ensure!(known, "Conflicting original pairing binding");
+        let peer = record
+            .peers
+            .iter()
+            .find(|p| &p.node == node)
+            .ok_or_else(|| anyhow::anyhow!("Original paired relationship is missing"))?;
+        let expected = record
+            .pairing_completions
+            .iter()
+            .find(|c| c.reference.digest().ok().as_ref() == Some(digest))
+            .and_then(|c| c.member_endpoint.as_deref())
+            .or_else(|| {
+                record
+                    .pending_completion
+                    .as_ref()
+                    .map(|c| c.reference.host_endpoint.as_str())
+            })
+            .ok_or_else(|| anyhow::anyhow!("Original paired endpoint is missing"))?;
+        ensure!(
+            crate::session::ticket_endpoint(&peer.ticket)?.to_string() == expected,
+            "Original paired endpoint conflicts"
+        );
     }
     Ok(())
 }
@@ -922,6 +1155,110 @@ mod native_tests {
         credential::Store::delete(&platform_store()?, &id)?;
         assert!(Vault::open(&path).is_err());
         assert_eq!(std::fs::read(&path)?, reference);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    fn legacy() -> Result<Record> {
+        Ok(serde_json::from_value(
+            serde_json::json!({"version":1,"seed":vec![1;32],"enrollment_pending":false,
+            "pin":{"network_name":"Fixture","root_public_key":STANDARD.encode(SigningKey::from_bytes(&[2;32]).verifying_key().to_bytes())}}),
+        )?)
+    }
+    #[test]
+    fn legacy_profiles_do_not_gain_completion_evidence_by_opening() -> Result<()> {
+        let mut record = legacy()?;
+        migrate_peers(&mut record)?;
+        let value = serde_json::to_value(record)?;
+        for field in [
+            "pairing_completions",
+            "pending_completion",
+            "completion_bindings",
+        ] {
+            assert!(
+                value.get(field).is_none(),
+                "Legacy profile silently gained {field}"
+            );
+        }
+        Ok(())
+    }
+    #[cfg(feature = "pairing-completion-recovery")]
+    #[test]
+    fn vault_refuses_ambiguous_or_conflicting_original_history() -> Result<()> {
+        let mut record = legacy()?;
+        let member = STANDARD.encode(SigningKey::from_bytes(&[3; 32]).verifying_key().to_bytes());
+        let ticket = |seed| {
+            serde_json::json!({"version":1,"endpoint":iroh::EndpointAddr::new(iroh::SecretKey::from([seed;32]).public()).with_ip_addr(([127,0,0,1],23456).into())}).to_string()
+        };
+        let reference = CompletionReference::issue(
+            record.pin.clone(),
+            crate::owner_control::PairingTarget {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                node: member.clone(),
+                name: "Phone".into(),
+                comparison_code: "123456".into(),
+            },
+            &ticket(7),
+            &SigningKey::from_bytes(&[1; 32]),
+        )?;
+        let digest = reference.digest()?;
+        record.pairing_completions.push(HostCompletion {
+            reference,
+            member_endpoint: Some(iroh::SecretKey::from([8; 32]).public().to_string()),
+        });
+        record.peers.push(super::super::PairedDevice {
+            name: "Phone".into(),
+            node: member.clone(),
+            ticket: ticket(8),
+        });
+        record.completion_bindings.insert(member.clone(), digest);
+        migrate_peers(&mut record)?;
+        let bindings = serde_json::to_string(&record.completion_bindings)?;
+        let pair = &bindings[1..bindings.len() - 1];
+        let duplicate = serde_json::to_string(&record)?.replace(
+            &format!("\"completion_bindings\":{bindings}"),
+            &format!("\"completion_bindings\":{{{pair},{pair}}}"),
+        );
+        assert!(
+            serde_json::from_str::<Record>(&duplicate).is_err(),
+            "Duplicate binding keys were silently collapsed"
+        );
+        let mut bad = record.clone();
+        bad.pairing_completions
+            .push(record.pairing_completions[0].clone());
+        assert!(
+            migrate_peers(&mut bad).is_err(),
+            "Ambiguous original pairing was accepted"
+        );
+        bad = record.clone();
+        bad.completion_bindings
+            .insert(member.clone(), "another-reference".into());
+        assert!(
+            migrate_peers(&mut bad).is_err(),
+            "Conflicting original binding was accepted"
+        );
+        bad = record.clone();
+        bad.peers.clear();
+        assert!(
+            migrate_peers(&mut bad).is_err(),
+            "Missing relationship was reconstructed from approval"
+        );
+        bad = record.clone();
+        bad.peers[0].ticket = ticket(9);
+        assert!(
+            migrate_peers(&mut bad).is_err(),
+            "Another transport was accepted as the original"
+        );
+        bad = record.clone();
+        bad.pin.network_name = "Other network".into();
+        assert!(
+            migrate_peers(&mut bad).is_err(),
+            "Evidence from another network was accepted"
+        );
         Ok(())
     }
 }

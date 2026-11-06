@@ -2,14 +2,20 @@
 import hashlib
 import json
 from pathlib import Path
+import tempfile
 
 from owner_adapter import EmbeddedOwner
+from android_storage import AndroidPublisher, check_publication
 
 
 class AndroidVault:
-    def __init__(self, native): self.native = native
+    def __init__(self, native, directory):
+        self.native = native
+        self.publish_new = AndroidPublisher(directory)
     def ready(self): self.native.ready()
     def create(self): self.native.create()
+    def require_root_custody(self): self.native.require_root_custody()
+    def seal_root(self, instance, data): return bytes(self.native.seal_root(instance, data))
     def seal_owner(self, instance, data): return bytes(self.native.seal_owner(instance, data))
     def seal_member(self, instance, data): return bytes(self.native.seal_member(instance, data))
     def _open(self, method, instance, data):
@@ -21,6 +27,15 @@ class AndroidVault:
     def open_member(self, instance, data): return self._open(self.native.open_member, instance, data)
 
 
+def initial_operation(directory, has_custody):
+    """An empty pre-initialization lock is not an initialized authority."""
+    path = Path(directory)
+    if not has_custody and not path.is_symlink():
+        if not path.exists() or (path.is_dir() and {p.name for p in path.iterdir()} <= {".authority-lock"}):
+            return "create"
+    return "reopen"
+
+
 def run(expected_version, directory, native):
     report = {"status": "running", "production_create_enabled": False, "checks": []}
     first = second = None
@@ -30,12 +45,16 @@ def run(expected_version, directory, native):
         if readiness != "ready":
             report.update(status="blocked", stage=stage, readiness=readiness)
             return json.dumps(report)
-        vault = AndroidVault(native)
+        stage = "Atomic private storage"
+        with tempfile.TemporaryDirectory(prefix="gm-storage-probe-", dir=Path(directory).parent) as probe:
+            check_publication(probe)
+        report["checks"].append({"name": stage, "passed": True})
+        vault = AndroidVault(native, directory)
         vault.ready()
         first = EmbeddedOwner(directory, vault, expected_version)
         stage = "Phone-local authority"
-        if Path(directory).exists():
-            identity = first.open()
+        if initial_operation(directory, bool(native.hasCustody())) == "reopen":
+            identity = first.open_for_use()
             report["initial_operation"] = "reopen"
         else:
             identity = first.create("Phone-local qualification")
@@ -53,7 +72,7 @@ def run(expected_version, directory, native):
         stage = "Close and reopen identity"
         first.close()
         second = EmbeddedOwner(directory, vault, expected_version)
-        if second.open() != identity or not second.check_member(): raise RuntimeError("Identity changed after reopen")
+        if second.open_for_use() != identity or not second.check_member(): raise RuntimeError("Identity changed after reopen")
         report["checks"].append({"name": stage, "passed": True})
         # Only public identity fingerprints/certificate ID appear in the developer report.
         report["identity"] = {key: hashlib.sha256(value.encode()).hexdigest()
@@ -62,7 +81,11 @@ def run(expected_version, directory, native):
         report["status"] = "passed"
     except Exception as error:
         report.update(status="failed", stage=stage, exception_type=type(error).__name__)
+        if isinstance(error, OSError): report["errno"] = error.errno
     finally:
         if first is not None: first.close()
         if second is not None: second.close()
+        report["root_policy"] = str(native.rootPolicyStatus())
+        report["root_authentication"] = str(native.rootAuthenticationStatus())
+        report["root_policy_metadata"] = json.loads(str(native.rootPolicyMetadata()))
     return json.dumps(report)

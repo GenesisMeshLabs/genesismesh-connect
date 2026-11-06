@@ -35,7 +35,7 @@ def core_time(at):
         def now(cls, tz=None): return at.astimezone(tz) if tz else at.replace(tzinfo=None)
     with ExitStack() as stack:
         for name, module in list(sys.modules.items()):
-            if (name in ("owner_adapter", "member_renewal") or name.startswith("genesis_mesh.")) and getattr(module, "datetime", None) is datetime:
+            if (name in ("owner_adapter", "member_renewal", "membership_inspection") or name.startswith("genesis_mesh.")) and getattr(module, "datetime", None) is datetime:
                 stack.enter_context(patch.object(module, "datetime", Clock))
         yield
 
@@ -48,7 +48,7 @@ class TestVault:
         self.ready()
         if self.keys: raise Refused("Existing vault keys")
         self.creations += 1
-        self.keys = {name: AESGCM.generate_key(bit_length=256) for name in ("owner", "member")}
+        self.keys = {name: AESGCM.generate_key(bit_length=256) for name in ("root", "owner", "member")}
     def seal(self, role, instance, data):
         self.ready(); nonce = os.urandom(12)
         return nonce + AESGCM(self.keys[role]).encrypt(nonce, data, (role + instance).encode())
@@ -59,6 +59,11 @@ class TestVault:
     def seal_member(self, instance, data): return self.seal("member", instance, data)
     def open_owner(self, instance, data): return self.open("owner", instance, data)
     def open_member(self, instance, data): return self.open("member", instance, data)
+    def require_root_custody(self):
+        self.ready()
+        if "root" not in self.keys: raise Refused("Missing root custody")
+    def seal_root(self, instance, data): return self.seal("root", instance, data)
+    def open_root(self, instance, data): return self.open("root", instance, data)
 
 
 class EmbeddedOwnerTests(unittest.TestCase):
@@ -113,7 +118,7 @@ class EmbeddedOwnerTests(unittest.TestCase):
 
     def test_missing_and_corrupt_state_or_database_never_regenerates(self):
         identity = self.created(); original = self.snapshot()
-        for name in ("state.json", "owner.sealed", "member.sealed", "authority.db"):
+        for name in ("state.json", "root.sealed", "owner.sealed", "member.sealed", "authority.db"):
             for content in (None, b"corrupt"):
                 with self.subTest(name=name, corrupt=content is not None):
                     path = self.root / name
@@ -293,6 +298,9 @@ class EmbeddedOwnerTests(unittest.TestCase):
         def construct(*args, **kwargs):
             instance = json.loads((self.root / "initializing.json").read_bytes())["instance"]
             saved = json.loads(self.vault.open_owner(instance, (self.root / "owner.sealed").read_bytes()))
+            root = json.loads(self.vault.open_root(instance, (self.root / "root.sealed").read_bytes()))
+            self.assertEqual(owner_adapter.public(owner_adapter.seed(root["seed"])), owner.genesis.root_public_key)
+            self.assertNotIn("root", saved["keys"])
             member = json.loads(self.vault.open_member(instance, (self.root / "member.sealed").read_bytes()))
             for name, private in owner.keys.items():
                 self.assertEqual(owner_adapter.public(owner_adapter.seed(saved["keys"][name])), owner_adapter.public(private))

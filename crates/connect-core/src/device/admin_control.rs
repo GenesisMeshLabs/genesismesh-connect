@@ -98,8 +98,9 @@ impl DeviceController {
     ) -> Result<crate::owner_control::VerifiedController> {
         // The same newly fetched snapshot covers host, controller and the exact
         // authenticated candidate. No retained session snapshot authorizes commit.
-        let trust = self.current_owner_trust().await?;
-        candidate.require_current(&trust, candidate_node)?;
+        let trust = self
+            .current_pairing_trust(candidate, candidate_node)
+            .await?;
         crate::owner_control::VerifiedController::from_session(
             &self.administrative_binding()?.scope,
             &trust,
@@ -108,7 +109,16 @@ impl DeviceController {
             Utc::now(),
         )
     }
-    async fn current_owner_trust(&mut self) -> Result<crate::session::TrustSnapshot> {
+    pub(super) async fn current_pairing_trust(
+        &mut self,
+        candidate: &crate::session::AuthenticatedPeer,
+        candidate_node: &str,
+    ) -> Result<crate::session::TrustSnapshot> {
+        let trust = self.current_owner_trust().await?;
+        candidate.require_current(&trust, candidate_node)?;
+        Ok(trust)
+    }
+    pub(super) async fn current_owner_trust(&mut self) -> Result<crate::session::TrustSnapshot> {
         self.require_connected()?;
         ensure!(
             self.network_computer(),

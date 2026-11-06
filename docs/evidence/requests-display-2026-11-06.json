@@ -1,0 +1,73 @@
+{
+  "date": "2026-11-06",
+  "baseline_commit": "d82b016514e351d075be3cc43edfa49e77714e95",
+  "scope": "Read-only saved device-request source UI and native projection; browser simulation and embedded-core/QUIC are separate qualifications",
+  "checks": {
+    "native_display_projection": 3,
+    "default_off_noninitializing_inspection": 1,
+    "real_embedded_core_quic_commands_and_display": 11,
+    "frontend_state_and_lifecycle": 18,
+    "browser_new_saved_requests": 17,
+    "browser_existing_enrollment_regression": 15
+  },
+  "passed_total_this_slice": 65,
+  "environment": {
+    "native": "WSL Ubuntu-24.04 Rust 1.99.0",
+    "frontend": "Windows Node/TypeScript/Vite, isolated headless Chrome browser fixtures"
+  },
+  "capabilities": [
+    "Only fixed no-input client_requests_status/client_requests_check IPC added; no signing, review, Execute, archive or presence-provider IPC.",
+    "Default production display returns unavailable before reading qualified command/key state. Inspection of absent qualified work creates no journal, marker or administrative key.",
+    "Projection strips keys, signed commands/grants, paths and endpoints; current host-record observation and retained history are distinct.",
+    "Readback checks the original native profile/host/network/key context and same nonce/digest/action around the existing coordinator.",
+    "The screen explains unsent, unknown, started, unconfirmed, confirmed, archived, empty, damaged and unavailable states. Original queue results are saved snapshots.",
+    "Only the original host record is read; a known device or historical success does not imply the old approval executed.",
+    "Close, Escape, navigation, network changes and mismatched references fence delayed results; failed checks preserve history and private diagnostics stay private.",
+    "Untrusted names use plain text. Phone-width layout was visually reviewed with a prominent Check status action and compact secondary actions."
+  ],
+  "automation": {
+    "workflow": ".github/workflows/android-owner-focused.yml",
+    "native": "Explicit projection/default-off tests and command/display fixture target",
+    "frontend": "Explicit state/lifecycle tests, TypeScript check, Vite web-assets build and two browser spec files",
+    "hosted_run": "Not dispatched"
+  },
+  "other_checks": [
+    "TypeScript --noEmit",
+    "Vite web-assets build only (no Tauri/prebuild/native packaging)",
+    "cargo fmt --all --check",
+    "actionlint focused workflow",
+    "connect-contract check and refreshed journey evidence links: 419 declarations, zero accepted outcomes",
+    "git diff --check"
+  ],
+  "preview": {
+    "path": "temp/saved-requests-browser.png",
+    "kind": "Local browser fixture with simulated native responses; not an installed app or physical phone"
+  },
+  "preserved": [
+    "Production mutation/presence/Create gates",
+    "Host Execute/Result trust/grant/target checks",
+    "Completed membership inspector",
+    "Pairing-completion recovery",
+    "Phone/Connect/qualification data"
+  ],
+  "unperformed": [
+    "Full Tauri app-shell compilation",
+    "Installed Windows/Android/iOS/macOS validation",
+    "Qualified native user authentication",
+    "Physical phone lifecycle/first-use/manual acceptance",
+    "Assisted workflow parity",
+    "Independent core audit evidence",
+    "Hosted CI/minimum-toolchain execution for this commit"
+  ],
+  "excluded": [
+    "Device operations/install/reset",
+    "OS4551 full-app build retry or alternate route",
+    "Excluded startup-failure tests or denied metadata/access/CLI operations",
+    "Push/publication/merge/deployment"
+  ],
+  "notes": [
+    "Phone-local authority remains required; optional hosting remains optional.",
+    "All numeric counts are distinct checks executed in this slice, including the indicated regressions; earlier checkpoint totals are not added.",
+    "Browser mocks exercise the production component but do not establish native trust or installed-app readiness."
+  ]
+}
