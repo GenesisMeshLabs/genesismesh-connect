@@ -14,6 +14,8 @@ class AndroidVault:
         self.publish_new = AndroidPublisher(directory)
     def ready(self): self.native.ready()
     def create(self): self.native.create()
+    def require_root_custody(self): self.native.require_root_custody()
+    def seal_root(self, instance, data): return bytes(self.native.seal_root(instance, data))
     def seal_owner(self, instance, data): return bytes(self.native.seal_owner(instance, data))
     def seal_member(self, instance, data): return bytes(self.native.seal_member(instance, data))
     def _open(self, method, instance, data):

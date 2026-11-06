@@ -1,5 +1,6 @@
 """Authority founding-key lifetime semantics against the pinned real core."""
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -30,7 +31,9 @@ class OwnerLifetimeTests(unittest.TestCase):
                 owner.create("Clock tolerance")
                 genesis = owner.genesis.model_copy(deep=True)
                 genesis.network_authority.valid_from += timedelta(minutes=5)
-                genesis.signatures = [sign_model(genesis, owner.keys["root"], "connect-root")]
+                from owner_adapter import seed
+                protected = json.loads(owner.vault.open_root(owner.identity["instance"], owner.storage.read("root.sealed")))
+                genesis.signatures = [sign_model(genesis, seed(protected["seed"]), "connect-root")]
                 at = genesis.network_authority.valid_from - timedelta(minutes=5)
                 with core_time(at):
                     owner._verify(genesis, owner.policy, owner.certificate, require_current=False)

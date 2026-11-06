@@ -65,7 +65,7 @@ class EmbeddedOwner:
                 if {p.name for p in self.storage.directory.iterdir()} != {".authority-lock"}:
                     raise Refused("Existing authority state must be reopened or recovered, never replaced.")
                 instance = str(uuid.uuid4())
-                self.storage.write_new("initializing.json", encode({"schema": 2, "instance": instance}))
+                self.storage.write_new("initializing.json", encode({"schema": 3, "instance": instance}))
                 self.vault.create()  # Refuses missing-state/existing-key and partial-key situations.
                 root, na, operator, member = [generate_keypair().private_key for _ in range(4)]
                 now = datetime.now(timezone.utc)
@@ -77,26 +77,33 @@ class EmbeddedOwner:
                     root_public_key=public(root), network_authority=NetworkAuthority(public_key=public(na),
                     valid_from=now, valid_to=now + timedelta(days=90)), allowed_transports=["quic"],
                     policy_manifest=PolicyManifestRef(hash="sha256:" + hashlib.sha256(policy.to_canonical_json().encode()).hexdigest()))
+                # Root custody has a separate auth-per-use wrapping key. Seal it
+                # before founding use; ordinary open never asks to decrypt it.
+                root_sealed = bytes(self.vault.seal_root(instance, encode({"schema": 3, "instance": instance,
+                    "seed": base64.b64encode(bytes(root)).decode()})))
+                self.storage.write_new("root.sealed", root_sealed)
                 genesis.signatures.append(sign_model(genesis, root, ROOT_ID))
-                self.keys = {"root": root, "na": na, "operator": operator}
+                del root  # PyNaCl/Python cannot promise zeroization of all copies.
+                self.keys = {"na": na, "operator": operator}
                 self.member = member
-                payload = {"schema": 2, "instance": instance, "genesis": genesis.model_dump(mode="json"),
+                payload = {"schema": 3, "instance": instance, "genesis": genesis.model_dump(mode="json"),
                     "policy": policy.model_dump(mode="json"),
                     "keys": {name: base64.b64encode(bytes(key)).decode() for name, key in self.keys.items()}}
                 owner_sealed = bytes(self.vault.seal_owner(instance, encode(payload)))
-                member_sealed = bytes(self.vault.seal_member(instance, encode({"schema": 2, "instance": instance,
+                member_sealed = bytes(self.vault.seal_member(instance, encode({"schema": 3, "instance": instance,
                                               "seed": base64.b64encode(bytes(member)).decode()})))
                 # Durably seal every identity key before core can publish or use it.
                 self.storage.write_new("owner.sealed", owner_sealed)
                 self.storage.write_new("member.sealed", member_sealed)
+                self.genesis, self.policy = genesis, policy
                 self._start(genesis)
                 self.service.db.save_policy(policy, active=True)
                 certificate = self._enroll_member()
                 self._verify(genesis, policy, certificate)
-                self.genesis, self.policy = genesis, policy
                 self.identity = self._identity(instance, genesis, certificate)
-                self.state = {"schema": 2, "revision": 1, "identity": self.identity,
+                self.state = {"schema": 3, "revision": 1, "identity": self.identity,
                     "certificate": certificate.model_dump(mode="json"),
+                    "root_sha256": hashlib.sha256(root_sealed).hexdigest(),
                     "owner_sha256": hashlib.sha256(owner_sealed).hexdigest(),
                     "member_sha256": hashlib.sha256(member_sealed).hexdigest()}
                 self._commit_certificate(certificate, create=True)
@@ -118,19 +125,23 @@ class EmbeddedOwner:
                 staged = self.storage.check_files(allow_renewal=allow_renewal)
                 state_bytes = self.storage.read("state.json")
                 state = json.loads(state_bytes)
-                if type(state["schema"]) is not int or state["schema"] != 2:
-                    raise Refused("Unsupported authority state. Existing data was preserved.")
+                if type(state["schema"]) is not int or state["schema"] != 3:
+                    raise Refused("This pre-release authority needs an explicit root-custody migration. Existing data was preserved.")
                 instance = state["identity"]["instance"]
                 if str(uuid.UUID(instance)) != instance: raise Refused("Invalid authority identity.")
-                owner_sealed, member_sealed = [self.storage.read(n) for n in ("owner.sealed", "member.sealed")]
-                if (hashlib.sha256(owner_sealed).hexdigest() != state["owner_sha256"]
+                self.vault.require_root_custody()  # Fixed-alias metadata only, no root decryption.
+                root_sealed, owner_sealed, member_sealed = [self.storage.read(n) for n in ("root.sealed", "owner.sealed", "member.sealed")]
+                if (hashlib.sha256(root_sealed).hexdigest() != state["root_sha256"]
+                        or hashlib.sha256(owner_sealed).hexdigest() != state["owner_sha256"]
                         or hashlib.sha256(member_sealed).hexdigest() != state["member_sha256"]):
                     raise Refused("Authority storage was changed. Existing state was preserved.")
                 payload = json.loads(bytes(self.vault.open_owner(instance, owner_sealed)))
                 member = json.loads(bytes(self.vault.open_member(instance, member_sealed)))
-                if any(p["schema"] != 2 or p["instance"] != instance for p in (payload, member)):
+                if any(p["schema"] != 3 or p["instance"] != instance for p in (payload, member)):
                     raise Refused("Authority custody does not match this network.")
-                self.keys = {name: seed(payload["keys"][name]) for name in ("root", "na", "operator")}
+                if set(payload["keys"]) != {"na", "operator"}:
+                    raise Refused("Daily authority custody must not contain the root key.")
+                self.keys = {name: seed(payload["keys"][name]) for name in ("na", "operator")}
                 self.member = seed(member["seed"])
                 signed = {k: v for k, v in state.items() if k != "state_signature"}
                 if not verify_signature(STATE_DOMAIN + encode(signed), state["state_signature"], public(self.keys["operator"])):
@@ -170,8 +181,6 @@ class EmbeddedOwner:
     def _verify(self, genesis, policy, certificate, *, require_current=True):
         na = genesis.network_authority
         now = datetime.now(timezone.utc)
-        if public(self.keys["root"]) != genesis.root_public_key:
-            raise Refused("The protected root key does not match the founding record.")
         if public(self.keys["na"]) != na.public_key:
             raise Refused("The protected authority key does not match the founding record.")
         # Core displays, but does not enforce, the founding authority key's

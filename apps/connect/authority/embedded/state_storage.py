@@ -11,7 +11,7 @@ import re
 class Refused(RuntimeError):
     pass
 
-STATE_FILES = frozenset({"state.json", "initializing.json", "owner.sealed", "member.sealed", "authority.db", "member-renewal.json"})
+STATE_FILES = frozenset({"state.json", "initializing.json", "root.sealed", "owner.sealed", "member.sealed", "authority.db", "member-renewal.json"})
 
 class StateStorage:
     def __init__(self, directory, *, publish_new=None):
@@ -107,7 +107,7 @@ class StateStorage:
         return content
 
     def check_files(self, *, allow_renewal=False):
-        allowed = {".authority-lock", "state.json", "owner.sealed", "member.sealed",
+        allowed = {".authority-lock", "state.json", "root.sealed", "owner.sealed", "member.sealed",
                    "authority.db", "authority.db-wal", "authority.db-shm", "authority.db-journal"}
         if allow_renewal: allowed.add("member-renewal.json")
         staged = []

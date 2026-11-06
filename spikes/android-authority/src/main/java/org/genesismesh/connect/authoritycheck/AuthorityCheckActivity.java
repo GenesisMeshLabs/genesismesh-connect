@@ -12,6 +12,7 @@ import org.json.JSONArray;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
 import org.genesismesh.connect.authority.OwnerKeyVault;
+import org.genesismesh.connect.authority.RootKeyAuthorization;
 
 public final class AuthorityCheckActivity extends Activity {
     private static final EngineCheckRunner<JSONObject> ENGINE =
@@ -45,7 +46,7 @@ public final class AuthorityCheckActivity extends Activity {
                     stage = "Protected owner custody";
                     JSONObject owner = new JSONObject(Python.getInstance().getModule("owner_check").callAttr("run",
                         BuildConfig.CORE_VERSION, new java.io.File(getNoBackupFilesDir(), "authority-check").getAbsolutePath(),
-                        new OwnerKeyVault(getApplicationContext())).toString());
+                        new OwnerKeyVault(getApplicationContext(), new RootKeyAuthorization(this))).toString());
                     report.put("owner_check", owner);
                     if (!"passed".equals(owner.optString("status"))) {
                         report.put("status", "blocked".equals(owner.optString("status")) ? "blocked" : "failed")

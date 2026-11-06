@@ -85,7 +85,7 @@ Android app domains forbid hard links. The Android custody adapter therefore
 publishes fsynced staging files with Bionic `renameat2(RENAME_NOREPLACE)` through
 the already-pinned CFFI runtime. Existing targets are refused atomically; there
 is no check-then-overwrite or permission-policy fallback. Desktop publication
-is unchanged. This owner qualification profile requires Android API30 or later
+is unchanged. This owner qualification profile requires Android API35 or later
 and a successful private-storage capability probe; the general runtime/client
 minimum is unchanged.
 
@@ -117,6 +117,33 @@ Create stays disabled. No PIN automation, permission changes, app-data reset,
 startup-failure revalidation or merge was performed for this repair.
 
 ## Dependency gate
+
+### Separate root custody
+
+New embedded profiles use schema 3: `root.sealed` is wrapped under a separate
+Android Keystore alias, with authentication required for each cryptographic
+operation. A native `BiometricPrompt.CryptoObject` binds a fresh strong biometric
+or screen-lock confirmation to that exact cipher operation. Daily owner custody
+contains only authority/operator keys; the member has a separate envelope.
+Ordinary reopen checks root-ciphertext integrity, the root alias policy and the
+public signed founding record, and never decrypts the root. No root export or
+generic signing command is added. Root signing in Python cannot promise complete
+memory zeroization; this is wrapped software identity custody, not a hardware
+Ed25519 signing implementation.
+
+The owner profile now requires Android 15/API35 to avoid older Android
+unlocked-device-key lifecycle defects. General client Join remains unchanged.
+Schema-2 qualification profiles are preserved and refused before decryption;
+an explicit migration/recovery ceremony is not implemented. Qualify new custody
+without touching the installed old profile by building the isolated engine APK
+with `-ProotCustodyQualification=true` and installing with `-AppKind RootCheck`.
+Its fixed package is `org.genesismesh.connect.authoritycheck.rootcheck`.
+Creation asks for system authentication on the phone; never enter its credential
+through automation. Root succession, mobile recovery and production Create
+remain gated.
+
+References: [Android auth-per-use crypto](https://developer.android.com/reference/android/hardware/biometrics/BiometricPrompt.CryptoObject),
+[Keystore authentication and unlocked-device policy](https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec.Builder).
 
 The embedded owner follows core's founding-key lifetime semantics: the genesis
 authority's legacy `valid_to` is informational. Its `valid_from` retains a
