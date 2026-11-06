@@ -473,5 +473,28 @@ class EmbeddedOwnerTests(unittest.TestCase):
             self.assertEqual((self.root / "state.json").read_bytes(), before)
             self.assertTrue((self.root / "member-renewal.json").exists())
 
+    def test_failed_serving_thread_start_releases_unused_custody_and_preserves_identity(self):
+        import owner_adapter
+        identity = self.created()
+        protected = {name: (self.root / name).read_bytes() for name in ("owner.sealed", "member.sealed", "state.json")}
+        broken = self.owner(); servers = []
+        constructor = owner_adapter.LocalServer
+        def create(application):
+            server = constructor(application); servers.append(server); return server
+        started = time.monotonic()
+        with patch("owner_adapter.LocalServer", side_effect=create), patch.object(threading.Thread, "start", side_effect=RuntimeError("Serving thread could not start")):
+            with self.assertRaisesRegex(RuntimeError, "Serving thread could not start"): broken.open()
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(len(servers), 1)
+        self.assertEqual(servers[0].socket.fileno(), -1)
+        self.assertFalse(servers[0].active)
+        for field in ("server", "service", "thread", "keys", "member", "identity"):
+            self.assertIsNone(getattr(broken, field), field)
+        self.assertIsNone(broken.storage.lock)
+        self.assertEqual({name: (self.root / name).read_bytes() for name in protected}, protected)
+        reopened = self.owner()
+        self.assertEqual(reopened.open(), identity)
+        self.assertTrue(reopened.check_member())
+
 
 if __name__ == "__main__": unittest.main()

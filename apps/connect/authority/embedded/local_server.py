@@ -26,7 +26,19 @@ class LocalServer(ThreadedWSGIServer):
         self.active = set()
         self.stopping = False
         self.shutdown_thread = None
+        self.serving_started = threading.Event()
         super().__init__("127.0.0.1", 0, application, handler=QuietHandler)
+
+    def serve_forever(self, poll_interval=0.1):
+        self.serving_started.set()
+        super().serve_forever(poll_interval=poll_interval)
+
+    def close_unstarted(self):
+        with self.condition:
+            if self.serving_started.is_set() or self.active: return False
+            self.stopping = True
+            self.server_close()
+            return True
 
     def process_request(self, request, address):
         with self.condition:

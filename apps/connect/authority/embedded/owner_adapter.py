@@ -267,10 +267,14 @@ class EmbeddedOwner:
     def close(self):
         with self.mutex:
             if self.server is not None:
-                if not self.server.stop():
+                never_served = (not self.server.serving_started.is_set()
+                                and (self.thread is None or not self.thread.is_alive()))
+                settled = self.server.close_unstarted() if never_served else self.server.stop()
+                if not settled:
                     raise Refused("Authority requests are still settling. Storage remains locked.")
-                self.thread.join(5)
-                if self.thread.is_alive(): raise Refused("Authority shutdown needs attention.")
+                if self.thread is not None and self.thread.ident is not None:
+                    self.thread.join(5)
+                    if self.thread.is_alive(): raise Refused("Authority shutdown needs attention.")
                 self.server = self.thread = None
             if self.service is not None:
                 self.service.db.close()
