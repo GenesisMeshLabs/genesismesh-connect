@@ -556,6 +556,15 @@ impl OwnerRuntime {
         keys: &std::collections::BTreeMap<String, String>,
     ) -> Result<OwnerInfo> {
         let request = if self.native.is_some() {
+            // Only the network's four identity keys, from files native code staged.
+            ensure!(
+                staging.is_absolute()
+                    && keys
+                        .keys()
+                        .map(String::as_str)
+                        .eq(["member", "na", "operator", "root"]),
+                "The recovery file is incomplete"
+            );
             json!({"op":"recovery_import","staging":staging,"keys":keys})
         } else {
             json!({"op":"restore","staging":staging,"root":root,"config":config,"keys":keys})

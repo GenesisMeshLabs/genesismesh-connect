@@ -92,9 +92,8 @@ fn uncertain_native_reply_cannot_be_replayed_or_followed_by_another_operation() 
 }
 
 #[test]
-fn native_backend_cannot_export_keys_or_import_paths() {
+fn native_backend_never_attaches_or_imports_without_the_networks_keys() {
     let (mut owner, observed) = runtime(Reply::Normal);
-    assert!(owner.backup().is_err());
     assert!(owner.attach(Path::new("/untrusted/settings")).is_err());
     assert!(
         owner
@@ -106,8 +105,24 @@ fn native_backend_cannot_export_keys_or_import_paths() {
             )
             .is_err()
     );
+    let partial = std::collections::BTreeMap::from([("root".to_owned(), "key".to_owned())]);
+    assert!(
+        owner
+            .restore(Path::new("/untrusted/staging"), "root", "config", &partial)
+            .is_err()
+    );
     assert!(observed.lock().unwrap().calls.is_empty());
     assert!(owner.is_running());
+}
+
+#[test]
+fn native_backup_asks_only_for_the_phone_recovery_export() {
+    let (mut owner, observed) = runtime(Reply::Normal);
+    // The fixture has no export; what matters is which operation was asked for.
+    assert!(owner.backup().is_err());
+    let calls = &observed.lock().unwrap().calls;
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0], json!({"op":"recovery_export"}));
 }
 
 #[test]
