@@ -13,9 +13,9 @@ manual/assisted/platform acceptance gate; no parity percentage is claimed.
 | --- | --- | --- |
 | CONNECT-01 coverage | Reviewed immutable inventory, pin qualification, drift/refusal checks and repeatable hosted CI | Continued release/platform qualification |
 | CONNECT-02 typed operations | Closed resource/local-history registry, generated schemas, exact access review | General core outcome schemas and manual/assisted parity |
-| CONNECT-03 durable workflows | Access dispatch/readback journal, archives; owner nonce reservations | Durable join/renewal/recovery/admin enrollment and operation-specific reconciliation |
+| CONNECT-03 durable workflows | Access dispatch/readback journal, archives; owner nonce reservations; bounded native client admin-enrollment/status journal | Durable join/renewal/recovery, complete admin enrollment UX/replacement and operation-specific reconciliation |
 | CONNECT-04 prerequisites | Authenticated resource-host release/profile/ownership discovery | General feature, verifier, actor and deployment discovery |
-| CONNECT-05 owner Requests | Authenticated transport; fixed managed-core/target dispatch and fresh candidate verification; native key custody; durable enrollment/result records; guided local host review, typed IPC and scoped readback | Qualified native user presence for UI mutations; installed host opt-in/review/revocation acceptance; usable phone Requests, recovery, assisted parity and physical gates |
+| CONNECT-05 owner Requests | Authenticated transport; fixed managed-core/target dispatch and fresh candidate verification; native key custody; durable host records and native client same-ID enrollment/status recovery; guided local host review, typed IPC and scoped readback | Qualified native user presence for UI mutations; installed host opt-in/review/revocation acceptance; usable phone Requests, recovery, assisted parity and physical gates |
 | CONNECT-06 lifecycle | Existing disconnect/reconnect/leave; administrative native-store refusal and cleanup | Physical lock/suspend/force-quit/reboot/network switching and user-presence handling |
 | CONNECT-07 distribution/hosting | Existing Tauri packaging and headless Linux server | Signed fresh-machine installer/update/service/uninstall acceptance and guided host setup |
 | CONNECT-08 continuity | Existing encrypted recovery and server restore | Checkpoints, missing-history reconciliation, restricted restore and old-host fencing |
@@ -107,6 +107,16 @@ fixtures cover these lifecycle cases separately from native/device acceptance.
 Readback ordering is independent of submission replies, so a newer Revoked
 observation wins even when an older Approved reply arrives first. Unresolved
 readbacks retain their recovery bookmark across navigation/reload.
+
+The next native dependency retains the exact reviewed client enrollment before
+its first send. After reservation/lost reply/restart it only checks the same ID;
+it does not generate another request/key, resend enrollment or dispatch pairing
+commands. Native context and fresh core membership are checked around transport,
+returned requests/grants are matched exactly, and status observations stay
+distinct from uncertainty and remembered history. This bounded coordinator is
+not exposed through app IPC. Full phone enrollment UX, explicit replacement/
+recovery, qualified presence and installed/physical/usability acceptance remain
+open; it does not substitute for independent phone-local authority hosting.
 
 **Production administration mutations remain gated.** No native user-presence
 provider has been qualified for this app. A DOM confirmation, OS-store reopening,

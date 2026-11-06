@@ -709,7 +709,7 @@ impl ControlStore {
     }
 }
 
-fn check_path(path: &Path) -> Result<()> {
+pub(super) fn check_path(path: &Path) -> Result<()> {
     ensure!(
         path.is_absolute() && path.parent().is_some_and(Path::is_dir),
         "Use an absolute existing native owner-control directory"

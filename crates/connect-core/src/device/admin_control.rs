@@ -130,7 +130,7 @@ impl DeviceController {
         trust.certificate(own.certificate(), &own.public_key(), Utc::now())?;
         Ok(trust)
     }
-    fn administrative_binding(&self) -> Result<AdministrativeBinding> {
+    pub(super) fn administrative_binding(&self) -> Result<AdministrativeBinding> {
         let node = STANDARD.encode(self.vault.key().verifying_key().to_bytes());
         let host = if self.network_computer() {
             node.clone()
@@ -161,6 +161,14 @@ impl DeviceController {
         ensure!(
             !permissions.is_empty() && validity_seconds > 120 && validity_seconds <= 30 * 24 * 3600,
             "Choose pairing permissions and administrative access of at most 30 days"
+        );
+        ensure!(
+            !crate::owner_control::ClientEnrollment::initialized(
+                &self
+                    .state_directory
+                    .join(crate::owner_control::CLIENT_ENROLLMENT_FILE)
+            )?,
+            "Resume the saved administrative enrollment; no replacement request or key was created"
         );
         self.require_connected()?;
         self.check_network().await?;

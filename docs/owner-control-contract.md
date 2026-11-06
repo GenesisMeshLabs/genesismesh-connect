@@ -131,6 +131,47 @@ dispatch nothing and grant no administrative rights. They remain unavailable
 through app IPC pending exact user review, client workflow recovery and native
 user presence. The authenticated host control transport is integrated separately.
 
+### Durable native client enrollment
+
+`ClientEnrollment` retains one exact, signed, reviewed enrollment per device
+profile in a journal of at most 64 KiB. It binds the native pinned root/network,
+paired host, enrolled member and separate administrative public key, and retains
+the canonical review digest. A native exclusive lock and initialized marker,
+strict decoding, atomic synced writes, clock high-water and failed-write refusal
+preserve missing/corrupt/foreign state instead of replacing it. Private keys stay
+in the existing native credential provider. Whole-file rollback is not detected
+cryptographically; this journal is not portable audit evidence.
+
+The first send is reserved durably before transport receives it. From that point,
+including a lost reply or restart, only `EnrollmentStatus` for the retained ID is
+available through this coordinator. It never resends enrollment, generates a new
+ID/key, approves administration or executes pairing commands. Retained workflows
+also prevent preparation from silently creating another request. There is no new
+reset/replacement ceremony in this slice, even after a terminal state.
+
+`DeviceController` retain/submit/check helpers derive binding from the actual
+native profile and existing protected key. They explicitly verify current core
+membership before and after authenticated exchange, including when no endpoint
+is running after restart. Pending replies must contain the exact signed request;
+active grants must match its scope, key, member, permissions, expiry and digest,
+with valid approval times and no revocation. Single-use per-instance/current
+exchange handles refuse superseded or abandoned replies.
+
+Pending, active, declined, expired, revoked and missing are distinct authenticated
+host observations. Interruptions and invalid replies remain uncertain, retaining
+the previous observation and its time. Reopening submitted work requires a fresh
+check; a remembered Active observation never authorizes a later operation. Missing
+native credentials block resume without creating replacements.
+
+This is a reusable native dependency, **not an app entrypoint or phone Requests
+UX**. No new app IPC, production presence provider or mutation bypass is enabled.
+Explicit host approval remains independent. Source and packaged real-core QUIC
+fixtures cover lost enrollment/status replies, restart/same-ID checks, fixture-only
+host approval/revocation, unavailable production presence, missing credentials and
+current membership refusal. Installed-app, physical lifecycle and usability gates
+remain open. Independent phone-local authority acceptance is still required;
+mobile Create stays disabled.
+
 Leave/discard cleanup removes only a purpose-checked credential for that
 network/member and supports retry after native-secret deletion. An older host
 binding can be removed when the device leaves the same network. A foreign root

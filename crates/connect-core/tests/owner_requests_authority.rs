@@ -231,19 +231,299 @@ async fn candidate_revoked_during_wait_is_not_remembered_or_confirmed_and_cannot
     requests_scenario(true).await
 }
 
-async fn requests_scenario(revoke_candidate: bool) -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let mut owner = if let Some(binary) = std::env::var_os("CONNECT_OWNER_BINARY") {
-        OwnerRuntime::start(std::path::Path::new(&binary), &dir.path().join("authority"))?
+fn start_fixture_owner(directory: &std::path::Path) -> Result<OwnerRuntime> {
+    if let Some(binary) = std::env::var_os("CONNECT_OWNER_BINARY") {
+        OwnerRuntime::start(std::path::Path::new(&binary), &directory.join("authority"))
     } else {
         let python = std::env::var_os("CONNECT_NA_PYTHON").context("Set CONNECT_NA_PYTHON")?;
         OwnerRuntime::start_python(
             std::path::Path::new(&python),
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../apps/connect/authority/main.py"),
-            &dir.path().join("authority"),
-        )?
+            &directory.join("authority"),
+        )
+    }
+}
+
+/// Test fixture consent only; never installed as a production presence provider.
+struct EnrollmentFixturePresence;
+impl LocalAdminPresence for EnrollmentFixturePresence {
+    fn available(&self) -> bool {
+        true
+    }
+    fn confirm(&mut self, _: &LocalAdminReview) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires pinned core and private disposable native credential service"]
+async fn native_client_enrollment_resumes_same_id_after_lost_reply_and_needs_explicit_host_approval()
+-> Result<()> {
+    use std::sync::atomic::AtomicUsize;
+    let dir = tempfile::tempdir()?;
+    let mut owner = start_fixture_owner(dir.path())?;
+    let info = owner.create("Durable client enrollment")?;
+    let mut host =
+        DeviceController::prepare(&dir.path().join("host"), info.url.clone(), info.pin.clone())?;
+    host.enable_managed_connectivity()?;
+    host.set_network_connectivity(Connectivity::LocalNetwork)
+        .await?;
+    let host_node = host.status()?.node_public_key;
+    host.enroll_host(&owner.invite(&host_node, true)?).await?;
+    let profile = dir.path().join("client");
+    let mut client = DeviceController::prepare(&profile, info.url.clone(), info.pin.clone())?;
+    let client_node = client.status()?.node_public_key;
+    client
+        .enroll_host(&owner.invite(&client_node, true)?)
+        .await?;
+    host.start(&client_node).await?;
+    client
+        .use_bridge(BridgeRoute {
+            host_node: host_node.clone(),
+            ticket: ticket(host.status()?.bridge_ticket.context("Missing bridge")?)?,
+        })
+        .await?;
+    client.enable_managed_connectivity()?;
+    client.start(&host_node).await?;
+    host.send(
+        &ticket(client.status()?.ticket.context("Missing client session")?)?,
+        "Identify enrollment fixture client",
+    )
+    .await?;
+    host.remember_pairing(PairedDevice {
+        name: "Enrollment client".into(),
+        node: client_node.clone(),
+        ticket: ticket(client.status()?.ticket.context("Missing client session")?)?,
+    })?;
+    host.enable_owner_requests()?;
+    let independent = IndependentAdmin::from_fixture(&mut owner, info.url).await?;
+    let (sender, mut messages) = tokio::sync::mpsc::channel::<OwnerRequest>(8);
+    host.serve_owner(sender);
+    let state = Arc::new(Mutex::new((owner, host)));
+    let server = state.clone();
+    let sends = Arc::new(AtomicUsize::new(0));
+    let calls = sends.clone();
+    let commands = Arc::new(AtomicUsize::new(0));
+    let executions = commands.clone();
+    let drop_enroll = Arc::new(AtomicBool::new(true));
+    let lose_enroll = drop_enroll.clone();
+    let drop_check = Arc::new(AtomicBool::new(false));
+    let lose_check = drop_check.clone();
+    let worker = tokio::spawn(async move {
+        while let Some(message) = messages.recv().await {
+            let mut state = server.lock().await;
+            let (owner, host) = &mut *state;
+            let mut discard = false;
+            let response = match message.call {
+                connect_core::owner::OwnerCall::Control {
+                    node,
+                    certificate,
+                    request,
+                } => {
+                    match &request.request {
+                        ControlExchange::Enroll { .. } => {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            discard = lose_enroll.swap(false, Ordering::SeqCst);
+                        }
+                        ControlExchange::EnrollmentStatus { .. } => {
+                            discard = lose_check.swap(false, Ordering::SeqCst);
+                        }
+                        ControlExchange::Execute { .. } => {
+                            executions.fetch_add(1, Ordering::SeqCst);
+                        }
+                        _ => {}
+                    }
+                    host.answer_owner_control(owner, &node, &certificate, request)
+                        .await
+                }
+                call => owner.answer(call),
+            };
+            if !discard {
+                let _ = message.reply.send(response);
+            }
+        }
+    });
+    let request = client
+        .prepare_owner_enrollment([Permission::ListPairing].into_iter().collect(), 600)
+        .await?;
+    let id = request.intent.id.clone();
+    let digest = request.digest()?;
+    let key_before = std::fs::read(profile.join("administrative-key.json"))?;
+    assert_eq!(
+        client
+            .retain_owner_enrollment(request.clone(), &digest)
+            .await?
+            .status,
+        ClientEnrollmentStatus::Reviewed
+    );
+    assert!(
+        state
+            .lock()
+            .await
+            .1
+            .open_owner_requests()?
+            .pending_locally()
+            .is_empty(),
+        "Retaining must not submit or grant anything"
+    );
+    assert_eq!(
+        client.submit_owner_enrollment(&digest).await?.status,
+        ClientEnrollmentStatus::Uncertain
+    );
+    assert_eq!(sends.load(Ordering::SeqCst), 1);
+    assert!(client.submit_owner_enrollment(&digest).await.is_err());
+    drop(client);
+    let mut client = DeviceController::open(&profile)?;
+    let saved = client.saved_owner_enrollment()?;
+    assert_eq!(saved.request.intent.id, id);
+    assert_eq!(saved.reviewed_digest, digest);
+    assert_eq!(saved.status, ClientEnrollmentStatus::Uncertain);
+    assert!(
+        client
+            .prepare_owner_enrollment([Permission::ApprovePairing].into_iter().collect(), 600)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(profile.join("administrative-key.json"))?,
+        key_before
+    );
+    assert_eq!(
+        client.check_owner_enrollment().await?.status,
+        ClientEnrollmentStatus::Pending
+    );
+    drop_check.store(true, Ordering::SeqCst);
+    let uncertain = client.check_owner_enrollment().await?;
+    assert_eq!(uncertain.status, ClientEnrollmentStatus::Uncertain);
+    assert_eq!(
+        uncertain.last_observed,
+        Some(ClientEnrollmentStatus::Pending)
+    );
+    assert_eq!(
+        client.check_owner_enrollment().await?.status,
+        ClientEnrollmentStatus::Pending
+    );
+    let certificate = {
+        let mut server = state.lock().await;
+        let (owner, host) = &mut *server;
+        let pending = host.open_owner_requests()?.pending_locally();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].request.intent.id, id);
+        assert_eq!(
+            serde_json::to_value(&pending[0].request)?,
+            serde_json::to_value(&request)?
+        );
+        let certificate = pending[0].certificate.clone();
+        let mut book = LocalAdministration::default();
+        let input = LocalAdminInput {
+            action: LocalAdminAction::Approve,
+            enrollment_id: Some(id.clone()),
+        };
+        let review = book.review(owner, host, input.clone()).await?;
+        assert_eq!(
+            book.commit(owner, host, review.reference, &mut UnavailableAdminPresence)
+                .await?
+                .kind,
+            LocalAdminOutcomeKind::Refused
+        );
+        assert!(host.open_owner_requests()?.grants_locally().is_empty());
+        let review = book.review(owner, host, input).await?;
+        assert_eq!(
+            book.commit(
+                owner,
+                host,
+                review.reference,
+                &mut EnrollmentFixturePresence
+            )
+            .await?
+            .kind,
+            LocalAdminOutcomeKind::Confirmed
+        );
+        certificate
     };
+    let active = client.check_owner_enrollment().await?;
+    assert_eq!(active.status, ClientEnrollmentStatus::Active);
+    assert_eq!(active.request.intent.id, id);
+    assert_eq!(active.reviewed_digest, digest);
+    {
+        let mut server = state.lock().await;
+        let (owner, host) = &mut *server;
+        let mut book = LocalAdministration::default();
+        let review = book
+            .review(
+                owner,
+                host,
+                LocalAdminInput {
+                    action: LocalAdminAction::Revoke,
+                    enrollment_id: Some(id.clone()),
+                },
+            )
+            .await?;
+        assert_eq!(
+            book.commit(
+                owner,
+                host,
+                review.reference,
+                &mut EnrollmentFixturePresence
+            )
+            .await?
+            .kind,
+            LocalAdminOutcomeKind::Confirmed
+        );
+    }
+    assert_eq!(
+        client.check_owner_enrollment().await?.status,
+        ClientEnrollmentStatus::Revoked
+    );
+    // Missing native credentials block resume without deleting/replacing work.
+    let key_path = profile.join("administrative-key.json");
+    std::fs::remove_file(&key_path)?;
+    let journal_before = std::fs::read(profile.join("owner-enrollment.json"))?;
+    assert!(client.check_owner_enrollment().await.is_err());
+    assert!(
+        client
+            .prepare_owner_enrollment([Permission::ListPairing].into_iter().collect(), 600)
+            .await
+            .is_err()
+    );
+    assert!(!key_path.exists());
+    assert_eq!(
+        std::fs::read(profile.join("owner-enrollment.json"))?,
+        journal_before
+    );
+    std::fs::write(&key_path, &key_before)?; // Restore only this disposable fixture's existing native reference.
+    independent.revoke(&certificate).await?;
+    assert!(
+        client.check_owner_enrollment().await.is_err(),
+        "Current core membership is still mandatory"
+    );
+    assert_eq!(std::fs::read(&key_path)?, key_before);
+    assert_eq!(
+        sends.load(Ordering::SeqCst),
+        1,
+        "No enrollment replay or replacement"
+    );
+    assert_eq!(
+        commands.load(Ordering::SeqCst),
+        0,
+        "Enrollment never dispatches pairing commands"
+    );
+    client.stop().await;
+    worker.abort();
+    let _ = worker.await;
+    let state = Arc::try_unwrap(state)
+        .ok()
+        .context("Fixture host still referenced")?
+        .into_inner();
+    let (owner, mut host) = state;
+    host.stop().await;
+    drop(owner);
+    Ok(())
+}
+async fn requests_scenario(revoke_candidate: bool) -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut owner = start_fixture_owner(dir.path())?;
     let info = owner.create("Requests acceptance")?;
     owner.pairing_ready(&info.pin)?;
     let authority = LocalAuthority::new(&info.url)?;
