@@ -197,32 +197,40 @@ impl HostControl {
                     .await
                     .context("Joining is unconfirmed; read its result without resending")?
                     .context("The joining device disconnected; do not resend approval")?;
-                let proof = device
-                    .session()?
-                    .round_trip_to(
-                        Some(&target.node),
-                        &joined.ticket,
-                        "Connect pairing verification",
-                    )
-                    .await;
-                if let Err(error) = proof {
+                let commit = async {
+                    let proof = device
+                        .session()?
+                        .prove_pairing_to(&target.node, &joined.ticket)
+                        .await?;
+                    // Enrollment may have taken time. Verify the exact peer
+                    // certificate against fresh core state, along with the host
+                    // and controller, immediately before synchronous commit.
+                    let peer = device
+                        .verify_pairing_commit(certificate, node, &proof, &target.node)
+                        .await?;
+                    self.store.checked_result(
+                        &peer,
+                        reserved.nonce(),
+                        reserved.digest(),
+                        Utc::now(),
+                    )?;
+                    device.remember_pairing(PairedDevice {
+                        name: target.name.clone(),
+                        node: target.node.clone(),
+                        ticket: joined.ticket.clone(),
+                    })
+                }
+                .await;
+                if let Err(error) = commit {
                     let _ = joined.confirm.send(false);
+                    self.store.record_result(
+                        reserved.nonce(),
+                        reserved.digest(),
+                        ControlResult::Unconfirmed,
+                        Utc::now(),
+                    )?;
                     return Err(error);
                 }
-                // Enrollment may have taken time. Fresh revocation/grant checks
-                // still precede the local relationship and final confirmation.
-                let peer = device.verify_owner_controller(certificate, node).await?;
-                self.store.checked_result(
-                    &peer,
-                    reserved.nonce(),
-                    reserved.digest(),
-                    Utc::now(),
-                )?;
-                device.remember_pairing(PairedDevice {
-                    name: target.name.clone(),
-                    node: target.node.clone(),
-                    ticket: joined.ticket,
-                })?;
                 joined
                     .confirm
                     .send(true)

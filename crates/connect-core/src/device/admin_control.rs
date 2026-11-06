@@ -67,6 +67,35 @@ impl DeviceController {
         certificate: &serde_json::Value,
         node: &str,
     ) -> Result<crate::owner_control::VerifiedController> {
+        let trust = self.current_owner_trust().await?;
+        crate::owner_control::VerifiedController::from_session(
+            &self.administrative_binding()?.scope,
+            &trust,
+            certificate,
+            node,
+            Utc::now(),
+        )
+    }
+    pub(crate) async fn verify_pairing_commit(
+        &mut self,
+        certificate: &serde_json::Value,
+        controller: &str,
+        candidate: &crate::session::AuthenticatedPeer,
+        candidate_node: &str,
+    ) -> Result<crate::owner_control::VerifiedController> {
+        // The same newly fetched snapshot covers host, controller and the exact
+        // authenticated candidate. No retained session snapshot authorizes commit.
+        let trust = self.current_owner_trust().await?;
+        candidate.require_current(&trust, candidate_node)?;
+        crate::owner_control::VerifiedController::from_session(
+            &self.administrative_binding()?.scope,
+            &trust,
+            certificate,
+            controller,
+            Utc::now(),
+        )
+    }
+    async fn current_owner_trust(&mut self) -> Result<crate::session::TrustSnapshot> {
         self.require_connected()?;
         ensure!(
             self.network_computer(),
@@ -86,13 +115,7 @@ impl DeviceController {
             .as_ref()
             .context("Enroll the authority host first")?;
         trust.certificate(own.certificate(), &own.public_key(), Utc::now())?;
-        crate::owner_control::VerifiedController::from_session(
-            &self.administrative_binding()?.scope,
-            &trust,
-            certificate,
-            node,
-            Utc::now(),
-        )
+        Ok(trust)
     }
     fn administrative_binding(&self) -> Result<AdministrativeBinding> {
         let node = STANDARD.encode(self.vault.key().verifying_key().to_bytes());

@@ -46,6 +46,96 @@ fn ticket(text: String) -> Result<String> {
         &text,
     )?)?)?)
 }
+/// Independent signed HTTP administrator for the timing regression. Only the
+/// disposable fixture's recovery export is read; seeds stay in zeroized memory.
+struct IndependentAdmin {
+    key: SigningKey,
+    key_id: String,
+    audience: String,
+    url: String,
+}
+fn independent_http() -> Result<reqwest::Client> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    Ok(reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?)
+}
+impl IndependentAdmin {
+    async fn from_fixture(owner: &mut OwnerRuntime, url: String) -> Result<Self> {
+        let genesis: Value = independent_http()?
+            .get(format!("{url}/sovereign.json"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let audience = genesis["network_authority"]["public_key"]
+            .as_str()
+            .context("Missing fixture authority public key")?
+            .to_owned();
+        let backup = owner.backup()?;
+        let encoded = backup
+            .keys
+            .iter()
+            .find(|(name, _)| name.ends_with("/operator.key"))
+            .context("Missing fixture operator")?
+            .1;
+        let raw = zeroize::Zeroizing::new(STANDARD.decode(encoded)?);
+        let text = std::str::from_utf8(&raw)?;
+        let key_id = text
+            .lines()
+            .find_map(|line| line.strip_prefix("# Key ID: "))
+            .context("Missing fixture operator key ID")?
+            .to_owned();
+        let seed = zeroize::Zeroizing::new(
+            text.lines()
+                .filter(|line| !line.starts_with('#'))
+                .map(str::trim)
+                .collect::<String>(),
+        );
+        let key = genesis_mesh_sdk::load_signing_key(&seed)?;
+        Ok(Self {
+            key,
+            key_id,
+            audience,
+            url,
+        })
+    }
+    async fn revoke(&self, certificate: &Value) -> Result<()> {
+        let body = json!({"cert_id":certificate["cert_id"],"reason":"key_compromise"});
+        let request = genesis_mesh_sdk::AdminRequest {
+            method: "POST",
+            path: "/admin/revoke",
+            query: &[],
+            audience: &self.audience,
+            body: &body,
+        };
+        let headers = genesis_mesh_sdk::build_admin_headers(&request, &self.key_id, &self.key)?;
+        let reply = independent_http()?
+            .post(format!("{}/admin/revoke", self.url))
+            .header("X-Admin-Key-Id", headers.key_id)
+            .header("X-Admin-Timestamp", headers.timestamp)
+            .header("X-Admin-Nonce", headers.nonce)
+            .header("X-Admin-Signature", headers.signature)
+            .json(&body)
+            .send()
+            .await?;
+        assert!(
+            reply.status().is_success(),
+            "Independent fixture admin revocation failed"
+        );
+        let result: Value = reply.json().await?;
+        assert!(
+            result["edge_node"]["revoked_cert_ids"]
+                .as_array()
+                .is_some_and(|ids| ids.contains(&certificate["cert_id"])),
+            "Core did not revoke candidate"
+        );
+        Ok(())
+    }
+}
 fn enrollment(
     scope: &ControlScope,
     member: &EnrolledDevice,
@@ -131,6 +221,17 @@ async fn result(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "Requires pinned CONNECT_NA_PYTHON and isolated native credential store"]
 async fn real_quic_requests_require_local_enrollment_and_never_replay_pairing() -> Result<()> {
+    requests_scenario(false).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires pinned CONNECT_NA_PYTHON and isolated native credential store"]
+async fn candidate_revoked_during_wait_is_not_remembered_or_confirmed_and_cannot_replay()
+-> Result<()> {
+    requests_scenario(true).await
+}
+
+async fn requests_scenario(revoke_candidate: bool) -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut owner = if let Some(binary) = std::env::var_os("CONNECT_OWNER_BINARY") {
         OwnerRuntime::start(std::path::Path::new(&binary), &dir.path().join("authority"))?
@@ -183,6 +284,11 @@ async fn real_quic_requests_require_local_enrollment_and_never_replay_pairing() 
         ticket: ticket(host.status()?.bridge_ticket.context("No bridge")?)?,
     };
     let remote = BridgeAuthority::new(route)?;
+    let independent_admin = if revoke_candidate {
+        Some(IndependentAdmin::from_fixture(&mut owner, info.url.clone()).await?)
+    } else {
+        None
+    };
     let (sender, mut requests) = tokio::sync::mpsc::channel::<OwnerRequest>(8);
     host.serve_owner(sender);
     let state = Arc::new(Mutex::new((owner, host)));
@@ -456,10 +562,41 @@ async fn real_quic_requests_require_local_enrollment_and_never_replay_pairing() 
             host_node.clone(),
         )
         .await?;
+        if let Some(admin) = &independent_admin {
+            // The native adapter is already waiting for Joined while holding
+            // its host lock. The independent core route needs no such lock.
+            assert!(
+                state.try_lock().is_err(),
+                "Revocation must occur during the enrollment wait"
+            );
+            admin.revoke(joined.certificate()).await?;
+            let current = authority.refresh(&mut candidate_trust).await?;
+            assert!(
+                VerifiedController::from_session(
+                    &scope,
+                    &current,
+                    joined.certificate(),
+                    &joined.public_key(),
+                    Utc::now()
+                )
+                .is_err(),
+                "Fresh core trust must refuse the revoked candidate"
+            );
+        }
+        // Both endpoints retain pre-revocation session trust. This still
+        // authenticates, so the later commit refresh is the essential guard.
         session
             .round_trip(&ticket(issued.session_ticket)?, "Candidate verifies host")
             .await?;
-        candidate_pair.finish(ticket(session.ticket()?)?).await?;
+        let finish = candidate_pair.finish(ticket(session.ticket()?)?).await;
+        if revoke_candidate {
+            assert!(
+                finish.is_err(),
+                "Revoked candidate received success confirmation"
+            );
+        } else {
+            finish?;
+        }
         candidate_pair.close().await;
         bridge.close().await;
         session.close().await;
@@ -484,14 +621,26 @@ async fn real_quic_requests_require_local_enrollment_and_never_replay_pairing() 
     // completion; we never resend the approval.
     if let Ok(reply) = reply {
         assert!(
-            matches!(reply,ControlReply::Result(ControlResult::Approved{node}) if node == public(&key(74)))
+            !revoke_candidate
+                && matches!(reply,ControlReply::Result(ControlResult::Approved{node}) if node == public(&key(74)))
         );
     }
-    assert!(matches!(
-        result(&remote, &member, &authority, &mut trust, &approve).await?,
-        ControlReply::Result(ControlResult::Approved { .. })
-    ));
-    assert!(
+    let ControlReply::Result(readback) =
+        result(&remote, &member, &authority, &mut trust, &approve).await?
+    else {
+        anyhow::bail!("Expected durable pairing result")
+    };
+    assert_eq!(
+        readback,
+        if revoke_candidate {
+            ControlResult::Unconfirmed
+        } else {
+            ControlResult::Approved {
+                node: public(&key(74)),
+            }
+        }
+    );
+    assert_eq!(
         state
             .lock()
             .await
@@ -499,7 +648,9 @@ async fn real_quic_requests_require_local_enrollment_and_never_replay_pairing() 
             .status()?
             .devices
             .iter()
-            .any(|d| d.node == public(&key(74)))
+            .any(|d| d.node == public(&key(74))),
+        !revoke_candidate,
+        "Revoked candidates must not enter the durable device list"
     );
     assert!(
         exchange(

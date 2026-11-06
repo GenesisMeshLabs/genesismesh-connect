@@ -136,6 +136,16 @@ it is not proof that a human viewed the reply. Failure or process interruption
 leaves a consumed nonce with an unconfirmed/started result. No automatic invite
 reissue or execution retry occurs. Rejection and listing save exact results.
 
+The native round trip retains the exact authenticated candidate certificate in
+a non-deserializable peer proof. Immediately before synchronous local storage
+and confirmation, one fresh authority snapshot verifies the host, controller
+and that candidate proof, including revocation and certificate validity. A
+candidate revoked while enrollment was waiting receives no success confirmation
+and is not added to the saved device list. Failed final verification explicitly
+refuses completion and saves `Unconfirmed`; readback never permits nonce replay.
+The refresh observes core state at fetch time; later core revocations retain
+their normal effect.
+
 The outer native host/device locks serialize an exchange, including the bounded
 80-second enrollment wait. Other Requests can time out or be busy meanwhile;
 they must read a saved result rather than replay execution. Result readback
@@ -191,6 +201,10 @@ over mutually authenticated QUIC: explicit opt-in, pending submission/status,
 local decline/approval, ordinary-member denial, lost-reply durable readback,
 duplicate execution refusal, expired commands, stale targets, rejection, real
 candidate enrollment/final proof, grant revocation and current core CRL refusal.
+The timing regression independently signs a real core revocation after candidate
+enrollment but before final pairing completion. Retained-trust diagnostics still
+succeed, while fresh commit verification refuses storage/success, keeps durable
+unconfirmed readback and refuses replay.
 CI repeats that fixture against the packaged standalone authority executable,
 not only the Python source entry point.
 Portable tests cover grant expiration, exact mutex scope, suspended hosts and
