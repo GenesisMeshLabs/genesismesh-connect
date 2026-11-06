@@ -191,6 +191,8 @@ over mutually authenticated QUIC: explicit opt-in, pending submission/status,
 local decline/approval, ordinary-member denial, lost-reply durable readback,
 duplicate execution refusal, expired commands, stale targets, rejection, real
 candidate enrollment/final proof, grant revocation and current core CRL refusal.
+CI repeats that fixture against the packaged standalone authority executable,
+not only the Python source entry point.
 Portable tests cover grant expiration, exact mutex scope, suspended hosts and
 core readiness refusals. Fixture evidence is not physical phone acceptance.
 

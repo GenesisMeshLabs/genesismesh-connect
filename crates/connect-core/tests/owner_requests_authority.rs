@@ -132,13 +132,17 @@ async fn result(
 #[ignore = "Requires pinned CONNECT_NA_PYTHON and isolated native credential store"]
 async fn real_quic_requests_require_local_enrollment_and_never_replay_pairing() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let python = std::env::var_os("CONNECT_NA_PYTHON").context("Set CONNECT_NA_PYTHON")?;
-    let mut owner = OwnerRuntime::start_python(
-        std::path::Path::new(&python),
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apps/connect/authority/main.py"),
-        &dir.path().join("authority"),
-    )?;
+    let mut owner = if let Some(binary) = std::env::var_os("CONNECT_OWNER_BINARY") {
+        OwnerRuntime::start(std::path::Path::new(&binary), &dir.path().join("authority"))?
+    } else {
+        let python = std::env::var_os("CONNECT_NA_PYTHON").context("Set CONNECT_NA_PYTHON")?;
+        OwnerRuntime::start_python(
+            std::path::Path::new(&python),
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/connect/authority/main.py"),
+            &dir.path().join("authority"),
+        )?
+    };
     let info = owner.create("Requests acceptance")?;
     owner.pairing_ready(&info.pin)?;
     let authority = LocalAuthority::new(&info.url)?;
