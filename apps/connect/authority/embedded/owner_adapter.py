@@ -140,6 +140,108 @@ class EmbeddedOwner:
             return False
         return True
 
+    def export_recovery(self, staging):
+        """Stage this network for a recovery file in `staging`, a new directory the
+        native side chose in private app storage: its signed state, public
+        records and a consistent database snapshot. The identity keys are only
+        returned, the root after its per-use authentication."""
+        with self.mutex:
+            if self.identity is None or self.service is None: raise Refused("Open the network first.")
+            if self.renewal_pending: raise Refused("Reconcile the pending membership operation first.")
+            instance = self.identity["instance"]
+            root = json.loads(bytes(self.vault.open_root(instance, self.storage.read("root.sealed"))))
+            if (root.get("schema") != 3 or root.get("instance") != instance
+                    or public(seed(root["seed"])) != self.genesis.root_public_key):
+                raise Refused("The network's root key does not match it.")
+            os.mkdir(staging, 0o700)  # A new directory; never reuse earlier staging.
+            for name, content in (("state.json", self.state_bytes),
+                                  ("genesis.json", self.genesis.model_dump_json().encode()),
+                                  ("policy.json", self.policy.model_dump_json().encode())):
+                with open(os.path.join(staging, name), "xb") as stream:
+                    stream.write(content); stream.flush(); os.fsync(stream.fileno())
+            # SQLite's online backup is consistent while the authority keeps serving.
+            with closing(sqlite3.connect(str(self.storage.path("authority.db")))) as source, \
+                    closing(sqlite3.connect(os.path.join(staging, "authority.db"))) as copy:
+                source.backup(copy)
+            return {"root": root["seed"], "na": base64.b64encode(bytes(self.keys["na"])).decode(),
+                    "operator": base64.b64encode(bytes(self.keys["operator"])).decode(),
+                    "member": base64.b64encode(bytes(self.member)).decode()}
+
+    def import_recovery(self, staging, keys):
+        """Bring a network back on this device from decrypted recovery files in
+        `staging`: every key must be the one the network's own records name, and
+        each is sealed again under this device's custody. Never replaces anything;
+        an import that sealed nothing leaves nothing behind."""
+        with self.mutex:
+            self.vault.ready()
+            self.storage.acquire(create=True)
+            fresh_custody = False
+            try:
+                if {p.name for p in self.storage.directory.iterdir()} != {".authority-lock"}:
+                    raise Refused("This device already has a network. It has been preserved.")
+                if not isinstance(keys, dict) or set(keys) != {"root", "na", "operator", "member"}:
+                    raise Refused("The recovery file is incomplete.")
+                def staged(name, limit=65536):
+                    path = os.path.join(staging, name)
+                    if os.path.islink(path) or not os.path.isfile(path) or os.path.getsize(path) > limit:
+                        raise Refused("The recovery file is incomplete.")
+                    with open(path, "rb") as stream: return stream.read()
+                state = json.loads(staged("state.json"))
+                genesis = GenesisBlock.model_validate_json(staged("genesis.json"))
+                policy = PolicyManifest.model_validate_json(staged("policy.json"))
+                if type(state.get("schema")) is not int or state["schema"] != 3:
+                    raise Refused("This recovery file comes from an unsupported version.")
+                instance = state["identity"]["instance"]
+                if str(uuid.UUID(instance)) != instance: raise Refused("Invalid authority identity.")
+                root, na, operator, member = [seed(keys[n]) for n in ("root", "na", "operator", "member")]
+                signed = {k: v for k, v in state.items() if k != "state_signature"}
+                if (public(root) != genesis.root_public_key or public(na) != genesis.network_authority.public_key
+                        or public(operator) != state["identity"]["operator_public_key"]
+                        or public(member) != state["identity"]["member_public_key"]
+                        or not verify_signature(STATE_DOMAIN + encode(signed), state["state_signature"], public(operator))):
+                    raise Refused("The recovery file's keys do not match its network.")
+                self.keys, self.member = {"na": na, "operator": operator}, member
+                certificate = JoinCertificate.model_validate(state["certificate"])
+                self._verify(genesis, policy, certificate, require_current=False)
+                if self._identity(instance, genesis, certificate) != state["identity"]:
+                    raise Refused("The recovery file's identity does not match its keys.")
+                self.storage.write_new("initializing.json", encode({"schema": 3, "instance": instance}))
+                fresh_custody = not self.vault.has_custody()
+                self.vault.create()
+                root_sealed = bytes(self.vault.seal_root(instance, encode({"schema": 3, "instance": instance,
+                    "seed": base64.b64encode(bytes(root)).decode()})))
+                self.storage.write_new("root.sealed", root_sealed)
+                del root
+                owner_sealed = bytes(self.vault.seal_owner(instance, encode({"schema": 3, "instance": instance,
+                    "genesis": genesis.model_dump(mode="json"), "policy": policy.model_dump(mode="json"),
+                    "keys": {name: base64.b64encode(bytes(key)).decode() for name, key in self.keys.items()}})))
+                member_sealed = bytes(self.vault.seal_member(instance, encode({"schema": 3, "instance": instance,
+                    "seed": base64.b64encode(bytes(member)).decode()})))
+                self.storage.write_new("owner.sealed", owner_sealed)
+                self.storage.write_new("member.sealed", member_sealed)
+                with open(os.path.join(staging, "authority.db"), "rb") as source, \
+                        open(self.storage.path("authority.db"), "xb") as copy:
+                    while chunk := source.read(1 << 20): copy.write(chunk)
+                    copy.flush(); os.fsync(copy.fileno())
+                # The local state names this device's sealed files; sign it again.
+                state = {**signed, "revision": signed["revision"] + 1,
+                         "root_sha256": hashlib.sha256(root_sealed).hexdigest(),
+                         "owner_sha256": hashlib.sha256(owner_sealed).hexdigest(),
+                         "member_sha256": hashlib.sha256(member_sealed).hexdigest()}
+                state.pop("recovery_evidence", None)
+                state["state_signature"] = sign_data(STATE_DOMAIN + encode(state), self.keys["operator"])
+                self.storage.write_new("state.json", encode(state))
+                self.storage.path("initializing.json").unlink()
+                self.storage.sync()
+            except Exception as failure:
+                cancelled = fresh_custody and self._abandon_unsealed()
+                self.close()
+                if cancelled:
+                    raise CreationCancelled("Restoring the network was cancelled before anything was saved. Try again.") from failure
+                raise
+            self.close()
+            return self.open()
+
     def open(self):
         """Low-level custody/readback; never writes or replays membership work."""
         return self._open()

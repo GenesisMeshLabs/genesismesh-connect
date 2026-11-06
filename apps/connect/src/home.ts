@@ -1022,9 +1022,9 @@ if (isTauri()) {
     el<HTMLButtonElement>("choose-create").disabled = !status.runtime_available;
     visible("choose-create", status.runtime_available);
     visible("create-unavailable", !status.runtime_available);
-    // Existing networks and recovery files are opened on a computer.
+    // An existing desktop network is opened on its computer.
     visible("choose-existing", status.runtime_available && !status.phone);
-    visible("choose-restore", status.runtime_available && !status.phone);
+    visible("choose-restore", status.runtime_available);
     if (status.phone) usePhoneSetupWording();
   });
   void refresh();

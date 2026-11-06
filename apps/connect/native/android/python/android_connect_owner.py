@@ -32,6 +32,8 @@ class AndroidVault(AndroidReadVault):
     def has_custody(self): return bool(self.native.hasCustody())
     def discard_unsealed(self): self.native.discardUnsealed()
     def seal_root(self, instance, data): return bytes(self.native.seal_root(instance, data))
+    # Recovery export only; the native side asks for the screen lock first.
+    def open_root(self, instance, data): return self._open(self.native.open_root, instance, data)
     def seal_owner(self, instance, data): return bytes(self.native.seal_owner(instance, data))
     def seal_member(self, instance, data): return bytes(self.native.seal_member(instance, data))
 
