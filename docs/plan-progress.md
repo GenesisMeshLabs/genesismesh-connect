@@ -80,7 +80,6 @@ availability. The full Create workflow remains disabled until those gates pass.
 
 ## Next user-visible acceptance milestones
 
-<<<<<<< HEAD
 ### Host backend and guided local administration — 6 November 2026
 
 The host now receives separately authenticated administrative enrollment requests,
@@ -178,7 +177,6 @@ the native device readiness guard before creating an owner network. Its specific
 result is `secure_screen_lock_required`; configuring a credential is a local user
 step. Real Android create/reopen and
 process-restart identity acceptance remain pending; production Create stays off.
->>>>>>> origin/main
 
 **“Create and run my network on this Android phone.”** The independent-phone
 proof above is required alongside the optional server profile. Native dependency
