@@ -109,11 +109,10 @@ public final class OwnerKeyVault {
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, key(alias));
-            cipher.updateAAD(context(role, instance));
-            if (ROOT.equals(alias)) authorizeRoot(cipher, "Protect network root key");
             byte[] iv = cipher.getIV();
             if (iv.length != 12) throw new IllegalStateException("Unexpected protected record format.");
-            byte[] ciphertext = cipher.doFinal(value);
+            byte[] ciphertext = ProtectedRecordCipher.finish(cipher, context(role, instance), value, 0, value.length,
+                ROOT.equals(alias) ? operation -> authorizeRoot(operation, "Protect network root key") : null);
             byte[] envelope = new byte[13 + ciphertext.length];
             envelope[0] = 1;
             System.arraycopy(iv, 0, envelope, 1, 12);
@@ -128,9 +127,8 @@ public final class OwnerKeyVault {
         }
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.DECRYPT_MODE, key(alias), new GCMParameterSpec(128, value, 1, 12));
-        cipher.updateAAD(context(role, instance));
-        if (ROOT.equals(alias)) authorizeRoot(cipher, "Use network root key");
-        return cipher.doFinal(value, 13, value.length - 13);
+        return ProtectedRecordCipher.finish(cipher, context(role, instance), value, 13, value.length - 13,
+            ROOT.equals(alias) ? operation -> authorizeRoot(operation, "Use network root key") : null);
     }
 
     private void authorizeRoot(Cipher cipher, String action) throws Exception {

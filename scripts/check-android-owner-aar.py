@@ -39,7 +39,7 @@ def check(path):
                 or manifest.find("uses-sdk").attrib.get("{http://schemas.android.com/apk/res/android}minSdkVersion") != "35"):
             raise ValueError("Expected the isolated build-only library manifest")
         with zipfile.ZipFile(io.BytesIO(aar.read("classes.jar"))) as classes:
-            for name in ("OwnerQualificationPlugin", "OwnerSessionGuard", "RecoveryInspectionGuard", "OwnerKeyVault", "RootKeyAuthorization", "RootKeyPolicy"):
+            for name in ("OwnerQualificationPlugin", "OwnerSessionGuard", "RecoveryInspectionGuard", "OwnerKeyVault", "RootKeyAuthorization", "RootKeyPolicy", "ProtectedRecordCipher"):
                 if f"org/genesismesh/connect/authority/{name}.class" not in classes.namelist():
                     raise ValueError("A required native bridge class was not compiled")
         with zipfile.ZipFile(io.BytesIO(aar.read("assets/chaquopy/app.imy"))) as app:

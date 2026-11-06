@@ -195,6 +195,15 @@ generic signing command is added. Root signing in Python cannot promise complete
 memory zeroization; this is wrapped software identity custody, not a hardware
 Ed25519 signing implementation.
 
+Per-use root operations authenticate the initialized cipher before sending any
+GCM authenticated context or payload. Android's provider can cache an early AAD
+failure and report it later from `doFinal`; a successful prompt cannot repair
+that already-failed operation. The shared `ProtectedRecordCipher` keeps this
+order for both wrapping and unwrapping, with a host regression for exact-cipher
+authorization, denial, cached failures and real GCM context integrity. Root policy
+and the sealed-record format are unchanged. Host tests do not qualify a device.
+See [Android Keystore's AAD/error handling](https://android.googlesource.com/platform/frameworks/base/+/5e1b258dd5beca122cef6dc2cb857bd559db9bc3/keystore/java/android/security/keystore2/AndroidKeyStoreCipherSpiBase.java).
+
 The owner profile now requires Android 15/API35 to avoid older Android
 unlocked-device-key lifecycle defects. General client Join remains unchanged.
 Schema-2 qualification profiles are preserved and refused before decryption;

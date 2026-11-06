@@ -202,6 +202,15 @@ Root Check package now waits for a local **Start check** tap, so its authenticat
 window is not consumed while exchanging chat messages. Connect data is unchanged;
 no automatic custody replacement or reset action is added to either app.
 
+The first manually started check recorded native root authentication as
+`authenticated`, followed by `IllegalBlockSizeException` while wrapping the root;
+the profile still contained only initialization state. This accepts the local
+system-confirmation event, not completed root custody or network creation. A
+subsequent fix authenticates the exact cipher before submitting GCM context or
+payload. The host regression reproduces cached pre-authentication AAD failure
+and checks denial plus real GCM context integrity. Device acceptance must be
+recorded separately after the corrected build is tested.
+
 The next independent dependency is now implemented behind the opt-in
 `android-owner-qualification` feature and fixed
 `org.genesismesh.connect.ownerqualification` identifier. A private native bridge
