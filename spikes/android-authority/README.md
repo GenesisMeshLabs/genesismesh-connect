@@ -3,7 +3,11 @@
 An isolated developer APK packages the unchanged pinned Python core and its
 verified Android dependency closure. It tests imports, core signatures and
 refusals, native FFI, authenticated encryption, model validation, SQLite and
-temporary loopback HTTP. It creates no network or owner identity.
+temporary loopback HTTP. On a custody-ready phone, its separate owner check also
+creates a private qualification network through the real core and checks owner
+close/reopen, signed member liveness and purpose-separated Android Keystore
+custody. Later runs reopen that same qualification profile. No production
+Create Network action is exposed.
 
 The Android source-wheel workflow builds it only after the full artifact-bound
 closure passes. Gradle receives an offline wheel directory and generated full
@@ -24,6 +28,9 @@ Confirm the report's source commit, unique run ID, core version, actual device
 API and all checks. Activity restarts use serialized process-wide execution;
 stale completions cannot publish reports or update a newer screen. Python's
 build-time API marker is recorded separately from the actual device API.
-A passing report qualifies these runtime operations only. Authority
-creation, protected owner custody, persisted identity, enrollment, revocation,
-transport integration and foreground/background lifecycle are separate gates.
+A passing runtime report qualifies those runtime operations only. The owner
+check has its own results. Physical owner creation/persistence, device restart,
+recovery, second-device enrollment/revocation, transport integration and
+foreground/background lifecycle remain separate acceptance gates. This owner
+profile requires an unlocked phone with a secure screen lock configured; configure
+credentials only locally, never in a chat or developer command.

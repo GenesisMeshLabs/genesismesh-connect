@@ -27,6 +27,7 @@ android {
     }
     buildFeatures { buildConfig = true }
     sourceSets.getByName("main").res.srcDir(layout.buildDirectory.dir("generated/brand").get().asFile)
+    sourceSets.getByName("main").java.srcDir(repository.resolve("apps/connect/native/android/src/main/java"))
 }
 
 val prepareBrand = tasks.register<Copy>("prepareBrand") {
@@ -37,6 +38,7 @@ val prepareBrand = tasks.register<Copy>("prepareBrand") {
 tasks.named("preBuild") { dependsOn(prepareBrand) }
 
 chaquopy {
+    sourceSets.getByName("main").srcDir(repository.resolve("apps/connect/authority/embedded"))
     defaultConfig {
         version = "3.13"
         buildPython("python")

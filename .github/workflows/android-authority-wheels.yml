@@ -16,6 +16,9 @@ on:
       - 'scripts/tests/test_android_engine_check.py'
       - 'scripts/tests/test_android_engine_lifecycle.py'
       - 'apps/connect/authority/core-requirements.txt'
+      - 'apps/connect/authority/embedded/**'
+      - 'apps/connect/authority/test_embedded_owner.py'
+      - 'apps/connect/native/android/**'
       - 'apps/connect/src-tauri/icons/icon.png'
       - 'spikes/android-authority/**'
   workflow_dispatch:
@@ -80,6 +83,7 @@ jobs:
         run: |
           python -m unittest discover -s scripts/tests -p 'test_native_*.py' -v
           python -m unittest discover -s scripts/tests -p 'test_android*.py' -v
+          python -m unittest discover -s apps/connect/authority -p 'test_embedded_owner.py' -v
       - name: Install declared Rust and Android target
         run: rustup toolchain install 1.98.0 --profile minimal --target aarch64-linux-android
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
