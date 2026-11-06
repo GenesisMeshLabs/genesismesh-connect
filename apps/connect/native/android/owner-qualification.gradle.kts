@@ -40,6 +40,16 @@ tasks.configureEach {
     if (name.endsWith("PythonSources") || name == "preBuild") dependsOn(ownerPython)
 }
 
+// Chaquopy has Python 3.13 for arm64-v8a and x86_64 only. The generated Rust plugin
+// also declares 32-bit ABI flavors; this app never builds them, so leave them out.
+plugins.withId("com.android.application") {
+    extensions.configure<com.android.build.api.variant.ApplicationAndroidComponentsExtension> {
+        beforeVariants { variant ->
+            if (variant.flavorName == "arm" || variant.flavorName == "x86") variant.enable = false
+        }
+    }
+}
+
 dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.15.3")
 }

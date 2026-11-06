@@ -126,6 +126,7 @@ pub fn run() {
             client_requests::client_requests_status,
             client_requests::client_requests_check,
             workflow::network_create,
+            workflow::network_reopen,
             workflow::network_attach,
             workflow::recovery_create,
             workflow::recovery_restore,

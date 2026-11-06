@@ -15,6 +15,9 @@ pub(crate) struct OwnerSlot {
     pub(crate) problem: Option<String>,
     pub(crate) pairing: Option<std::sync::Arc<connect_core::session::pairing::PairHost>>,
     pub(crate) joining: Option<String>,
+    /// Held while this phone runs its own network; another setup must not overlap.
+    #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+    pub(crate) lease: Option<connect_core::owner::foreground::ForegroundLease>,
 }
 pub struct WorkflowState {
     pub(crate) directory: PathBuf,
@@ -25,11 +28,16 @@ pub struct WorkflowState {
 #[derive(Serialize)]
 pub struct NetworkStatus {
     runtime_available: bool,
+    /// This phone runs the network itself, while Connect is open.
+    phone: bool,
     owner: bool,
     network_name: Option<String>,
     problem: Option<String>,
 }
 fn runtime_available() -> bool {
+    if cfg!(all(target_os = "android", feature = "android-owner-qualification")) {
+        return true;
+    }
     #[cfg(debug_assertions)]
     if std::env::var_os("CONNECT_NA_PYTHON").is_some() {
         return cfg!(any(windows, target_os = "macos", target_os = "linux"));
@@ -46,6 +54,7 @@ fn runtime_name() -> &'static str {
         "genesismesh-authority"
     }
 }
+#[cfg_attr(all(target_os = "android", feature = "android-owner-qualification"), allow(dead_code))]
 fn start(directory: &std::path::Path) -> anyhow::Result<OwnerRuntime> {
     anyhow::ensure!(
         cfg!(any(windows, target_os = "macos", target_os = "linux")),
@@ -84,11 +93,37 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             problem: None,
             pairing: None,
             joining: None,
+            #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+            lease: None,
         }),
         owner,
     });
     tauri::async_runtime::spawn(answer_owner(app.handle().clone(), requests));
     tauri::async_runtime::spawn(keep_spaces(app.handle().clone()));
+    #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+    if phone_network_saved(app.handle()) {
+        let handle = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+            // Opening never repeats a write, so a launch race with the native
+            // plugin may simply be tried again.
+            let mut problem = None;
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                match open_phone_network(handle.clone()).await {
+                    Ok(()) => {
+                        problem = None;
+                        break;
+                    }
+                    Err(error) => problem = Some(error),
+                }
+            }
+            if problem.is_some() {
+                handle.state::<WorkflowState>().slot.lock().await.problem = problem;
+            }
+        });
+    }
     if configured {
         let handle = app.handle().clone();
         tauri::async_runtime::spawn(async move {
@@ -139,18 +174,18 @@ pub async fn network_status(
     let slot = state.slot.lock().await;
     Ok(NetworkStatus {
         runtime_available: runtime_available(),
+        phone: cfg!(all(target_os = "android", feature = "android-owner-qualification")),
         owner: slot.info.is_some()
             || (cfg!(any(windows, target_os = "macos", target_os = "linux"))
-                && state.directory.join("owner.json").is_file()),
+                && state.directory.join("owner.json").is_file())
+            || phone_setup_marker(&state.directory),
         network_name: slot.info.as_ref().map(|i| i.pin.network_name.clone()),
         problem: slot.problem.clone(),
     })
 }
 
-/// Source-only qualification entry: foreground/native callers only. No frontend
-/// command, startup task or public Create/admin gate calls this function.
+/// Foreground phone setup: Create and launch-time Open in the owner build only.
 #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
-#[allow(dead_code)]
 pub(crate) async fn prepare_foreground_phone(
     app: tauri::AppHandle,
     choice: connect_core::owner::foreground::SetupChoice,
@@ -175,10 +210,141 @@ pub(crate) async fn prepare_foreground_phone(
 #[tauri::command]
 pub async fn network_create(
     name: String,
+    app: tauri::AppHandle,
     state: tauri::State<'_, WorkflowState>,
     desktop: tauri::State<'_, crate::desktop::DesktopState>,
 ) -> Result<(), String> {
-    install_network(Some(name), None, &state, &desktop).await
+    #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+    {
+        let _ = (&state, &desktop);
+        return create_phone_network(app, name).await;
+    }
+    #[cfg(not(all(target_os = "android", feature = "android-owner-qualification")))]
+    {
+        let _ = app;
+        install_network(Some(name), None, &state, &desktop).await
+    }
+}
+
+/// Reopen this phone's network after it stopped, for example when Android
+/// closed the app. Elsewhere the network computer reopens on its own.
+#[tauri::command]
+pub async fn network_reopen(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+    {
+        if !phone_network_saved(&app) {
+            return Err("This phone has no network to reopen.".into());
+        }
+        let result = open_phone_network(app.clone()).await;
+        app.state::<WorkflowState>().slot.lock().await.problem = result.clone().err();
+        result
+    }
+    #[cfg(not(all(target_os = "android", feature = "android-owner-qualification")))]
+    {
+        let _ = app;
+        Err("Reopen your network on the computer that runs it.".into())
+    }
+}
+
+/// The foreground setup journal sits beside the device profile; its presence
+/// means this phone created a network, finished or not.
+fn phone_setup_marker(owner_directory: &std::path::Path) -> bool {
+    cfg!(all(target_os = "android", feature = "android-owner-qualification"))
+        && owner_directory.parent().is_some_and(|parent| {
+            parent.join("foreground-setup.json").exists()
+                || parent.join("foreground-setup.lock").exists()
+        })
+}
+
+#[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+fn phone_network_saved(app: &tauri::AppHandle) -> bool {
+    phone_setup_marker(&app.state::<WorkflowState>().directory)
+}
+
+/// Create a network run by this phone. Saved progress makes an interrupted
+/// creation reviewable; it is never repeated as a new identity.
+#[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+async fn create_phone_network(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    {
+        let state = app.state::<WorkflowState>();
+        let desktop = app.state::<crate::desktop::DesktopState>();
+        let owner = state.slot.lock().await;
+        let slot = desktop.slot.lock().await;
+        if slot.controller.is_some() || desktop.profile.exists() {
+            return Err("This phone already has a network identity. It has been preserved.".into());
+        }
+        if owner.runtime.is_some() || phone_setup_marker(&state.directory) {
+            return Err(
+                "This phone already started a network. Reopen it instead of creating another."
+                    .into(),
+            );
+        }
+    }
+    let name = name.trim().to_owned();
+    let network = prepare_foreground_phone(
+        app.clone(),
+        connect_core::owner::foreground::SetupChoice::Create { name },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    adopt_phone_network(&app, network).await;
+    Ok(())
+}
+
+/// Reopen this phone's network in the foreground. Only saved, completed work is
+/// opened; an unfinished step stays for review and is never repeated.
+#[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+pub(crate) async fn open_phone_network(app: tauri::AppHandle) -> Result<(), String> {
+    {
+        let state = app.state::<WorkflowState>();
+        let mut owner = state.slot.lock().await;
+        if owner.runtime.is_some() {
+            return Ok(());
+        }
+        // The previous session's lease must go before another setup may begin.
+        owner.lease = None;
+    }
+    let network = prepare_foreground_phone(
+        app.clone(),
+        connect_core::owner::foreground::SetupChoice::Open,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    adopt_phone_network(&app, network).await;
+    let desktop = app.state::<crate::desktop::DesktopState>();
+    let mut slot = desktop.slot.lock().await;
+    if let Some(device) = slot.controller.as_mut() {
+        if let Err(error) = device.restore_managed_share() {
+            slot.problem = Some(error.to_string());
+        } else if let Err(error) = device.reconnect_saved().await {
+            slot.problem = Some(error.to_string());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+async fn adopt_phone_network(
+    app: &tauri::AppHandle,
+    network: connect_core::owner::foreground::ForegroundNetwork,
+) {
+    let state = app.state::<WorkflowState>();
+    let desktop = app.state::<crate::desktop::DesktopState>();
+    let mut owner = state.slot.lock().await;
+    let mut slot = desktop.slot.lock().await;
+    let connect_core::owner::foreground::ForegroundNetwork {
+        runtime,
+        info,
+        mut device,
+        lease,
+    } = network;
+    device.serve_owner(state.owner.clone());
+    owner.runtime = Some(runtime);
+    owner.info = Some(info);
+    owner.lease = Some(lease);
+    owner.problem = None;
+    slot.controller = Some(device);
+    slot.problem = None;
 }
 #[tauri::command]
 pub async fn network_attach(
@@ -204,6 +370,7 @@ pub async fn network_attach(
         Ok(true)
     }
 }
+#[cfg_attr(all(target_os = "android", feature = "android-owner-qualification"), allow(dead_code))]
 async fn install_network(
     name: Option<String>,
     config: Option<PathBuf>,
