@@ -205,6 +205,59 @@ fixtures; it does not discover excluded startup-failure tests. The Android app
 boundary/full APK, physical lifecycle, recovery and second-device journey remain
 unperformed for this coordinator. The completed Root Check network is untouched.
 
+### Embedded-owner comparison-code pairing chain
+
+The next host integration uses the completed `ForegroundNetwork` as the only
+authority for its owner profile and an independently protected second device.
+The second profile is prepared with `prepare_remote`: it receives no local NA
+URL or operator credentials. Its comparison-code ceremony, signed host proof,
+grant delivery, enrollment and trust refresh use the existing QUIC pairing and
+authority-bridge paths to that embedded core. Fixtures use local connectivity
+and actual loopback QUIC sockets, with no public relay dependency.
+
+Shared `DeviceController` pairing-flow methods now drive both the app-shell
+consumer flow and these fixtures. The exact request ID, node key, display name
+and six-digit comparison code are checked under the existing PairHost gate
+before a core invitation. An approval is reserved before its native callback;
+an error or lost response cannot release that reservation for another invite.
+This reservation belongs to a temporary, non-restorable pairing endpoint, not
+a durable approval journal. Restart ends that ceremony and its old request;
+a new ceremony requires a new explicit review. Decline issues no invitation.
+
+The joining device's existing encrypted enrollment-pending marker now blocks
+another enrollment or pairing attempt. A failed final confirmation retains the
+same node, saved credential and bridge route, but the client stores its paired
+relationship only after observing confirmation. This is an incomplete outcome
+for explicit review, not permission to repeat enrollment. Recovery of that
+outcome is not implemented by these changes.
+
+Before the owner remembers or confirms a candidate, it proves the exact peer
+over QUIC and checks that certificate against freshly fetched core trust. The
+same candidate check is shared with Requests commit verification. No await lies
+between that fresh verification and the local relationship write. A genuine
+core revocation during joining therefore refuses commit even when earlier
+session snapshots still authenticate. After trust refresh, a previously paired
+revoked member is refused by both sides' QUIC paths. Stored names or prior
+pairing do not override membership or resource policy.
+
+Six explicit disposable real-core fixtures cover exact-target rejection and
+approval, decline, an unobserved native invitation response, interrupted
+enrollment, an unobserved final confirmation and revocation before/after commit.
+Test-only HTTP path counters check that enrollment is not repeated; tokens,
+request bodies and private keys are not logged. The previous seven coordinator
+fixtures, fifteen focused native/type/refusal checks and one shared-gate test
+also pass: 29 Rust checks in this source/host slice. Four negative fixtures
+failed before the bounded fixes and pass afterward. CI explicitly selects the
+fixture files; no broad startup-failure suite is discovered.
+
+These observations prove the bounded host chain, not two physical devices,
+human comparison or first-use acceptance. App-shell wiring is source-reviewed,
+not a new full-app/Android boundary build. Public Create/admin gates and the
+read-only recovery inspector are unchanged. No phone state, install/reset,
+publication, merge, deployment or blocked build retry occurred.
+The exchanged diagnostic messages qualify session membership checks, not
+additional file/service policy or resource-sharing journeys.
+
 ### Read-only interrupted-membership inspection
 
 A separate native-only inspection path reads an existing protected profile and

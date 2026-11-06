@@ -8,6 +8,7 @@ pub use sealed_store::{MASTER_KEY_CREDENTIAL, use_sealed_store};
 mod admin_control;
 mod admin_enrollment;
 mod enrollment_display;
+mod pairing_flow;
 pub use enrollment_display::*;
 mod admin_vault;
 mod lifecycle;
@@ -457,6 +458,10 @@ impl DeviceController {
 
     pub async fn enroll(&mut self, invite: &str) -> Result<()> {
         self.require_connected()?;
+        ensure!(
+            !self.vault.pending(),
+            "Review the saved enrollment outcome; it must not be repeated"
+        );
         ensure!(self.device.is_none(), "This device is already enrolled");
         ensure!(
             self.bridge_client.is_some() || self.authority.is_some(),
@@ -484,6 +489,10 @@ impl DeviceController {
     }
     pub async fn enroll_host(&mut self, invite: &str) -> Result<()> {
         self.require_connected()?;
+        ensure!(
+            !self.vault.pending(),
+            "Review the saved enrollment outcome; it must not be repeated"
+        );
         ensure!(
             self.device.is_none(),
             "Choose sharing host enrollment before enrolling this profile"
@@ -882,6 +891,10 @@ impl DeviceController {
         name: String,
     ) -> Result<crate::session::pairing::PairClient> {
         self.require_connected()?;
+        ensure!(
+            !self.vault.pending(),
+            "Review the saved enrollment before starting another pairing"
+        );
         ensure!(
             self.vault.pin() == &card.pin && self.device.is_none(),
             "This device already belongs to a network. Its identity was preserved."

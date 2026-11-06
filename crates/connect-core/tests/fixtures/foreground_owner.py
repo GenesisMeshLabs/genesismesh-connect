@@ -36,6 +36,17 @@ try:
             stream.write(json.dumps(request.get("op")) + "\n")  # No keys or invite tokens in trace.
         try:
             with redirect_stdout(sys.stderr): result = {"ok": owner.request(line)}
+            if owner.embedded.service is not None:
+                app = owner.embedded.service.app
+                if not getattr(app.wsgi_app, "fixture_observer", False):
+                    underlying = app.wsgi_app
+                    def observed(environ, start_response, application=underlying):
+                        # Paths only: never node request bodies, tokens or headers.
+                        with (directory / "fixture-http.jsonl").open("a") as trace:
+                            trace.write(json.dumps(environ.get("PATH_INFO", "")) + "\n")
+                        return application(environ, start_response)
+                    observed.fixture_observer = True
+                    app.wsgi_app = observed
         except Exception as error:
             result = {"error": type(error).__name__}
         print(json.dumps(result), flush=True)

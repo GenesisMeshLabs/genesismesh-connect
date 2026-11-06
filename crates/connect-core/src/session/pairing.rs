@@ -106,6 +106,7 @@ struct Pending {
     info: PairRequest,
     grant: oneshot::Sender<PairGrant>,
     joined: oneshot::Receiver<Joined>,
+    approval_reserved: bool,
 }
 struct Gate {
     pending: Option<Pending>,
@@ -212,7 +213,7 @@ impl PairHost {
         ensure!(
             gate.pending
                 .as_ref()
-                .is_some_and(|p| p.info.id == id && !p.grant.is_closed()),
+                .is_some_and(|p| p.info.id == id && !p.grant.is_closed() && !p.approval_reserved),
             "This request is no longer waiting"
         );
         let pending = gate.pending.take().context("No pending device")?;
@@ -231,6 +232,25 @@ impl PairHost {
         gate.pending.take(); // Dropping the sender refuses the request.
         Ok(())
     }
+    /// Native owner review, sharing the exact-target gate with Requests dispatch.
+    pub fn approve_reviewed(
+        &self,
+        target: &crate::owner_control::PairingTarget,
+        prepare: impl FnOnce() -> Result<PairGrant>,
+    ) -> Result<oneshot::Receiver<Joined>> {
+        self.control_dispatch(
+            &crate::owner_control::OwnerAction::ApprovePairing(target.clone()),
+            || Ok(Some(prepare()?)),
+        )?
+        .context("Missing approved pairing completion")
+    }
+    pub fn reject_reviewed(&self, target: &crate::owner_control::PairingTarget) -> Result<()> {
+        self.control_dispatch(
+            &crate::owner_control::OwnerAction::RejectPairing(target.clone()),
+            || Ok(None),
+        )?;
+        Ok(())
+    }
     /// Fixed owner adapter only: validate the exact reviewed request while
     /// holding the gate through the final authority check and grant delivery.
     /// The callback is synchronous; no lock may be held across an await.
@@ -244,9 +264,18 @@ impl PairHost {
         ensure!(self.created.elapsed() < WINDOW, "Pairing expired");
         self.card.validate()?;
         current_owner(&self.state, &self.card)?;
-        let pending = gate.pending.as_ref().context("No pending device")?;
+        let pending = gate.pending.as_mut().context("No pending device")?;
         ensure!(!pending.grant.is_closed(), "The device disconnected");
         action.require_pending(&pending.info)?;
+        if matches!(action, OwnerAction::ApprovePairing(_)) {
+            ensure!(
+                !pending.approval_reserved,
+                "Approval is unconfirmed; do not repeat its invitation"
+            );
+            // This endpoint/ceremony cannot survive process restart. Consume its
+            // approval before calling core; cancellation/error never releases it.
+            pending.approval_reserved = true;
+        }
         let grant = prepare()?;
         // The core call can take time. A disconnect or expiry must not deliver
         // an invitation to a stale request; its durable nonce stays consumed.
@@ -437,6 +466,7 @@ async fn serve(
             },
             grant: grant_tx,
             joined: joined_rx,
+            approval_reserved: false,
         });
     }
     write_frame(
@@ -670,6 +700,7 @@ mod tests {
             info: info.clone(),
             grant,
             joined,
+            approval_reserved: false,
         });
         let target = PairingTarget::from_pending(&info);
         let mut wrong = target.clone();

@@ -281,6 +281,20 @@ local-owner maintenance until rebinding. Full-app compilation, actual phone
 setup/lifecycle, recovery and second-device acceptance remain open; no device,
 reset, installation, publication or merge operation occurred in this slice.
 
+The next isolated host chain uses that embedded `ForegroundNetwork` for two
+separate sealed profiles through the actual comparison-code ceremony, QUIC
+authority bridge and core enrollment. Six integration fixtures passed after
+exposing/fixing four gaps: approval callback replay after an uncertain response,
+pairing retries during pending enrollment, client relationship persistence
+before final confirmation, and local commit using pre-revocation trust. Local
+consumer actions now share the tested portable pairing orchestration; Requests
+retains its controller checks and shares the fresh candidate-trust check.
+With the prior focused regressions and shared-gate test, 29 checks passed.
+This is [source/host integration evidence](android-authority.md#embedded-owner-comparison-code-pairing-chain),
+not physical second-device, human comparison or first-use acceptance. App-shell
+compilation, phone lifecycle and full recovery remain open. Gates, inspector and
+retained app/phone data are unchanged; nothing was installed or published.
+
 **“Use my phone to review and approve a new device joining my network.”**
 
 An existing member explicitly requests limited administration; the host owner

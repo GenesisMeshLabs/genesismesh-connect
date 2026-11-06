@@ -5,7 +5,7 @@ use connect_core::{
     Connectivity,
     device::{ConnectivityStatus, DeviceController, PairedDevice},
     session::{
-        pairing::{PairCard, PairGrant, PairRequest},
+        pairing::{PairCard, PairRequest},
         sharing::{ReadReport, ReadRequest, SpaceKind, browse::Page},
     },
 };
@@ -281,15 +281,25 @@ pub async fn pair_begin(
     Ok(result)
 }
 #[tauri::command]
-pub async fn pair_reject(id: String, state: tauri::State<'_, WorkflowState>) -> Result<(), String> {
-    state
-        .slot
-        .lock()
-        .await
+pub async fn pair_reject(
+    id: String,
+    state: tauri::State<'_, WorkflowState>,
+    desktop: tauri::State<'_, DesktopState>,
+) -> Result<(), String> {
+    let owner = state.slot.lock().await;
+    let request = owner
         .pairing
         .as_ref()
-        .ok_or("No device is waiting")?
-        .reject(&id)
+        .and_then(|pair| pair.pending())
+        .filter(|request| request.id == id)
+        .ok_or("No device is waiting")?;
+    let slot = desktop.slot.lock().await;
+    slot.controller
+        .as_ref()
+        .ok_or("Device is unavailable")?
+        .decline_local_pairing(&connect_core::owner_control::PairingTarget::from_pending(
+            &request,
+        ))
         .map_err(error)
 }
 #[tauri::command]
@@ -304,45 +314,42 @@ pub async fn pair_cancel(state: tauri::State<'_, WorkflowState>) -> Result<(), S
 pub async fn pair_approve(id: String, app: tauri::AppHandle) -> Result<(), String> {
     let workflow = app.state::<WorkflowState>();
     let desktop = app.state::<DesktopState>();
-    let (pair, request, completion) = {
+    let (pair, target, completion) = {
         let mut owner = workflow.slot.lock().await;
         let pair = owner.pairing.clone().ok_or("Create a join link first")?;
         let request = pair
             .pending()
             .filter(|r| r.id == id)
             .ok_or("This device is no longer waiting")?;
+        let target = connect_core::owner_control::PairingTarget::from_pending(&request);
+        if owner.runtime.is_none() {
+            return Err("The network computer is not ready".into());
+        }
+        let mut slot = desktop.slot.lock().await;
+        slot.controller
+            .as_mut()
+            .ok_or("Network device is unavailable")?
+            .prepare_local_pairing(&target)
+            .await
+            .map_err(error)?;
         let mut runtime = owner
             .runtime
             .take()
             .ok_or("The network computer is not ready")?;
-        let node = request.node.clone();
-        let outcome = tokio::task::spawn_blocking(move || {
-            let invite = runtime.invite(&node, true);
-            (runtime, invite)
-        })
-        .await
-        .map_err(|_| "Could not prepare approval")?;
-        owner.runtime = Some(outcome.0);
-        let invitation = outcome.1.map_err(error)?;
-        let mut slot = desktop.slot.lock().await;
         let device = slot
             .controller
-            .as_mut()
+            .take()
             .ok_or("Network device is unavailable")?;
-        device.start(&request.node).await.map_err(error)?;
-        let status = device.status().map_err(error)?;
-        let grant = PairGrant {
-            invitation,
-            route: connect_core::session::bridge::BridgeRoute {
-                host_node: status.node_public_key,
-                ticket: status
-                    .bridge_ticket
-                    .ok_or("Authority connection is unavailable")?,
-            },
-            session_ticket: status.ticket.ok_or("Device connection is unavailable")?,
-        };
-        let completion = pair.approve(&id, grant).map_err(error)?;
-        (pair, request, completion)
+        let reviewed = target.clone();
+        let (runtime, device, result) = tokio::task::spawn_blocking(move || {
+            let result = device.issue_local_pairing(&mut runtime, &reviewed);
+            (runtime, device, result)
+        })
+        .await
+        .map_err(|_| "Approval is unconfirmed. Existing network state was preserved.")?;
+        owner.runtime = Some(runtime);
+        slot.controller = Some(device);
+        (pair, target, result.map_err(error)?)
     };
     let joined = tokio::time::timeout(std::time::Duration::from_secs(80), completion)
         .await
@@ -350,22 +357,10 @@ pub async fn pair_approve(id: String, app: tauri::AppHandle) -> Result<(), Strin
         .map_err(|_| "The other device disconnected")?;
     let mut slot = desktop.slot.lock().await;
     let device = slot.controller.as_mut().ok_or("Device is unavailable")?;
-    // Ticket bytes alone are never persisted as a trusted device relationship.
-    let verified = device
-        .send(&joined.ticket, "Connect pairing verification")
-        .await;
-    if let Err(e) = verified {
-        let _ = joined.confirm.send(false);
-        return Err(error(e));
-    }
     device
-        .remember_pairing(PairedDevice {
-            name: request.name,
-            node: request.node,
-            ticket: joined.ticket,
-        })
+        .commit_local_pairing(&target, joined)
+        .await
         .map_err(error)?;
-    let _ = joined.confirm.send(true);
     drop(slot);
     // The server needs to deliver its final confirmation before it is closed.
     tokio::spawn(async move {
@@ -420,22 +415,9 @@ async fn join(app: &tauri::AppHandle, card: PairCard, name: String) -> anyhow::R
             let grant = pairing.grant().await?;
             state.slot.lock().await.joining =
                 Some("Approved. Finishing your secure connection…".into());
-            device.use_bridge(grant.route).await?;
-            device.enroll_host(&grant.invitation).await?;
-            device.start(&card.host_node).await?;
             device
-                .send(&grant.session_ticket, "Connect pairing verification")
+                .complete_approved_pairing(&mut pairing, &card, grant)
                 .await?;
-            let ticket = device
-                .status()?
-                .ticket
-                .ok_or_else(|| anyhow::anyhow!("Connection is unavailable"))?;
-            device.remember_pairing(PairedDevice {
-                name: card.host_name,
-                node: card.host_node,
-                ticket: grant.session_ticket,
-            })?;
-            pairing.finish(ticket).await?;
             Ok::<_, anyhow::Error>(())
         }
         .await;

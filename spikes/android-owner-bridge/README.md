@@ -32,6 +32,12 @@ The seven explicit real-core fixtures exercise this coordinator on the host;
 neither those fixtures nor this library build compile/qualify its Android Rust
 workflow boundary. No phone operations are part of that source/host slice.
 
+The following bounded host chain adds a second sealed device, the actual
+comparison-code ceremony, QUIC bridge enrollment, fresh core revocation checks
+and interrupted/lost-response refusals. The app consumer flow shares the same
+portable orchestration. See [chain evidence and limits](../../docs/android-authority.md#embedded-owner-comparison-code-pairing-chain).
+It adds no physical-device, first-use or full-app acceptance to this library.
+
 The native-only `inspectMembership` path has its own single-use read sessions.
 It does not reuse, close or unpoison the writer, and it is still rejected from
 frontend invocation. It reads the fixed existing profile without a publisher,
