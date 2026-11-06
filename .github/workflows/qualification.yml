@@ -114,6 +114,7 @@ jobs:
         run: |
           python -m pip install -r apps/connect/authority/core-requirements.txt -r apps/connect/authority/build-requirements.txt
           echo "CONNECT_NA_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
+          echo "CONNECT_FOREGROUND_FIXTURE_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
           echo 'RUSTUP_TOOLCHAIN=1.98.0' >> "$GITHUB_ENV"
       - name: Python version checks (Unix owner access is tested through Rust pipe)
         working-directory: apps/connect/authority
