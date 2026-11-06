@@ -35,6 +35,7 @@ Settings → Advanced tools. Existing technical profiles are preserved.
 - `apps/connect`: small TypeScript/Tauri application, calling the same Rust library.
 - `apps/connect/authority`: native desktop owner adapter and standalone runtime build.
 - `apps/node` and `deploy/node`: the network computer on a headless Linux server under systemd; see [Connect on a server](docs/server-node.md).
+- `apps/agent`: an AI agent's own identity on a network, served to its tools over MCP; see [AI agents on your network](docs/agents.md).
 - `docs/everyday-workflow.md`: ordinary setup, pairing, file browsing and bounds.
 - `docs/help-tools.md`: guided connection/access help and the separate expert diagnostics.
 - `docs/cross-platform.md`: platform adapters, native build steps, evidence and remaining parity work.

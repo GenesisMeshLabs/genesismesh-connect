@@ -559,3 +559,54 @@ async fn joined_device_shares_real_tcp_service_and_native_policy_change_closes_l
     network.close().await;
     Ok(())
 }
+
+/// Two agents on one machine: each is its own member with its own key, reaches
+/// only the space shared with it, and revoking one leaves the other working.
+#[tokio::test]
+#[ignore = "Requires the disposable pinned-core foreground fixture"]
+async fn agents_on_one_machine_keep_separate_identities_shares_and_revocation() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    let (network, mut agent_b) = Network::with_second(root, &root.join("agent-b")).await?;
+    let a = network.member.status()?.node_public_key;
+    let b = agent_b.status()?.node_public_key;
+    assert_ne!(a, b, "Each agent holds its own identity");
+    let (folder, _) = content(root, "for-agent-a")?;
+    let only_a = network
+        .host_folder_for(&folder, "Agent A documents", &a)
+        .await?;
+    let (folder, _) = content(root, "for-agent-b")?;
+    let only_b = network
+        .host_folder_for(&folder, "Agent B documents", &b)
+        .await?;
+    let (host, address) = network.host_ticket().await?;
+    entry(&network.member, &host, &address, &only_a.collection_id).await?;
+    entry(&agent_b, &host, &address, &only_b.collection_id).await?;
+    let browse = |agent: &connect_core::device::DeviceController, collection: &str| {
+        let session = agent.session();
+        let (host, address, collection) = (host.clone(), address.clone(), collection.to_owned());
+        async move {
+            session?
+                .browse_from(&host, &address, None, vec![], Some(collection))
+                .await
+        }
+    };
+    // Neither agent reaches the other's space.
+    assert!(
+        browse(&network.member, &only_b.collection_id)
+            .await
+            .is_err()
+    );
+    assert!(browse(&agent_b, &only_a.collection_id).await.is_err());
+    // Removing agent A revokes it alone.
+    assert!(network.host.lock().await.runtime.remove_device(&a)?.revoked > 0);
+    assert!(
+        browse(&network.member, &only_a.collection_id)
+            .await
+            .is_err()
+    );
+    entry(&agent_b, &host, &address, &only_b.collection_id).await?;
+    agent_b.stop().await;
+    network.close().await;
+    Ok(())
+}

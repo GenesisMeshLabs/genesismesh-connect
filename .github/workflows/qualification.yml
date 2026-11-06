@@ -69,6 +69,8 @@ jobs:
       - run: cargo +1.98.0 fmt --all -- --check
       - name: Core, local stores, schemas and refusal cases
         run: cargo +1.98.0 test -p connect-core --features operation-schemas --locked
+      - name: Agent MCP protocol
+        run: cargo +1.98.0 test -p genesismesh-connect-agent --locked
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         if: runner.os == 'Windows'
         with:
@@ -134,7 +136,7 @@ jobs:
           export CONNECT_OWNER_BINARY="$PWD/apps/connect/src-tauri/binaries/genesismesh-authority-x86_64-unknown-linux-gnu"
           bash scripts/verify-linux-store.sh test -p connect-core --test owner_runtime --test owner_requests_authority --test owner_admin_authority --locked -- --ignored --nocapture
       - name: Check Linux app and headless host
-        run: cargo check -p genesismesh-connect -p genesismesh-connect-node --locked
+        run: cargo check -p genesismesh-connect -p genesismesh-connect-node -p genesismesh-connect-agent --locked
 
   android:
     name: Android APK (arm64)
