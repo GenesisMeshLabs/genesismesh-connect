@@ -19,7 +19,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = []
-android-owner-qualification = ["connect-core/pairing-completion-recovery"]
+android-owner-qualification = ["connect-core/pairing-completion-recovery", "connect-core/owner-requests-qualification"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

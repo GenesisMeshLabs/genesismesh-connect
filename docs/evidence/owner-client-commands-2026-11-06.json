@@ -1,0 +1,70 @@
+{
+  "date": "2026-11-06",
+  "baseline_commit": "28e66f4e418eec037aa2e983a1e60ceffc5d6d00",
+  "scope": "Qualification-only native phone Requests coordinator; source/disposable embedded-core/QUIC, not app/physical acceptance",
+  "toolchain": "WSL Ubuntu-24.04, rustc 1.99.0 (b940084d7 2026-09-28)",
+  "dependency_pins": [
+    "crates/connect-core/Cargo.toml",
+    "apps/connect/authority/core-requirements.txt"
+  ],
+  "checks": {
+    "disposable_embedded_core_quic_commands": 9,
+    "command_journal": 4,
+    "production_default_off_gate": 1,
+    "existing_client_enrollment": 6,
+    "existing_owner_control_protocol": 18
+  },
+  "passed_total_this_slice": 38,
+  "observations": [
+    "A native review retains the exact signed List/Approve/Reject command, profile storage ID, enrollment binding, grant, nonce, digest, expiry and target before first dispatch.",
+    "Presence unavailable/denied or changed review refuses before Execute. No production presence implementation or mutation IPC was added.",
+    "Exact List and Reject are exercised, and an actual candidate completes approval/enrollment despite a lost controller reply.",
+    "After lost Execute/Result replies and reopen, the same native key, membership, nonce and digest remain; only Result for that exact operation is sent and Execute count stays one.",
+    "An independent local approval can produce the exact desired paired membership while the unobserved client operation remains uncertain because its own host result is missing.",
+    "A changed live candidate is not consumed, invited or approved. The original command is reserved once and retained as unconfirmed without replay.",
+    "Grant revocation before presence/dispatch and fresh core controller revocation refuse Execute. Expired/revoked grants preserve prior terminal outcomes as history without current confirmation.",
+    "Revocation immediately after dispatch preserves the exact returned outcome as historical evidence while withholding current confirmation.",
+    "Explicit retirement requires a fresh terminal readback and current grant, retains history, and creates no new operation automatically.",
+    "Journal tests cover context/profile changes, reply/session ordering, clock/expiry, signature/phase corruption, initialized missing history and failed durable reservation with no dispatch permission."
+  ],
+  "integration_fix": "Preparing an approved candidate refreshes bridge credentials and can close the controller connection while approval continues. Failed transport remains durable uncertainty; after an exact reply, failed current membership/grant refresh preserves the result only as history.",
+  "automation": {
+    "workflow": ".github/workflows/android-owner-focused.yml",
+    "commands": "Explicit default-off gate, qualified journal, client_enrollment, owner_control and owner_client_commands targets",
+    "dispatched": false
+  },
+  "other_checks": [
+    "cargo fmt --all --check",
+    "actionlint focused workflow",
+    "connect-contract: 419 public declarations and zero complete accepted outcomes",
+    "git diff --check"
+  ],
+  "preserved": [
+    "Host Execute/Result protocol and fresh host trust/grant/target checks",
+    "Completed read-only membership inspector",
+    "Pairing-completion recovery",
+    "Default production Create/admin/recovery gates",
+    "Retained phone/Connect/qualification data"
+  ],
+  "unperformed": [
+    "Full app-boundary compilation and installed-app integration",
+    "Qualified native user presence",
+    "Physical phone Requests/lifecycle/first-use acceptance",
+    "Assisted workflow parity",
+    "Independent audit evidence and whole-profile rollback detection",
+    "Hosted/minimum-toolchain CI for this local feature"
+  ],
+  "excluded_actions": [
+    "Device operations/install/reset",
+    "Publication/push/merge/deploy",
+    "OS4551 full-app build retry or alternate route",
+    "Excluded startup-failure cases",
+    "Denied metadata/access/CLI operations"
+  ],
+  "notes": [
+    "Phone-local authority remains required; optional NAS/server hosting is not a prerequisite.",
+    "Simulated presence exists only in explicitly named test fixtures.",
+    "Local journal metadata is not a portable grant, core audit pack or proof of a person approving an action.",
+    "Prior checkpoint counts are not included as freshly run checks."
+  ]
+}

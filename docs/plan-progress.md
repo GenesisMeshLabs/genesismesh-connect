@@ -354,3 +354,30 @@ nontechnical-user or full lifecycle acceptance. Public Create/administration/
 recovery gates and the completed read-only membership inspector remain unchanged.
 No device data was accessed, reset or installed; no blocked app-boundary build,
 excluded startup-failure test, publication, merge or deployment was attempted.
+
+## Native phone Requests commands — 6 November 2026
+
+The next client dependency now retains the exact reviewed List/Approve/Reject
+pairing command before its first send. It is bound to the protected profile,
+network/root, authority host, member, separate administrative key, current grant,
+original nonce/digest and candidate. A native presence seam gates dispatch; the
+production adapter is unavailable and no mutation IPC is registered.
+
+Interrupted/lost replies or reopen permit only authenticated Result readback for
+that same operation. Current observation, historical observation and retained
+terminal outcome remain separate. Matching membership/relationships or an Active
+enrollment do not prove execution. Explicit retirement freshly checks a terminal
+result and preserves history before a separate new review may occur.
+
+The real embedded-core/QUIC fixtures cover the three pairing actions, changed
+candidate, review/presence refusal, lost replies/restart, expiry, grant revocation
+before/immediately after dispatch, controller membership revocation, and an
+independent local approval that must not be attributed to the old command.
+See [native coordinator contract](owner-client-commands.md) and the
+[dated validation record](evidence/owner-client-commands-2026-11-06.json).
+
+Phone-local authority hosting remains required and optional hosting stays
+optional. This library qualification does not complete app-shell, installed
+native presence, physical Requests, lifecycle, assisted or first-use acceptance.
+The completed membership inspector, pairing-completion recovery and production
+gates are preserved. No device operation or blocked full-app retry is implied.

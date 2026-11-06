@@ -80,3 +80,9 @@ jobs:
         run: |
           cargo +1.98.0 test -p connect-core --lib session::sharing::service::tests --locked
           CONNECT_FOREGROUND_FIXTURE_PYTHON="$(command -v python)" cargo +1.98.0 test -p connect-core --features pairing-completion-recovery --test foreground_resources --locked -- --ignored
+      - name: Durable phone Requests commands (source and disposable core only)
+        run: |
+          cargo +1.98.0 test -p connect-core --test client_enrollment --test owner_control --locked
+          cargo +1.98.0 test -p connect-core --lib owner_control::commands::tests --locked
+          cargo +1.98.0 test -p connect-core --features owner-requests-qualification --lib owner_control::commands::tests --locked
+          CONNECT_FOREGROUND_FIXTURE_PYTHON="$(command -v python)" cargo +1.98.0 test -p connect-core --features owner-requests-qualification,pairing-completion-recovery --test owner_client_commands --locked -- --ignored

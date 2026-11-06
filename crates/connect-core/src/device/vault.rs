@@ -159,6 +159,9 @@ pub(super) struct Vault {
 }
 
 impl Vault {
+    pub(super) fn storage_id(&self) -> &str {
+        &self.record.storage_id
+    }
     pub fn create(path: &Path, authority: Option<String>, pin: TrustPin) -> Result<Self> {
         let mut seed = Zeroizing::new([0; 32]);
         getrandom::fill(seed.as_mut())?;

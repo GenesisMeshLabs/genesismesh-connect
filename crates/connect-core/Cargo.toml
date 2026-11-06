@@ -9,6 +9,7 @@ publish = false
 [features]
 operation-schemas = ["dep:schemars"]
 pairing-completion-recovery = []
+owner-requests-qualification = []
 
 [dependencies]
 schemars = { version = "=1.2.3", features = ["chrono04", "uuid1"], optional = true }
