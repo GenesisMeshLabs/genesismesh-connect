@@ -101,6 +101,21 @@ failure before the initialization marker without resetting initialized custody.
 These operations change no device security settings. Public Create stays
 disabled; physical evidence is recorded separately from host tests and builds.
 
+On 6 November 2026, source `3a1c7e9` passed on the physical Samsung SM-A176B
+(API36) in the isolated engine-check package. The in-place update preserved
+application data. Atomic publication/collision preservation, genuine local
+authority/member checks, purpose-separated custody and close/reopen passed.
+A separate cold process launch reopened the existing qualification network with
+the same four public identity fingerprints and certificate ID. The source and
+installed APK hashes and both run IDs/fingerprints are retained locally under
+the isolated storage-fix worktree's ignored `temp/` directory.
+
+This qualifies that positive storage/create/reopen/process-persistence slice,
+not public Connect Create, device reboot/lock/suspend, missing/corrupt custody,
+recovery, second-device integration or nontechnical usability. Production mobile
+Create stays disabled. No PIN automation, permission changes, app-data reset,
+startup-failure revalidation or merge was performed for this repair.
+
 ## Dependency gate
 
 Run from the repository root, using a Python environment with pip:
