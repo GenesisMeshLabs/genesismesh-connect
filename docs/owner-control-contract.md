@@ -78,8 +78,8 @@ scope from the current native profile and paired authority host, require an
 enrolled connected device and refresh trust before signing. They accept typed
 choices/actions, without caller-selected identities, URLs or private keys. They
 dispatch nothing and grant no administrative rights. They remain unavailable
-through app IPC until exact user review, client workflow recovery, native user
-presence and authenticated host control are integrated.
+through app IPC pending exact user review, client workflow recovery and native
+user presence. The authenticated host control transport is integrated separately.
 
 Leave/discard cleanup removes only a purpose-checked credential for that
 network/member and supports retry after native-secret deletion. An older host
@@ -204,10 +204,12 @@ substitution, provider changes, concurrent access and failed reference commit.
 An isolated headless-process test also qualifies the actual Linux sealed store,
 including encrypted-record corruption and missing-key refusal. Its master key
 is a disposable fixture; it does not establish TPM/systemd deployment acceptance.
-Windows DPAPI and Apple/Android adapters are implemented but have not been
-compiled/installed/tested anew for this slice. The prior Windows Application
-Control blocker remains unresolved. No new browser or physical-device acceptance
-is claimed for these native-only changes.
+The Python owner adapter tests also exercise native Windows DPAPI. CI checks the
+Rust core on Windows and Linux, Android APK packaging, and Linux desktop/headless
+compilation. These automated checks do not establish Windows application launch,
+Apple platform acceptance, native user presence or physical Android ownership.
+The prior local Windows Application Control blocker remains unresolved. No new
+browser or physical-device acceptance is claimed for these native-only changes.
 
 Before app exposure: add explicit local enrollment/revocation UX and the client
 Requests workflow with plain scope, approval and uncertainty. Qualify native user
