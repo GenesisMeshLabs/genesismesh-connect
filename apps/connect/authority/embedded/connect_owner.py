@@ -7,9 +7,11 @@ and invitation implementations are reused rather than reimplemented for mobile.
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import threading
 import tempfile
+import uuid
 
 from genesis_mesh.crypto import sign_data, verify_signature
 
@@ -193,6 +195,14 @@ class ConnectOwner:
             if op == "status" and set(request) == {"op"}:
                 return {"configured": self.configured(), "running": self.operations is not None,
                         "foreground_only": True, "production_create_enabled": False}
+            if op == "recovery_export" and set(request) == {"op"}:
+                return self._export_recovery()
+            if op == "recovery_import" and set(request) == {"op", "staging", "keys"}:
+                try:
+                    return self._import_recovery(request["staging"], request["keys"])
+                except Exception:
+                    self.uncertain = True
+                    raise
             if op in ("create", "open"):
                 expected = {"op", "name"} if op == "create" else {"op"}
                 if set(request) != expected: raise Refused("Unsupported network setup fields.")
@@ -221,6 +231,45 @@ class ConnectOwner:
                 # An operation may already have reached core; no automatic retry.
                 self.uncertain = True
                 raise
+
+    def _export_recovery(self):
+        """Stage this network for a recovery file: the authority's records and the
+        signed Spaces registry, in private storage. Changes nothing here."""
+        if self.operations is None: raise Refused("Open the network first.")
+        # Staging left by an export that did not finish goes first.
+        for stale in self.directory.glob(".recovery-*"):
+            shutil.rmtree(stale, ignore_errors=True)
+        staging = self.directory / f".recovery-{uuid.uuid4().hex}"
+        try:
+            keys = self.embedded.export_recovery(str(staging))
+            application = staging / "application"
+            application.mkdir(mode=0o700)
+            shutil.copyfile(self.directory / "application" / "spaces.json", application / "spaces.json")
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        return {"staging": str(staging.resolve()), "root": "embedded", "config": "state.json", "keys": keys}
+
+    def _import_recovery(self, staging, keys):
+        """Install a network from decrypted recovery files that native code
+        staged in this app's private storage. Never replaces a network."""
+        if self.operations is not None or self.configured():
+            raise Refused("This device already has a network. It has been preserved.")
+        if not isinstance(staging, str) or len(staging) > 4096:
+            raise Refused("The recovery file was not staged for this device.")
+        staging = Path(staging)
+        if not staging.is_absolute() or staging.is_symlink() or not staging.is_dir():
+            raise Refused("The recovery file was not staged for this device.")
+        registry = staging / "application" / "spaces.json"
+        if registry.is_symlink() or not registry.is_file():
+            raise Refused("The recovery file is incomplete.")
+        self.embedded.import_recovery(str(staging), keys)
+        application = self.directory / "application"
+        application.mkdir(mode=0o700)
+        shutil.copyfile(registry, application / "spaces.json")
+        # The registry is checked against the network's own operator key here.
+        self.operations = ConnectOperations(self.embedded, application)
+        return self.info()
 
     def close(self):
         with self.mutex:

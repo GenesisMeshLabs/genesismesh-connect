@@ -137,6 +137,36 @@ pub fn abandon_unstarted_create(
     Ok(true)
 }
 
+/// Record a network restored from a recovery file as this phone's finished
+/// setup, so later launches reopen it like one it created. Refuses when any
+/// setup record exists; the restored device must already hold its membership.
+pub fn record_restored(
+    config: &NativeSetupConfig,
+    info: &OwnerInfo,
+    device: &DeviceController,
+) -> Result<ForegroundLease> {
+    let status = device.status()?;
+    ForegroundSetup::require_enrolled(&status)?;
+    ensure!(
+        status.root_public_key == info.pin.root_public_key
+            && status.network == info.pin.network_name,
+        "The restored device belongs to another network"
+    );
+    let saved = Saved {
+        schema: 1,
+        operation: uuid::Uuid::new_v4().to_string(),
+        name: info.pin.network_name.clone(),
+        stage: SetupStage::Ready,
+        pin: Some(info.pin.clone()),
+        node: Some(status.node_public_key),
+        certificate_id: status.certificate_id,
+    };
+    saved.validate()?;
+    Ok(ForegroundLease {
+        _journal: journal::Journal::acquire(&config.directory, Some(saved))?,
+    })
+}
+
 pub struct ForegroundSetup {
     config: NativeSetupConfig,
     journal: journal::Journal,

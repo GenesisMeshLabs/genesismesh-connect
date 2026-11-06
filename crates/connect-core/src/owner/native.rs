@@ -64,10 +64,10 @@ impl NativeSession {
             "Native owner request is too large"
         );
         ensure!(self.next <= MAX_SEQUENCE, "Native owner session is full");
-        let budget_ms = if serde_json::from_str::<Value>(&request)?["op"] == "create" {
-            180_000
-        } else {
-            30_000
+        // Operations that wait for the root key's authentication prompt.
+        let budget_ms = match serde_json::from_str::<Value>(&request)?["op"].as_str() {
+            Some("create" | "recovery_export" | "recovery_import") => 180_000,
+            _ => 30_000,
         };
         let sequence = self.next;
         self.next += 1;

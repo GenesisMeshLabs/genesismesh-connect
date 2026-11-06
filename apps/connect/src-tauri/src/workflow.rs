@@ -538,16 +538,26 @@ async fn install_network(
 /// recovery key, shown to the owner once. `None` when the owner cancels.
 #[tauri::command]
 pub async fn recovery_create(
+    app: tauri::AppHandle,
     state: tauri::State<'_, WorkflowState>,
     desktop: tauri::State<'_, crate::desktop::DesktopState>,
 ) -> Result<Option<String>, String> {
-    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
     {
         let _ = (state, desktop);
+        phone_recovery_create(&app).await
+    }
+    #[cfg(all(
+        not(all(target_os = "android", feature = "android-owner-qualification")),
+        not(any(windows, target_os = "macos", target_os = "linux"))
+    ))]
+    {
+        let _ = (app, state, desktop);
         Err("Create recovery files on your network computer.".into())
     }
     #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     {
+        let _ = app;
         let Some(file) = rfd::AsyncFileDialog::new()
             .add_filter("Connect recovery file", &["gmrecovery"])
             .set_file_name("Genesis Mesh recovery.gmrecovery")
@@ -593,17 +603,27 @@ pub async fn recovery_create(
 #[tauri::command]
 pub async fn recovery_restore(
     key: String,
+    app: tauri::AppHandle,
     state: tauri::State<'_, WorkflowState>,
     desktop: tauri::State<'_, crate::desktop::DesktopState>,
 ) -> Result<bool, String> {
     let key = zeroize::Zeroizing::new(key);
-    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
     {
-        let _ = (key, state, desktop);
+        let _ = (state, desktop);
+        phone_recovery_restore(&app, key).await
+    }
+    #[cfg(all(
+        not(all(target_os = "android", feature = "android-owner-qualification")),
+        not(any(windows, target_os = "macos", target_os = "linux"))
+    ))]
+    {
+        let _ = (key, app, state, desktop);
         Err("Restore your network on a desktop computer.".into())
     }
     #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     {
+        let _ = app;
         let Some(file) = rfd::AsyncFileDialog::new()
             .add_filter("Connect recovery file", &["gmrecovery"])
             .set_title("Choose your network's recovery file")
@@ -642,6 +662,142 @@ pub async fn recovery_restore(
         slot.controller = Some(device);
         Ok(true)
     }
+}
+
+/// Write this phone's network to an encrypted recovery file and hand it to the
+/// share sheet, so the owner keeps it somewhere other than this phone. Asks for
+/// the screen lock: the file holds the network's main key. Returns its key.
+#[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+async fn phone_recovery_create(app: &tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_view::ViewExt;
+    let state = app.state::<WorkflowState>();
+    let desktop = app.state::<crate::desktop::DesktopState>();
+    let mut owner = state.slot.lock().await;
+    let identity = {
+        let slot = desktop.slot.lock().await;
+        slot.controller
+            .as_ref()
+            .ok_or("Your network is still opening")?
+            .recovery_identity()
+            .map_err(|e| e.to_string())?
+    };
+    let pin = owner
+        .info
+        .as_ref()
+        .ok_or("Your network is still opening")?
+        .pin
+        .clone();
+    let exports = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("local-exports");
+    std::fs::create_dir_all(&exports).map_err(|e| e.to_string())?;
+    let folder = tempfile::Builder::new()
+        .prefix("recovery-")
+        .tempdir_in(&exports)
+        .map_err(|e| e.to_string())?;
+    let path = folder.path().join("Genesis Mesh recovery.gmrecovery");
+    let mut runtime = owner
+        .runtime
+        .take()
+        .ok_or("Your network is still opening")?;
+    let output = path.clone();
+    let (runtime, key) = tokio::task::spawn_blocking(move || {
+        let key = connect_core::recovery::create(&mut runtime, pin, identity, &output);
+        (runtime, key)
+    })
+    .await
+    .map_err(|_| "The recovery file was not written.".to_owned())?;
+    owner.runtime = Some(runtime);
+    let key = key.map_err(|e| e.to_string())?;
+    drop(owner);
+    app.view()
+        .view(tauri_plugin_view::ViewRequest {
+            path: Some(path.to_string_lossy().into_owned()),
+            share: true,
+        })
+        .map_err(|e| e.to_string())?;
+    // The share target reads the file after the sheet returns.
+    let _ = folder.keep();
+    Ok(Some(key.to_string()))
+}
+
+/// Bring a phone-run network back on this phone from its recovery file: the
+/// owner picks the file, and the network keeps its identity, so its other
+/// devices carry on. Refuses on a phone that already has a network.
+#[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+async fn phone_recovery_restore(
+    app: &tauri::AppHandle,
+    key: zeroize::Zeroizing<String>,
+) -> Result<bool, String> {
+    use connect_core::owner::foreground::{ForegroundNetwork, NativeSetupConfig, record_restored};
+    let _turn = SetupTurn::take().ok_or("Your network is already being set up.")?;
+    let state = app.state::<WorkflowState>();
+    let desktop = app.state::<crate::desktop::DesktopState>();
+    {
+        let owner = state.slot.lock().await;
+        let slot = desktop.slot.lock().await;
+        if slot.controller.is_some()
+            || desktop.profile.exists()
+            || owner.runtime.is_some()
+            || phone_setup_marker(&state.directory)
+        {
+            return Err("This phone already has a network. It has been preserved.".into());
+        }
+    }
+    let Some(file) = crate::picking::file(app, false)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(false);
+    };
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let (source, staging, profile, handle) = (
+        file.path.clone(),
+        directory.join("phone-restore"),
+        desktop.profile.clone(),
+        app.clone(),
+    );
+    let restored = tokio::task::spawn_blocking(move || {
+        connect_core::recovery::restore(&source, &key, &staging, &profile, |_| {
+            crate::android_owner::prepare(&handle)
+        })
+    })
+    .await
+    .map_err(|_| "The network was not restored.".to_owned())?
+    .map_err(|e| e.to_string())?;
+    drop(file);
+    let mut restored = restored;
+    restored
+        .device
+        .enable_managed_connectivity()
+        .map_err(|e| e.to_string())?;
+    let config = NativeSetupConfig::new(directory).map_err(|e| e.to_string())?;
+    let lease =
+        record_restored(&config, &restored.info, &restored.device).map_err(|e| e.to_string())?;
+    adopt_phone_network(
+        app,
+        ForegroundNetwork {
+            runtime: restored.owner,
+            info: restored.info,
+            device: restored.device,
+            lease,
+        },
+    )
+    .await;
+    let mut slot = desktop.slot.lock().await;
+    if let Some(device) = slot.controller.as_mut()
+        && let Err(error) = device.reconnect_saved().await
+    {
+        slot.problem = Some(error.to_string());
+    }
+    Ok(true)
 }
 
 /// Answer devices' Space requests, one at a time, with this computer's owner

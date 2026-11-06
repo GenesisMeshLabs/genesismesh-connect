@@ -532,8 +532,15 @@ impl OwnerRuntime {
     /// Stage the network for a recovery file: files inside the owner's private
     /// directory, the owner keys only in this reply.
     pub fn backup(&mut self) -> Result<OwnerBackup> {
+        // A phone's own owner stages its network in its private storage, after
+        // the root key's authentication; a desktop owner stages its directory.
+        let op = if self.native.is_some() {
+            "recovery_export"
+        } else {
+            "backup"
+        };
         let backup: OwnerBackup =
-            serde_json::from_value(self.request_within(json!({"op":"backup"}), RECOVERY_LIMIT)?)?;
+            serde_json::from_value(self.request_within(json!({ "op": op }), RECOVERY_LIMIT)?)?;
         ensure!(
             backup.staging.is_absolute() && !backup.keys.is_empty() && backup.keys.len() <= 16,
             "Invalid network recovery staging"
@@ -548,10 +555,23 @@ impl OwnerRuntime {
         config: &str,
         keys: &std::collections::BTreeMap<String, String>,
     ) -> Result<OwnerInfo> {
-        Ok(serde_json::from_value(self.request_within(
-            json!({"op":"restore","staging":staging,"root":root,"config":config,"keys":keys}),
-            RECOVERY_LIMIT,
-        )?)?)
+        let request = if self.native.is_some() {
+            // Only the network's four identity keys, from files native code staged.
+            ensure!(
+                staging.is_absolute()
+                    && keys
+                        .keys()
+                        .map(String::as_str)
+                        .eq(["member", "na", "operator", "root"]),
+                "The recovery file is incomplete"
+            );
+            json!({"op":"recovery_import","staging":staging,"keys":keys})
+        } else {
+            json!({"op":"restore","staging":staging,"root":root,"config":config,"keys":keys})
+        };
+        Ok(serde_json::from_value(
+            self.request_within(request, RECOVERY_LIMIT)?,
+        )?)
     }
     pub fn invite(&mut self, node: &str, host: bool) -> Result<String> {
         self.request(json!({"op":"invite","node":node,"host":host}))?["invite"]

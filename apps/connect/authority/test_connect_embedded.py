@@ -63,6 +63,32 @@ class ConnectEmbeddedTests(unittest.TestCase):
         self.assertEqual(self.request("access_get", host=host, collection=collection)["max_bytes"], 8192)
         self.assertEqual(self.vault.creations, 1)
 
+    def test_recovery_moves_the_network_and_its_spaces_to_another_device(self):
+        info = self.request("create", name="Recovered phone network")
+        identity = self.owner.embedded.identity.copy()
+        host, peer = [base64.b64encode(bytes(SigningKey.generate().verify_key)).decode() for _ in range(2)]
+        collection = str(uuid.uuid4())
+        self.request("space_share", host=host, collection=collection, name="Photos", recipients=[peer])
+        exported = self.request("recovery_export")
+        self.assertEqual((exported["root"], exported["config"]), ("embedded", "state.json"))
+        self.assertEqual(set(exported["keys"]), {"root", "na", "operator", "member"})
+        staging = Path(exported["staging"])
+        self.assertTrue((staging / "application" / "spaces.json").is_file())
+        # Exporting changes nothing: the network keeps working here.
+        self.assertEqual(self.request("space_list")[0]["collection"], collection)
+        vault = Vault()
+        replacement = ConnectOwner(Path(self.temporary.name) / "replacement", vault)
+        try:
+            restored = replacement.request(json.dumps({"op": "recovery_import", "staging": str(staging), "keys": exported["keys"]}))
+            self.assertEqual(restored["pin"], info["pin"])
+            self.assertEqual(replacement.embedded.identity, identity)
+            self.assertEqual(json.loads(json.dumps(replacement.request(json.dumps({"op": "space_list"}))))[0]["collection"], collection)
+            # A device that runs a network never takes another one.
+            with self.assertRaises(Refused):
+                replacement.request(json.dumps({"op": "recovery_import", "staging": str(staging), "keys": exported["keys"]}))
+        finally:
+            replacement.close()
+
     def test_real_core_host_invitation_enrollment_and_independent_revocation(self):
         self.request("create", name="Independent phone")
         node, executor = SigningKey.generate(), SigningKey.generate()
