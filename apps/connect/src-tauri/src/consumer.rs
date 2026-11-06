@@ -58,6 +58,9 @@ pub struct HomeStatus {
     /// This device can share its folders.
     can_share: bool,
     can_share_folder: bool,
+    /// Whether this build can confirm administrator changes with the device's
+    /// own authentication. Until it can, the administrator screens stay hidden.
+    administration: bool,
     joining: Option<String>,
     request: Option<PairRequest>,
     problem: Option<String>,
@@ -129,6 +132,7 @@ pub async fn home_status(
         spaces: device.map(home_spaces).unwrap_or_default(),
         can_share: device.as_ref().is_some_and(|d| d.sharing_host),
         can_share_folder: cfg!(desktop),
+        administration: false,
         joining: owner.joining.clone(),
         request: owner.pairing.as_ref().and_then(|p| p.pending()),
         problem: owner

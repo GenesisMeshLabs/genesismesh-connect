@@ -17,7 +17,7 @@ export function renderPeers(device: Context | null, busy: boolean) {
   context = device;
   locked = busy || !!device?.ticket;
   el<HTMLButtonElement>("save-peer").disabled = locked || !device;
-  input("peer-name").disabled = locked || !device;
+  input("advanced-peer-name").disabled = locked || !device;
   try {
     const peers = device ? loadPeers(localStorage, scope()) : [];
     const next = JSON.stringify([peers, locked, input("peer-node-key").value]);
@@ -49,7 +49,7 @@ export function renderPeers(device: Context | null, busy: boolean) {
       choose.disabled = locked;
       choose.addEventListener("click", () => {
         input("peer-node-key").value = peer.node;
-        input("peer-name").value = peer.name;
+        input("advanced-peer-name").value = peer.name;
         renderPeers(context, false);
       });
       const remove = document.createElement("button");
@@ -92,7 +92,7 @@ el("save-peer").addEventListener("click", () => {
       localStorage,
       scope(),
       {
-        name: input("peer-name").value.trim(),
+        name: input("advanced-peer-name").value.trim(),
         node: input("peer-node-key").value.trim(),
       },
       context.node_public_key,

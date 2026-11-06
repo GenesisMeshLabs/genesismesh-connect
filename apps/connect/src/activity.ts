@@ -19,7 +19,7 @@ function renderActivity() {
   );
   el("activity-count").textContent =
     `${events.length} event${events.length === 1 ? "" : "s"}`;
-  el("activity-empty").hidden = visible.length > 0;
+  el("advanced-activity-empty").hidden = visible.length > 0;
   const list = el("activity-list");
   list.replaceChildren();
   for (const event of visible) {
