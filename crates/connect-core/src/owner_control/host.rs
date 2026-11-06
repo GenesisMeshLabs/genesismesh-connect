@@ -11,7 +11,7 @@ use serde_json::Value;
 use std::path::Path;
 
 pub struct HostControl {
-    store: ControlStore,
+    pub(super) store: ControlStore,
     scope: ControlScope,
 }
 impl HostControl {

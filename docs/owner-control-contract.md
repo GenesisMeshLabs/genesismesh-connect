@@ -8,19 +8,55 @@ no pairing administration. An initialized host-local registry and exact local
 approval are required; remote requests never create the registry or approve an
 administrator. Missing initialized state is preserved and refused.
 
-This is backend integration, not a completed phone-owner user journey. Native
-controller preparation and host dispatch exist, but the app does not expose
-these methods through Tauri IPC or its operation registry yet. Guided local
-enrollment review, mobile Requests UX, native user presence and physical device
-acceptance remain open. Embedded Android authority work stays isolated; this
-host adapter does not satisfy phone-hosted ownership or enable public Create.
+This is backend and guided local host integration, not a completed phone-owner
+journey. Devices → Manage administrators exposes narrow local status, review,
+commit and readback IPC. Device-side signing/request preparation and the general
+operation registry do not expose administrator privileges. Production host UI
+mutations remain refused by the unavailable native-presence adapter. Mobile
+Requests UX, qualified native user presence, installed-app and physical acceptance
+remain open. Embedded Android authority work stays isolated; this host adapter
+does not satisfy phone-hosted ownership or enable public Create.
 
 The headless host has an explicitly advanced, local Unix-socket review surface:
 `requests enable`, `requests list`, `requests approve ID DIGEST`,
 `requests decline ID DIGEST`, and `requests revoke ID`. List shows the complete
 signed enrollment intent and canonical digest. Approve requires that exact saved
 pending request and fresh member verification. No corresponding remote operation
-exists. Desktop enable/review remains a native API pending its guided UX.
+exists. The desktop guided review uses the same fixed APIs, with a separate
+native-presence gate. The existing headless local-operator profile is unchanged.
+
+## Guided local host review
+
+`LocalAdministration` derives host/network scope from the live native device and
+checks the actual managed authority's fixed readiness. It resolves the requesting
+node to a saved device name plus fingerprint, retains the exact signed enrollment
+digest, and shows the specific pairing permissions, expiry and consequences.
+An unidentified member cannot be approved by supplying a name. Review payloads
+are held natively (at most 32, at most two minutes) and bound to a canonical digest.
+Commit accepts only that exact reference; it cannot select keys, URLs, methods,
+presence providers or arbitrary core actions. Scope, intent, expiry and current
+membership for approval are checked before and after native confirmation.
+
+The current production `UnavailableAdminPresence` refuses all local UI mutations.
+No caller boolean, environment/config override, DOM click or protected-storage
+reopen can turn it into a qualified provider. The UI makes the gate visible and
+keeps confirmation unavailable. Inspection and exact review remain useful for
+already-enabled hosts. A qualified provider and installed-app acceptance are
+future work, not inferred from the fixture's test-only consent adapter.
+
+Reviews are single-use in the native session; after restart an old review cannot
+be committed again. The frontend stores only a public, scoped readback bookmark
+before dispatch. Native readback re-resolves the original enrollment/digest from
+the exclusive host registry; it never dispatches. Approval, decline and revocation
+records survive reopening under the existing bounded retention. Missing/pruned
+records remain unconfirmed. A matching current state is reported as observed
+state, not proof of which UI click caused it. Changed/expired context and canceled
+or unavailable confirmation are refused before dispatch; a lost or uncertain
+dispatch reply offers Check status and never automatic resubmission.
+
+The host app uses the existing owner → device lock order and a nonblocking busy
+response while another operation owns them. Local review is desktop/owner only;
+member/mobile and unqualified external authority paths remain unavailable.
 
 ## Three independent prerequisites
 
@@ -225,7 +261,8 @@ Apple platform acceptance, native user presence or physical Android ownership.
 The prior local Windows Application Control blocker remains unresolved. No new
 browser or physical-device acceptance is claimed for these native-only changes.
 
-Before app exposure: add explicit local enrollment/revocation UX and the client
-Requests workflow with plain scope, approval and uncertainty. Qualify native user
+Before enabling app mutations: qualify the native user-presence adapter and the
+installed local enrollment/revocation journey; complete the client Requests
+workflow with plain scope, approval and uncertainty. Qualify native user
 presence, lock/suspend, recovery after every product interruption point, and
 physical platforms. No new Windows, Mac, iOS or Android installation is claimed.

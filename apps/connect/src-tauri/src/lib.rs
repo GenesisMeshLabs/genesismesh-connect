@@ -6,6 +6,7 @@ mod activity;
 mod consumer;
 mod desktop;
 mod downloads;
+mod host_admin;
 mod lifecycle;
 mod picking;
 mod resources;
@@ -93,6 +94,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_deep_link::init())
         .manage(AppState::default())
+        .manage(host_admin::HostAdminState::default())
         .setup(|app| {
             desktop::setup(app)?;
             workflow::setup(app)?;
@@ -107,6 +109,10 @@ pub fn run() {
             stop_endpoint,
             send_probe,
             workflow::network_status,
+            host_admin::host_admin_status,
+            host_admin::host_admin_review,
+            host_admin::host_admin_commit,
+            host_admin::host_admin_check,
             workflow::network_create,
             workflow::network_attach,
             workflow::recovery_create,

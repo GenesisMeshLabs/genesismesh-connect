@@ -11,11 +11,11 @@ manual/assisted/platform acceptance gate; no parity percentage is claimed.
 
 | Ticket | Implemented foundation / existing workflow | Remaining product acceptance |
 | --- | --- | --- |
-| CONNECT-01 coverage | Reviewed immutable inventory, pin qualification, drift and false-acceptance checks | Hosted CI execution and continued release/platform qualification |
+| CONNECT-01 coverage | Reviewed immutable inventory, pin qualification, drift/refusal checks and repeatable hosted CI | Continued release/platform qualification |
 | CONNECT-02 typed operations | Closed resource/local-history registry, generated schemas, exact access review | General core outcome schemas and manual/assisted parity |
 | CONNECT-03 durable workflows | Access dispatch/readback journal, archives; owner nonce reservations | Durable join/renewal/recovery/admin enrollment and operation-specific reconciliation |
 | CONNECT-04 prerequisites | Authenticated resource-host release/profile/ownership discovery | General feature, verifier, actor and deployment discovery |
-| CONNECT-05 owner Requests | Pairing-only signature/replay contract; separate native key custody; authenticated transport and bounded durable enrollment/result records | Fixed core/target dispatch, explicit enrollment/revocation UI, usable phone Requests and recovery; default host still refuses unsupported control |
+| CONNECT-05 owner Requests | Authenticated transport; fixed managed-core/target dispatch and fresh candidate verification; native key custody; durable enrollment/result records; guided local host review, typed IPC and scoped readback | Qualified native user presence for UI mutations; installed host opt-in/review/revocation acceptance; usable phone Requests, recovery, assisted parity and physical gates |
 | CONNECT-06 lifecycle | Existing disconnect/reconnect/leave; administrative native-store refusal and cleanup | Physical lock/suspend/force-quit/reboot/network switching and user-presence handling |
 | CONNECT-07 distribution/hosting | Existing Tauri packaging and headless Linux server | Signed fresh-machine installer/update/service/uninstall acceptance and guided host setup |
 | CONNECT-08 continuity | Existing encrypted recovery and server restore | Checkpoints, missing-history reconciliation, restricted restore and old-host fencing |
@@ -79,6 +79,44 @@ second-device enrollment/revocation, production library support, or lifecycle
 availability. The full Create workflow remains disabled until those gates pass.
 
 ## Next user-visible acceptance milestones
+
+### Host backend and guided local administration — 6 November 2026
+
+The host now receives separately authenticated administrative enrollment requests,
+requires exact local approval and dispatches only the granted pairing operations.
+Its actual managed-core operator/tier/role readiness, current membership, exact
+live candidate and nonce reservations are checked. Candidate certificates are
+reverified against fresh core state before saving a pairing or confirming success.
+The candidate-revocation timing regression reproduced false success on the earlier
+implementation and now passes against source and packaged authorities.
+
+Devices → Manage administrators now provides local opt-in review, actual saved
+device identification, exact pairing permissions, expiry/time zone, consequences,
+decline and revocation review. Narrow native status/review/commit/check commands
+derive host scope and device identity locally. Reviews are bounded, expire and
+cannot be committed twice; a saved readback bookmark grants no authority.
+Confirmed current state, a refused change and uncertainty have separate messages.
+After interruption, checking status observes the same enrollment/digest in the
+same host/network and never repeats the change. Matching state is not attributed
+to a particular click, and missing retained records stay unconfirmed.
+
+**Production administration mutations remain gated.** No native user-presence
+provider has been qualified for this app. A DOM confirmation, OS-store reopening,
+caller flag or debug environment does not substitute for one. The current native
+adapter allows inspection/review and refuses privilege changes. Positive fixtures
+use an explicitly test-only native presence adapter; they do not enable a
+production path. Unsupported mobile/member/external-authority paths remain gated.
+
+| Evidence class | Current scope and limit |
+| --- | --- |
+| Build and automated fixtures | Core tests, real-core local reviews/readback with fixture presence, source and packaged authority coverage; frontend state tests and installed-Chrome browser fixtures with simulated native replies |
+| Installed native application | Not newly accepted for this slice; local Windows Application Control remains an environment gate |
+| Physical lifecycle and native presence | Not performed; no device/security changes in this slice; Android owner PR #22 remains isolated/draft |
+| Usability | Browser fixture inspection includes desktop/narrow layouts and lost replies; nontechnical first-use acceptance in an installed app remains open |
+
+The backend milestone is implemented; the whole phone-owner journey remains
+partial. Production mobile Create stays disabled and independent phone-local
+real-core authority remains mandatory alongside optional NAS/server hosting.
 
 **“Create and run my network on this Android phone.”** The independent-phone
 proof above is required alongside the optional server profile. Native dependency

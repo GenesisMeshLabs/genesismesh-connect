@@ -32,6 +32,17 @@ jobs:
       - run: npm test
       - run: npx tsc --noEmit
       - run: npx vite build
+      - name: Guided host administration browser fixtures (installed Chrome)
+        run: |
+          google-chrome --version
+          npm run test:browser
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: Host-administration-browser-fixtures-${{ github.sha }}
+          path: apps/connect/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Android packaging refusal checks
         working-directory: .
         run: python3 -m unittest discover -s scripts/tests -p 'test_android*.py'
@@ -111,13 +122,13 @@ jobs:
         run: |
           bash scripts/verify-linux-store.sh test -p connect-core --lib device:: --locked -- --ignored --nocapture
       - name: Real authority, QUIC, access and owner-control integration
-        run: bash scripts/verify-linux-store.sh test -p connect-core --test live_authority --test access_workflow_authority --test owner_control_authority --test owner_requests_authority --locked -- --ignored --nocapture
+        run: bash scripts/verify-linux-store.sh test -p connect-core --test live_authority --test access_workflow_authority --test owner_control_authority --test owner_requests_authority --test owner_admin_authority --locked -- --ignored --nocapture
       - name: Build standalone authority from installed pinned wheel
         run: python apps/connect/authority/build.py
       - name: Standalone runtime, recovery and prerequisites
         run: |
           export CONNECT_OWNER_BINARY="$PWD/apps/connect/src-tauri/binaries/genesismesh-authority-x86_64-unknown-linux-gnu"
-          bash scripts/verify-linux-store.sh test -p connect-core --test owner_runtime --test owner_requests_authority --locked -- --ignored --nocapture
+          bash scripts/verify-linux-store.sh test -p connect-core --test owner_runtime --test owner_requests_authority --test owner_admin_authority --locked -- --ignored --nocapture
       - name: Check Linux app and headless host
         run: cargo check -p genesismesh-connect -p genesismesh-connect-node --locked
 

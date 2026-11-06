@@ -8,6 +8,7 @@
     "prebuild": "node scripts/icons.mjs && node scripts/prepare-authority.mjs",
     "build": "tsc && vite build",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:browser": "playwright test",
     "preview": "vite preview",
     "icons": "node scripts/icons.mjs",
     "ios:init": "node scripts/ios-init.mjs",
@@ -20,6 +21,7 @@
     "qrcode": "1.5.4"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.0",
     "@tauri-apps/cli": "2.12.4",
     "@types/qrcode": "1.5.6",
     "typescript": "6.0.3",

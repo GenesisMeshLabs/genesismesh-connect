@@ -10,6 +10,19 @@ use chrono::{Duration, Utc};
 use std::collections::BTreeSet;
 
 impl DeviceController {
+    pub(crate) async fn local_admin_scope(&mut self) -> Result<ControlScope> {
+        self.current_owner_trust().await?;
+        Ok(self.host_control_path()?.1)
+    }
+    pub(crate) fn local_admin_enabled(&self) -> Result<bool> {
+        let (path, _) = self.host_control_path()?;
+        if path.try_exists()? || path.with_extension("owner-control-lock").try_exists()? {
+            self.open_owner_requests()?; // Missing initialized/corrupt state is never "off".
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
     fn host_control_path(&self) -> Result<(std::path::PathBuf, ControlScope)> {
         ensure!(
             self.network_computer(),

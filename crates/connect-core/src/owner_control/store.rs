@@ -274,6 +274,43 @@ impl ControlStore {
     pub fn grants(&self) -> &[Grant] {
         &self.state.grants
     }
+    pub(super) fn local_request(
+        &self,
+        id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<
+        Option<(
+            EnrollmentRequest,
+            EnrollmentState,
+            Option<serde_json::Value>,
+        )>,
+    > {
+        self.clock(now)?;
+        if let Some(grant) = self
+            .state
+            .grants
+            .iter()
+            .find(|g| g.enrollment.intent.id == id)
+        {
+            return Ok(Some((
+                grant.enrollment.clone(),
+                self.enrollment_state(&grant.enrollment.intent.controller_node, id, now),
+                None,
+            )));
+        }
+        Ok(self
+            .state
+            .pending
+            .iter()
+            .find(|p| p.request.intent.id == id)
+            .map(|p| {
+                (
+                    p.request.clone(),
+                    self.enrollment_state(&p.request.intent.controller_node, id, now),
+                    Some(p.certificate.clone()),
+                )
+            }))
+    }
     pub(super) fn check_peer(&self, peer: &VerifiedController, now: DateTime<Utc>) -> Result<()> {
         self.clock(now)?;
         peer.require(&self.state.scope, &peer.node, now)

@@ -3,10 +3,12 @@
 //! independent prerequisites. Only the native host adapter calls the authority.
 mod exchange;
 mod host;
+mod local;
 mod protocol;
 mod store;
 
 pub use exchange::*;
 pub use host::HostControl;
+pub use local::*;
 pub use protocol::*;
 pub use store::{ControlStore, Grant, Observation, Reservation};

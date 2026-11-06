@@ -321,6 +321,25 @@
               <span class="home-badge">This device</span>
             </section>
             <div id="saved-devices" aria-label="Saved devices"></div>
+            <section id="host-admin-card" class="home-card" hidden>
+              <h2>Pairing administrators</h2>
+              <p>Review requests from your devices to help manage who joins your network.</p>
+              <button id="host-admin-open" class="secondary">Manage administrators</button>
+            </section>
+            <dialog id="host-admin-dialog" class="share-dialog host-admin-dialog" aria-labelledby="host-admin-title">
+              <div class="home-page-heading"><div><p id="host-admin-network" class="home-muted"></p><h2 id="host-admin-title">Pairing administrators</h2></div><button id="host-admin-close" class="secondary" aria-label="Close administrator settings">Close</button></div>
+              <p id="host-admin-readiness" class="host-admin-notice" role="status"></p>
+              <p id="host-admin-problem" role="alert" hidden></p>
+              <div id="host-admin-outcome" class="host-admin-notice" role="status" hidden><h3 id="host-admin-outcome-title"></h3><p id="host-admin-outcome-text"></p><p id="host-admin-outcome-detail" class="home-muted"></p><button id="host-admin-check" class="secondary">Check status</button></div>
+              <p id="host-admin-storage-note" role="alert" hidden>The status bookmark could not be saved or read on this device. Keep this screen open to check the result. After reopening, inspect the current requests and approved permissions here.</p>
+              <div id="host-admin-overview">
+                <div id="host-admin-setup" class="host-admin-section" hidden><h3>Manage joining devices from another device</h3><p>First, enable administrator requests on this computer. An enrolled device can then ask for pairing permissions. Review its identity, permissions and expiry here before approving it.</p><p>Enabling requests grants no administrator permissions by itself.</p><button id="host-admin-enable">Review enabling Requests</button></div>
+                <p id="host-admin-enabled" hidden>Requests are enabled. Each device needs its own approval here. Changing administrator permissions requires device authentication.</p>
+                <div id="host-admin-lists" hidden><section class="host-admin-section"><h3>Requests to review</h3><p id="host-admin-empty" class="home-muted">No requests are waiting. A request appears when an enrolled device asks to manage joining devices.</p><div id="host-admin-pending"></div></section><section class="host-admin-section"><h3>Approved pairing permissions</h3><p class="home-muted">Each use also requires current network membership.</p><p id="host-admin-no-grants" class="home-muted">No administrator permissions have been approved.</p><div id="host-admin-grants"></div></section></div>
+              </div>
+              <div id="host-admin-review" hidden><button id="host-admin-back" class="text-button">← Back to requests</button><h3 id="host-admin-review-title"></h3><dl id="host-admin-review-lines" class="host-admin-review-lines"></dl><div id="host-admin-review-permissions"></div><p id="host-admin-consequence"></p><p id="host-admin-review-expired" role="status" hidden>This review expired. Return to requests and review the current state again.</p><details><summary>Review details</summary><p id="host-admin-review-digest" class="host-admin-fingerprint"></p></details><button id="host-admin-confirm">Confirm</button></div>
+              <div class="host-admin-footer"><button id="host-admin-refresh" class="secondary">Refresh</button><p class="home-muted">Refreshing and checking status never repeat a change.</p></div>
+            </dialog>
             <p id="devices-note" class="home-muted" hidden>
               To add or remove a device, open Devices on your network computer.
             </p>
