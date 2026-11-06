@@ -7,7 +7,7 @@ async function open(page:Page,scenario:string) {
 async function countCommits(page:Page) {
   return page.evaluate(()=>((window as unknown as {fixtureAdminCalls:string[]}).fixtureAdminCalls).filter(v=>v==="host_admin_commit").length);
 }
-type Control={holdNext(command:string):number;started(id:number):boolean;release(id:number):void;navigate():void;setNetwork(name:string):void};
+type Control={holdNext(command:string):number;started(id:number):boolean;release(id:number):void;navigate():void;setNetwork(name:string):void;setDecision(value:"approved"|"revoked"):void};
 async function hold(page:Page,command:string) {
   return page.evaluate(cmd=>(window as unknown as {fixtureAdminControl:Control}).fixtureAdminControl.holdNext(cmd),command);
 }
@@ -140,5 +140,34 @@ test("a readback during delayed submission retains its bookmark and survives the
   await expect(page.locator("#host-admin-check")).not.toBeVisible();
   await expect(page.locator("#host-admin-outcome-title")).toHaveText("State confirmed");
   expect(await page.evaluate(()=>localStorage.getItem("connect.host-admin.check.v1.fixture-host-scope"))).toBeNull();
+  expect(await countCommits(page)).toBe(1);
+});
+
+test("an older Approved reply arriving first cannot suppress the newer Revoked readback",async({page})=>{
+  await open(page,"ready");await page.getByRole("button",{name:"Review request",exact:true}).click();
+  const commit=await hold(page,"host_admin_commit");await page.locator("#host-admin-confirm").click();await started(page,commit);
+  await closePresentation(page,"navigation");await page.getByRole("button",{name:"Manage administrators",exact:true}).click();
+  await page.evaluate(()=>(window as unknown as {fixtureAdminControl:Control}).fixtureAdminControl.setDecision("revoked"));
+  const check=await hold(page,"host_admin_check");await page.getByRole("button",{name:"Check status",exact:true}).click();await started(page,check);
+  await release(page,commit);await release(page,check);
+  await expect(page.locator("#host-admin-outcome-text")).toContainText("permissions are revoked");
+  await expect(page.locator("#host-admin-outcome-title")).toHaveText("Current state checked");
+  await expect(page.locator("#host-admin-check")).not.toBeVisible();
+  expect(await countCommits(page)).toBe(1);
+});
+
+test("an unresolved newer readback keeps recovery after an older Approved reply and navigation/reload",async({page})=>{
+  await open(page,"ready");await page.getByRole("button",{name:"Review request",exact:true}).click();
+  const commit=await hold(page,"host_admin_commit");await page.locator("#host-admin-confirm").click();await started(page,commit);
+  await closePresentation(page,"navigation");await page.getByRole("button",{name:"Manage administrators",exact:true}).click();
+  await page.evaluate(()=>(window as unknown as {fixtureAdminControl:Control}).fixtureAdminControl.setDecision("revoked"));
+  const check=await hold(page,"host_admin_check");await page.getByRole("button",{name:"Check status",exact:true}).click();await started(page,check);
+  await release(page,commit);
+  expect(await page.evaluate(()=>localStorage.getItem("connect.host-admin.check.v1.fixture-host-scope"))).not.toBeNull();
+  await closePresentation(page,"navigation");await release(page,check);
+  await page.reload();await page.getByRole("button",{name:"Manage administrators",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Check status",exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Check status",exact:true}).click();
+  await expect(page.locator("#host-admin-outcome-text")).toContainText("permissions are revoked");
   expect(await countCommits(page)).toBe(1);
 });

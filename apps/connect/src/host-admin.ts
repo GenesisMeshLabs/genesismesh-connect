@@ -1,6 +1,6 @@
 import {invoke} from "@tauri-apps/api/core";
 import {el} from "./ui";
-import {AdminMutations,AdminPresentationSession} from "./host-admin-lifecycle";
+import {AdminMutations,AdminPresentationSession,adminMutationPending} from "./host-admin-lifecycle";
 import {adminActionNames,adminDate,adminOutcomeText,adminOutcomeDetail,hostAdminProblem,canConfirmAdmin,parseAdminReference,permissionName,
   type AdminAction,type AdminEntry,type AdminOutcome,type AdminReference,type AdminReview,type AdminStatus} from "./host-admin-state";
 
@@ -26,12 +26,12 @@ export function setupHostAdministration() {
       } catch {storageProblem=true;}
     }
     outcome=record?.outcome||null;
-    pending=record&&(record.inFlight||!record.outcome||record.outcome.kind==="uncertain")?record.reference:null;
+    pending=record&&adminMutationPending(record)?record.reference:null;
   }
-  function settleMutation(reference:AdminReference,value:AdminOutcome,expectedRevision?:number) {
-    if(!mutations.settle(reference,value,expectedRevision))return;
+  function settleMutation(reference:AdminReference,value:AdminOutcome,readbackRevision?:number) {
+    if(!mutations.settle(reference,value,readbackRevision))return;
     const record=mutations.get(reference.scope)!;
-    saveReference(reference.scope,record.inFlight||!record.outcome||record.outcome.kind==="uncertain"?reference:null);
+    saveReference(reference.scope,adminMutationPending(record)?reference:null);
     // Mutation bookkeeping survives a closed session. It may update only the
     // matching observation, never an abandoned review or another host's view.
     if(dialog.open&&status?.view?.scope===reference.scope&&pending?.review_id===reference.review_id) {
@@ -140,7 +140,7 @@ export function setupHostAdministration() {
   }
   async function check() {
     const token=presentation.token();if(!current(token)||busy||!pending)return;
-    const reference=pending, revision=mutations.restore(reference).revision;busy=true;problem("");render();
+    const reference=pending, revision=mutations.beginReadback(reference);saveReference(reference.scope,reference);busy=true;problem("");render();
     try {
       const value=await invoke<AdminOutcome>("host_admin_check",{reference});if(current(token))settleMutation(reference,value,revision);
     } catch {if(current(token))problem("Couldn’t confirm the saved change in this network. Keep the original network open and check status again. No change was resent.");}

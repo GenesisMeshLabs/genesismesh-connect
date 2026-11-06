@@ -60,9 +60,13 @@ cleanup) cannot restore a review or replace a reopened view. Submitted mutations
 remain tracked separately by host scope and exact reference: closing preserves
 their bookmark and eventual outcome, without replay. A newer explicit state
 observation takes presentation precedence over an older submission reply; both
-results remain tracked while the app is running. The bookmark remains until any
-in-flight submission finishes and its state is resolved. Reloaded bookmarks offer
-readback only, not a new commit.
+results remain tracked while the app is running. Readback requests have their own
+sequence, independent of submission settlement: an older Approved submission
+reply cannot invalidate a newer Revoked observation, in either delivery order.
+The bookmark remains while a submission or its latest readback is unresolved,
+including a failed or abandoned check. Reloaded bookmarks offer readback only,
+not a new commit. Each check and reply must match the exact saved scope/reference;
+superseded check replies cannot replace a newer observation.
 
 The host app uses the existing owner → device lock order and a nonblocking busy
 response while another operation owns them. Local review is desktop/owner only;

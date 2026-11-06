@@ -16,6 +16,7 @@ const control={
   release(id:number){gates.get(id)?.release();},
   navigate(){navigateClose();},
   setNetwork(name:string){network=name;},
+  setDecision(value:"approved"|"revoked"){decision=value;sessionStorage.setItem(`fixture.decision.${scenario}`,decision);},
 };
 let decision=sessionStorage.getItem(`fixture.decision.${scenario}`)||"pending";
 let enabled=scenario!=="off"||sessionStorage.getItem("fixture.enabled")==="true";
@@ -46,7 +47,8 @@ async function respond(command:string,args:Record<string,unknown>) {
       else {decision=reference.action==="approve"?"approved":reference.action==="revoke"?"revoked":"declined";sessionStorage.setItem(`fixture.decision.${scenario}`,decision);}
       if(scenario==="lost")throw Error("Fixture lost reply after commit");
     }
-    return {reference,kind:"confirmed",observed:reference.action==="enable"?null:decision,detail:"Current state checked. This read never repeats a change."};
+    const expected={approve:"approved",revoke:"revoked",decline:"declined",enable:null}[reference.action];
+    return {reference,kind:reference.action==="enable"||decision===expected?"confirmed":"refused",observed:reference.action==="enable"?null:decision,detail:"Current state checked. This read never repeats a change."};
   }
   throw Error("Unsupported fixture command");
 }

@@ -104,6 +104,9 @@ loads and readbacks. Reopening loads fresh state without waiting for an old
 presentation. Already-submitted changes retain their scoped bookmark and eventual
 outcome independently; status checking never resends them. Delayed browser
 fixtures cover these lifecycle cases separately from native/device acceptance.
+Readback ordering is independent of submission replies, so a newer Revoked
+observation wins even when an older Approved reply arrives first. Unresolved
+readbacks retain their recovery bookmark across navigation/reload.
 
 **Production administration mutations remain gated.** No native user-presence
 provider has been qualified for this app. A DOM confirmation, OS-store reopening,

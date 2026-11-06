@@ -9,35 +9,46 @@ export class AdminPresentationSession {
   current(token:number){return this.active&&token===this.generation;}
 }
 export interface AdminMutation {
-  reference:AdminReference; outcome:AdminOutcome|null; submissionOutcome:AdminOutcome|null; inFlight:boolean; revision:number;
+  reference:AdminReference; outcome:AdminOutcome|null; submissionOutcome:AdminOutcome|null; inFlight:boolean;
+  readbackRevision:number; readbackPending:boolean;
+}
+export function adminMutationPending(record:AdminMutation) {
+  return record.inFlight||record.readbackPending||!record.outcome||record.outcome.kind==="uncertain";
+}
+function sameReference(a:AdminReference,b:AdminReference) {
+  return a.review_id===b.review_id&&a.review_digest===b.review_digest&&a.scope===b.scope
+    &&a.action===b.action&&a.enrollment_id===b.enrollment_id&&a.enrollment_digest===b.enrollment_digest;
 }
 export class AdminMutations {
   private records=new Map<string,AdminMutation>();
   get(scope:string){return this.records.get(scope);}
   restore(reference:AdminReference) {
-    if(!this.records.has(reference.scope))this.records.set(reference.scope,{reference,outcome:null,submissionOutcome:null,inFlight:false,revision:0});
+    if(!this.records.has(reference.scope))this.records.set(reference.scope,{reference,outcome:null,submissionOutcome:null,inFlight:false,readbackRevision:0,readbackPending:false});
     return this.records.get(reference.scope)!;
   }
   begin(reference:AdminReference) {
     const current=this.records.get(reference.scope);
-    if(current&&(current.inFlight||!current.outcome||current.outcome.kind==="uncertain"))throw Error("Check the earlier change before starting another");
-    const record={reference,outcome:null,submissionOutcome:null,inFlight:true,revision:0};this.records.set(reference.scope,record);return record;
+    if(current&&adminMutationPending(current))throw Error("Check the earlier change before starting another");
+    const record={reference,outcome:null,submissionOutcome:null,inFlight:true,readbackRevision:0,readbackPending:false};this.records.set(reference.scope,record);return record;
   }
-  settle(reference:AdminReference,value:AdminOutcome,expectedRevision?:number) {
+  beginReadback(reference:AdminReference) {
     const record=this.records.get(reference.scope);
-    if(!record||record.reference.review_id!==reference.review_id||expectedRevision!==undefined&&record.revision!==expectedRevision)return false;
-    const reply=value.reference;
-    const matching=reply.review_id===reference.review_id&&reply.review_digest===reference.review_digest
-      &&reply.scope===reference.scope&&reply.action===reference.action&&reply.enrollment_id===reference.enrollment_id
-      &&reply.enrollment_digest===reference.enrollment_digest;
+    if(!record||!sameReference(record.reference,reference))throw Error("Check the original saved change in this network");
+    record.readbackPending=true;
+    return ++record.readbackRevision;
+  }
+  settle(reference:AdminReference,value:AdminOutcome,readbackRevision?:number) {
+    const record=this.records.get(reference.scope);
+    if(!record||!sameReference(record.reference,reference)||readbackRevision!==undefined&&(!record.readbackPending||record.readbackRevision!==readbackRevision))return false;
+    const matching=sameReference(value.reference,reference);
     const result:AdminOutcome=matching?value:{reference,kind:"uncertain",observed:null,detail:"The reply did not match this saved change. Check status without resending."};
-    if(expectedRevision===undefined) {
+    if(readbackRevision===undefined) {
       record.submissionOutcome=result;
       record.inFlight=false;
-      // A later explicit state observation takes presentation precedence over
-      // its older submission reply. Retain both without losing either result.
-      if(record.revision===0)record.outcome=result;
-    } else record.outcome=result;
-    ++record.revision;return true;
+      // A requested readback is newer than this submission, regardless of
+      // reply order. Retain the submission without invalidating that readback.
+      if(record.readbackRevision===0)record.outcome=result;
+    } else {record.outcome=result;record.readbackPending=false;}
+    return true;
   }
 }
