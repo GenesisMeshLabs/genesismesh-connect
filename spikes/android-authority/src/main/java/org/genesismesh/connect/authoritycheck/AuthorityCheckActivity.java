@@ -5,6 +5,8 @@ import android.os.Bundle;
 import android.graphics.Color;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Button;
+import android.widget.LinearLayout;
 import com.chaquo.python.Python;
 import com.chaquo.python.android.AndroidPlatform;
 import org.json.JSONObject;
@@ -32,9 +34,32 @@ public final class AuthorityCheckActivity extends Activity {
         status = new TextView(this);
         status.setTextColor(Color.rgb(214, 239, 197));
         status.setTextSize(19);
-        status.setText("Genesis Mesh\n\nChecking the network engine on this phone…");
-        root.addView(status);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.addView(status);
+        root.addView(content);
         setContentView(root);
+        if ("org.genesismesh.connect.authoritycheck.rootcheck".equals(getPackageName())) {
+            status.setText("Genesis Mesh\n\nRoot-key check\n\nKeep this phone unlocked and stay in this app. "
+                + "When you tap Start check, Android will ask you to protect the test network's root key. "
+                + "Confirm with your screen lock or fingerprint on this phone.\n\n"
+                + "This separate test does not change your Connect network.\n\n");
+            Button start = new Button(this);
+            start.setText("Start check");
+            content.addView(start);
+            start.setOnClickListener(view -> {
+                start.setEnabled(false);
+                start.setVisibility(android.view.View.GONE);
+                runCheck();
+            });
+        } else {
+            runCheck();
+        }
+    }
+
+    private void runCheck() {
+        status.setText("Genesis Mesh\n\nChecking the network engine…\n\nStay in this app. "
+            + "If Android asks to protect the root key, confirm on this phone.");
         try { ENGINE.start(() -> {
             JSONObject report;
             String stage = "Python startup";
@@ -103,6 +128,10 @@ public final class AuthorityCheckActivity extends Activity {
         if (!passed) text.append("\nCheck: ").append(report.optString("stage", "startup")).append("\n");
         JSONObject owner = report.optJSONObject("owner_check");
         if (owner != null) {
+            if ("timed_out".equals(owner.optString("root_authentication"))) {
+                text.append("\nAndroid's confirmation timed out. No root-key use was approved. ")
+                    .append("The unfinished test setup has been preserved for inspection.\n");
+            }
             if ("secure_screen_lock_required".equals(owner.optString("readiness"))) {
                 text.append("\nThis owner profile requires a PIN, password or pattern on the phone. ")
                     .append("Set one locally in Settings, then reopen this check.\n");

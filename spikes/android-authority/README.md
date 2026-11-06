@@ -35,6 +35,15 @@ foreground/background lifecycle remain separate acceptance gates. This owner
 profile requires an unlocked phone with a secure screen lock configured; configure
 credentials only locally, never in a chat or developer command.
 
+The separate **GM Root Check** variant (`-ProotCustodyQualification=true`, package
+`org.genesismesh.connect.authoritycheck.rootcheck`) waits on an instruction screen.
+Tap **Start check** on the phone when ready, stay in the app, and approve Android's
+root-key confirmation locally if this is a new test network. No timer, engine or
+key creation starts before the tap. Ordinary reopen keeps the existing root
+encrypted. A timed-out confirmation preserves its unfinished setup for developer
+inspection; the app does not silently reset or replace custody. Its installer
+uses `-AppKind RootCheck` and updates only that separate development package.
+
 The owner profile requires API35+, with atomic no-replace publication. It first
 tests this in a fresh temporary directory using public bytes, without hard links
 or OS permission changes. A lock-only pre-initialization directory is reused only

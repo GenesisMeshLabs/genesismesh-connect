@@ -194,8 +194,13 @@ replay. Focused host/native and contract CI passed there. The newer GM Root Chec
 profile remains an unfinished initialization: no completed owner identity was
 recorded. Its key-policy metadata was inspected, but physical per-use root
 authentication and create/reopen under that root format are **not accepted**.
-Permission to discard that isolated test profile remains pending. It has not
-been reset, migrated or replaced by the following source/build work.
+That profile was preserved during the following source/build work. Later on
+6 November, the user authorized clearing only the unfinished GM Root Check test
+data. Two creation retries reached Android's system dialog but timed out without
+local authentication; no completed root-custody network is accepted. The fixed
+Root Check package now waits for a local **Start check** tap, so its authentication
+window is not consumed while exchanging chat messages. Connect data is unchanged;
+no automatic custody replacement or reset action is added to either app.
 
 The next independent dependency is now implemented behind the opt-in
 `android-owner-qualification` feature and fixed
