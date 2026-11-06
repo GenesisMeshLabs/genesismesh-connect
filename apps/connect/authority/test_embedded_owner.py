@@ -8,6 +8,10 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import socket
+import time
+import threading
+import requests
 import sys
 import tempfile
 import unittest
@@ -216,6 +220,54 @@ class EmbeddedOwnerTests(unittest.TestCase):
         with self.assertRaises(Refused): self.owner().create("Replacement")
         self.assertEqual(self.vault.keys, keys)
         self.assertEqual(self.vault.creations, 1)
+
+    def test_incomplete_loopback_request_cannot_stall_shutdown(self):
+        owner = self.owner(); identity = owner.create("Bounded shutdown")
+        server = owner.server
+        with socket.create_connection(("127.0.0.1", server.server_port), timeout=2) as client:
+            client.sendall(b"POST /heartbeat HTTP/1.1\r\nHost: localhost\r\nContent-Length: 512\r\n\r\n{")
+            with server.condition:
+                self.assertTrue(server.condition.wait_for(lambda: bool(server.active), timeout=2))
+            started = time.monotonic()
+            owner.close()
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertFalse(server.active)
+            self.assertIsNone(owner.keys)
+            self.assertIsNone(owner.storage.lock)
+        self.assertEqual(self.owner().open(), identity)
+
+    def test_unsettled_handler_retains_keys_and_exclusive_state_until_it_finishes(self):
+        owner = self.owner(); identity = owner.create("Settling handler")
+        entered, release = threading.Event(), threading.Event()
+        server = owner.server
+        view = owner.service.app.view_functions["na_public.get_policy"]
+        def delayed():
+            entered.set()
+            if not release.wait(5): raise RuntimeError("Test handler timed out")
+            owner.service.db.add_audit_event("test_handler_settled", {"ok": True})
+            return view()
+        owner.service.app.view_functions["na_public.get_policy"] = delayed
+        def request():
+            try: requests.get(owner.origin + "/policy", timeout=5)
+            except requests.RequestException: pass  # Socket is deliberately closed during shutdown.
+        client = threading.Thread(target=request); client.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            with patch("local_server.SHUTDOWN_SECONDS", 0.15):
+                started = time.monotonic()
+                with self.assertRaisesRegex(Refused, "still settling"): owner.close()
+                self.assertLess(time.monotonic() - started, 1)
+            self.assertIsNotNone(owner.keys)
+            self.assertIsNotNone(owner.storage.lock)
+            with self.assertRaises(Refused): self.owner().open()
+        finally:
+            release.set(); client.join(3)
+        with server.condition:
+            self.assertTrue(server.condition.wait_for(lambda: not server.active, timeout=3))
+        owner.close()
+        self.assertIsNone(owner.keys)
+        self.assertIsNone(owner.storage.lock)
+        self.assertEqual(self.owner().open(), identity)
 
 
 if __name__ == "__main__": unittest.main()

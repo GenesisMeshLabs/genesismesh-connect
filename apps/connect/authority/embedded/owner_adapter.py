@@ -18,7 +18,6 @@ import unicodedata
 
 from nacl.signing import SigningKey
 import requests
-from werkzeug.serving import make_server, WSGIRequestHandler
 from genesis_mesh.crypto import generate_keypair, sign_model, verify_model_signature
 from genesis_mesh.crypto.admin_auth import sign_admin_request
 from genesis_mesh.crypto.node_auth import sign_node_request
@@ -26,12 +25,9 @@ from genesis_mesh.models import GenesisBlock, NetworkAuthority, PolicyManifestRe
 from genesis_mesh.na_service.server import NetworkAuthorityService
 
 from state_storage import StateStorage, Refused, encode
+from local_server import LocalServer
 
 NA_ID, OPERATOR_ID, ROOT_ID = "connect-na", "connect-owner", "connect-root"
-
-
-class QuietHandler(WSGIRequestHandler):
-    def log_request(self, code="-", size="-"): pass
 
 
 def public(key):
@@ -182,7 +178,7 @@ class EmbeddedOwner:
             key_id=NA_ID, db_path=str(self.storage.path("authority.db")),
             operator_public_keys={OPERATOR_ID: public(self.keys["operator"])}, operator_key_tiers={OPERATOR_ID: "privileged"},
             boundary_policy_enforcement="required", evidence_store="on", evidence_out_of_band="on")
-        self.server = make_server("127.0.0.1", 0, self.service.app, request_handler=QuietHandler)
+        self.server = LocalServer(self.service.app)
         self.origin = f"http://127.0.0.1:{self.server.server_port}"
         self.thread = threading.Thread(target=lambda: self.server.serve_forever(poll_interval=0.1), daemon=True)
         self.thread.start()
@@ -212,8 +208,8 @@ class EmbeddedOwner:
     def close(self):
         with self.mutex:
             if self.server is not None:
-                self.server.shutdown()
-                self.server.server_close()
+                if not self.server.stop():
+                    raise Refused("Authority requests are still settling. Storage remains locked.")
                 self.thread.join(5)
                 if self.thread.is_alive(): raise Refused("Authority shutdown needs attention.")
                 self.server = self.thread = None
