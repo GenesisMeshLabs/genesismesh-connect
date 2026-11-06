@@ -13,6 +13,7 @@ import socket
 import time
 import threading
 import requests
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -495,6 +496,87 @@ class EmbeddedOwnerTests(unittest.TestCase):
         reopened = self.owner()
         self.assertEqual(reopened.open(), identity)
         self.assertTrue(reopened.check_member())
+
+    def test_process_exit_after_staged_fsync_recovers_authenticated_core_outcome(self):
+        owner = self.owner(); identity = owner.create("Post-fsync crash recovery")
+        expires = owner.certificate.expires_at; owner.close()
+        original = {name: (self.root / name).read_bytes() for name in ("owner.sealed", "member.sealed", "state.json")}
+        child = r'''
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+from test_embedded_owner import TestVault, EmbeddedOwner, required_core_version, core_time
+from datetime import datetime
+import state_storage
+data=json.load(sys.stdin)
+vault=TestVault(); vault.keys={k:bytes.fromhex(v) for k,v in data['keys'].items()}
+owner=EmbeddedOwner(sys.argv[2], vault, required_core_version())
+with core_time(datetime.fromisoformat(data['at'])):
+    owner.open()
+    write=owner.storage._write; fsync=state_storage.os.fsync; writing_ready=[False]
+    def staged(name, content, *, replace):
+        writing_ready[0]=(name=='state.json' and replace)
+        return write(name, content, replace=replace)
+    def crash(descriptor):
+        fsync(descriptor)
+        if writing_ready[0]: os._exit(73)
+    owner.storage._write=staged
+    state_storage.os.fsync=crash
+    owner.renew_member()
+os._exit(74)
+'''
+        at = expires + timedelta(minutes=6)
+        result = subprocess.run([sys.executable, "-c", child, str(Path(__file__).parent), str(self.root)],
+            input=json.dumps({"keys":{k:v.hex() for k,v in self.vault.keys.items()}, "at":at.isoformat()}),
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 73, "Child must terminate at the actual post-fsync boundary")
+        self.assertEqual((self.root / "state.json").read_bytes(), original["state.json"])
+        staged, = self.root.glob(".state-*")
+        staged_bytes = staged.read_bytes()
+        self.assertTrue((self.root / "member-renewal.json").exists())
+        with core_time(at):
+            with patch("owner_adapter.NetworkAuthorityService", side_effect=AssertionError("Unrecorded staging must not start core")):
+                with self.assertRaises(Refused): self.owner().open()
+            recovered = self.owner()
+            with patch.object(recovered, "_enroll_member", side_effect=AssertionError("No enrollment replay")):
+                renewed = recovered.reconcile_member()
+            self.assertNotEqual(renewed["certificate_id"], identity["certificate_id"])
+            self.assertEqual({k:v for k,v in renewed.items() if k != "certificate_id"}, {k:v for k,v in identity.items() if k != "certificate_id"})
+            self.assertEqual(len(recovered.service.db.get_certs_by_node_key(identity["member_public_key"])), 2)
+            self.assertEqual(recovered.state["recovery_evidence"], {staged.name:hashlib.sha256(staged_bytes).hexdigest()})
+            self.assertEqual(staged.read_bytes(), staged_bytes, "Crash evidence must be retained, not discarded")
+            self.assertTrue(recovered.check_member()); recovered.close()
+            self.assertEqual(self.owner().open(), renewed)
+            self.owners[-1].close()
+            staged.write_bytes(staged_bytes + b"changed")
+            with self.assertRaisesRegex(Refused, "evidence is missing or changed"): self.owner().open()
+            staged.write_bytes(staged_bytes)
+            self.assertEqual(self.owner().open(), renewed)
+        for name in ("owner.sealed", "member.sealed"):
+            self.assertEqual((self.root / name).read_bytes(), original[name])
+        self.assertEqual(self.vault.creations, 1)
+
+    def test_unsigned_staging_is_preserved_and_never_adopted_during_reconciliation(self):
+        from genesis_mesh.models import JoinCertificate
+        owner = self.owner(); owner.create("Unknown staging refusal")
+        expires = owner.certificate.expires_at; owner.close()
+        with core_time(expires + timedelta(minutes=6)):
+            owner.open()
+            with patch.object(owner.storage, "replace_state", side_effect=OSError("Interrupted commit")):
+                with self.assertRaises(OSError): owner.renew_member()
+            rows = owner.service.db.get_certs_by_node_key(owner.identity["member_public_key"])
+            row, = [r for r in rows if r["cert_id"] != owner.certificate.cert_id]
+            certificate = JoinCertificate.model_validate_json(row["cert_json"])
+            value = {**owner.state, "revision":owner.state["revision"] + 1,
+                     "identity":owner._identity(owner.identity["instance"], owner.genesis, certificate),
+                     "certificate":certificate.model_dump(mode="json"), "state_signature":"not-a-signature"}
+            staged = self.root / ".state-badbad00"
+            content = json.dumps(value).encode(); staged.write_bytes(content)
+            owner.close()
+            recovered = self.owner()
+            with patch.object(recovered, "_enroll_member", side_effect=AssertionError("No replay")):
+                with self.assertRaisesRegex(Refused, "does not authenticate"): recovered.reconcile_member()
+            self.assertEqual(staged.read_bytes(), content)
+            self.assertTrue((self.root / "member-renewal.json").exists())
 
 
 if __name__ == "__main__": unittest.main()

@@ -83,7 +83,7 @@ availability. The full Create workflow remains disabled until those gates pass.
 Embedded owner adapter progress on 6 November 2026 (PR #22): fixed in-memory core
 initialization, signed self-enrollment, purpose-separated Android Keystore custody
 and create/open/close persistence are implemented behind the developer harness.
-Twenty-six Windows host tests pass using the real core and explicitly test-only
+Twenty-eight Windows host tests pass using the real core and explicitly test-only
 encrypted custody, including interrupted creation/key generation, missing/corrupt
 state or keys, domain swaps, erased profile with existing custody, lock contention,
 revoked/missing membership, invalid names and stable public identities. These are
@@ -98,6 +98,11 @@ cancel/retry without automatic write replay. Incomplete requests terminate;
 unsettled handlers retain keys and the exclusive state lock until safe shutdown.
 Failure to start the serving thread closes the unused listener/database and
 releases custody/state exclusivity; a genuine existing profile reopens unchanged.
+An actual child-process exit at the post-fsync/pre-replace boundary leaves a
+complete staged state and recorded core issuance. Authenticated reconciliation
+recovers that outcome without new enrollment, preserves identity keys and the
+staging file, and indexes its digest in signed local state. Ordinary open refuses
+unrecorded staging; unsigned or changed staging is refused without discarding it.
 These are hosted/host simulations, not physical elapsed-time or lifecycle tests.
 
 The first Samsung attempt passed the seven runtime checks, then was refused by

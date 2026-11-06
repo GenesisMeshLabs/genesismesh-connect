@@ -7,11 +7,13 @@ It does not extend an expired certificate or weaken the node renewal grace.
 from datetime import datetime, timedelta, timezone
 import json
 import uuid
+import hashlib
 
 from genesis_mesh.crypto import sign_data, verify_signature
 from genesis_mesh.models import JoinCertificate
 
 from state_storage import Refused, encode
+from owner_adapter import STATE_DOMAIN
 
 DOMAIN = b"GenesisMesh.Connect.EmbeddedOwner.MemberRecovery.v1\0"
 
@@ -36,6 +38,29 @@ def _clear(owner):
     owner.storage.path("member-renewal.json").unlink()
     owner.storage.sync()
     owner.renewal_pending = False
+
+
+def _staged_evidence(owner, certificate):
+    staged = owner.storage.check_files(allow_renewal=True)
+    recorded = dict(owner.state.get("recovery_evidence", {}))
+    unrecorded = owner.storage.check_evidence(recorded, staged, allow_unrecorded=True)
+    identity = owner._identity(owner.identity["instance"], owner.genesis, certificate)
+    allowed = {"schema", "revision", "identity", "certificate", "owner_sha256", "member_sha256", "state_signature", "recovery_evidence"}
+    for name in unrecorded:
+        content = owner.storage.read_staged(name)
+        value = json.loads(content)
+        body = {k:v for k,v in value.items() if k != "state_signature"}
+        if (not set(value) <= allowed or type(value.get("schema")) is not int or value["schema"] != 2 or value.get("identity") != identity
+                or type(value.get("revision")) is not int
+                or value["revision"] not in (owner.state["revision"], owner.state["revision"] + 1)
+                or value.get("owner_sha256") != owner.state["owner_sha256"]
+                or value.get("member_sha256") != owner.state["member_sha256"]
+                or JoinCertificate.model_validate(value["certificate"]) != certificate
+                or not verify_signature(STATE_DOMAIN + encode(body), value.get("state_signature", ""), _public(owner.keys["operator"]))):
+            raise Refused("Staged state does not authenticate the recorded core outcome. Existing evidence was preserved.")
+        owner.storage.check_evidence(value.get("recovery_evidence", {}), staged, allow_unrecorded=True)
+        recorded[name] = hashlib.sha256(content).hexdigest()
+    return recorded
 
 
 def renew(owner):
@@ -83,10 +108,11 @@ def reconcile(owner):
             if len(candidates) != 1:
                 raise Refused("No single completed enrollment was found. Review the pending operation; it was not repeated.")
             certificate = candidates[0]
-            if owner.certificate.cert_id != certificate.cert_id:
-                if owner.certificate.cert_id != intent["previous"]:
+            evidence = _staged_evidence(owner, certificate)
+            if owner.certificate.cert_id != certificate.cert_id or evidence != owner.state.get("recovery_evidence", {}):
+                if owner.certificate.cert_id not in (intent["previous"], certificate.cert_id):
                     raise Refused("The pending member recovery does not match current state.")
-                owner._commit_certificate(certificate, require_current=False)
+                owner._commit_certificate(certificate, require_current=False, recovery_evidence=evidence)
             _clear(owner)
             return dict(owner.identity)
         except Exception:
@@ -102,6 +128,8 @@ def cancel(owner):
             owner._open(allow_renewal=True)
             if not owner.renewal_pending: raise Refused("There is no pending member recovery.")
             intent = _intent(owner)
+            staged = owner.storage.check_files(allow_renewal=True)
+            owner.storage.check_evidence(owner.state.get("recovery_evidence", {}), staged)
             rows = owner.service.db.get_certs_by_node_key(_public(owner.member))
             if any(row["cert_id"] not in intent["baseline"] for row in rows):
                 raise Refused("Core recorded an enrollment outcome. Reconcile or review it instead of discarding it.")

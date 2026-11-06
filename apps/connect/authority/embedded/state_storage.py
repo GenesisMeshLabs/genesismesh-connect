@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+import hashlib
+import re
 
 
 class Refused(RuntimeError):
@@ -81,7 +83,14 @@ class StateStorage:
             Path(pending).unlink(missing_ok=True)
 
     def read(self, name, limit=65536):
-        path = self.path(name)
+        return self._read(self.path(name), limit)
+
+    def read_staged(self, name):
+        if not isinstance(name, str) or not re.fullmatch(r"\.state-[a-z0-9_]{8}", name):
+            raise Refused("Unknown authority staging file.")
+        return self._read(self.directory / name, 65536)
+
+    def _read(self, path, limit):
         if path.is_symlink():
             raise Refused("Authority storage links are not permitted.")
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -99,8 +108,28 @@ class StateStorage:
         allowed = {".authority-lock", "state.json", "owner.sealed", "member.sealed",
                    "authority.db", "authority.db-wal", "authority.db-shm", "authority.db-journal"}
         if allow_renewal: allowed.add("member-renewal.json")
-        if any(p.name not in allowed or p.is_symlink() or not p.is_file() for p in self.directory.iterdir()):
-            raise Refused("Authority setup was interrupted or storage needs attention. Existing identity was preserved.")
+        staged = []
+        for path in self.directory.iterdir():
+            if path.is_symlink() or not path.is_file(): raise Refused("Authority storage links or non-files are not permitted.")
+            if path.name in allowed: continue
+            if not re.fullmatch(r"\.state-[a-z0-9_]{8}", path.name) or len(staged) >= 8:
+                raise Refused("Authority setup was interrupted or storage needs attention. Existing identity was preserved.")
+            self.read_staged(path.name)  # Read-only bounded inventory, not permission to adopt or discard.
+            staged.append(path.name)
+        return staged
+
+    def check_evidence(self, recorded, staged, *, allow_unrecorded=False):
+        if not isinstance(recorded, dict) or len(recorded) > 8:
+            raise Refused("Invalid authority recovery evidence index.")
+        for name, digest in recorded.items():
+            if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+                raise Refused("Invalid authority recovery evidence digest.")
+            if name not in staged or hashlib.sha256(self.read_staged(name)).hexdigest() != digest:
+                raise Refused("Authenticated authority recovery evidence is missing or changed.")
+        unrecorded = sorted(set(staged) - set(recorded))
+        if unrecorded and not allow_unrecorded:
+            raise Refused("Interrupted authority staging needs authenticated recovery.")
+        return unrecorded
 
 
 def encode(value):

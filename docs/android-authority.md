@@ -51,6 +51,16 @@ expired outcome can be recorded without granting expired access. Cancellation
 is explicit and permitted only when core has no enrollment outcome. These local
 intent signatures are not independent core audit evidence.
 
+An actual process exit after a staged ready-state fsync can leave a `.state-*`
+file. Ordinary open refuses unrecorded staging. Explicit member reconciliation
+accepts only bounded regular staging records with the existing operator's valid
+application signature, matching immutable key records and identities, and the
+single genuine core enrollment outcome. Recovered staging remains in place as
+content-addressed evidence indexed by the newly signed committed state. Unknown,
+unsigned, changed or ambiguous evidence is preserved and refused, never silently
+removed or treated as an arbitrary allowed file. Initial setup without committed
+state and complete snapshot/device-loss recovery remain separate gates.
+
 Loopback serving has bounded connections and socket reads. Shutdown closes input,
 waits a bounded time for handlers to settle, and retains custody/state exclusivity
 if a handler has not finished. It never closes the database or releases its state

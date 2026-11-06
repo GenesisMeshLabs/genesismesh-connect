@@ -115,7 +115,7 @@ class EmbeddedOwner:
             self.vault.ready()
             self.storage.acquire()
             try:
-                self.storage.check_files(allow_renewal=allow_renewal)
+                staged = self.storage.check_files(allow_renewal=allow_renewal)
                 state_bytes = self.storage.read("state.json")
                 state = json.loads(state_bytes)
                 if type(state["schema"]) is not int or state["schema"] != 2:
@@ -135,6 +135,7 @@ class EmbeddedOwner:
                 signed = {k: v for k, v in state.items() if k != "state_signature"}
                 if not verify_signature(STATE_DOMAIN + encode(signed), state["state_signature"], public(self.keys["operator"])):
                     raise Refused("The authority state signature is invalid.")
+                self.storage.check_evidence(state.get("recovery_evidence", {}), staged, allow_unrecorded=allow_renewal)
                 genesis = GenesisBlock.model_validate(payload["genesis"])
                 policy = PolicyManifest.model_validate(payload["policy"])
                 certificate = JoinCertificate.model_validate(state["certificate"])
@@ -194,11 +195,12 @@ class EmbeddedOwner:
             "validity_hours": 24, "timestamp": datetime.now(timezone.utc).isoformat(), "nonce": str(uuid.uuid4())}, self.member)
         return JoinCertificate.model_validate(self._post("/join", body))
 
-    def _commit_certificate(self, certificate, *, create=False, require_current=True):
+    def _commit_certificate(self, certificate, *, create=False, require_current=True, recovery_evidence=None):
         self._verify(self.genesis, self.policy, certificate, require_current=require_current)
         identity = self._identity(self.identity["instance"], self.genesis, certificate)
         state = {**self.state, "identity": identity, "certificate": certificate.model_dump(mode="json")}
         state.pop("state_signature", None)
+        if recovery_evidence is not None: state["recovery_evidence"] = dict(recovery_evidence)
         if not create: state["revision"] += 1
         state["state_signature"] = sign_data(STATE_DOMAIN + encode(state), self.keys["operator"])
         self.service.db.conn.execute("PRAGMA wal_checkpoint(FULL)")
