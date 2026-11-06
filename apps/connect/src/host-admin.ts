@@ -1,5 +1,6 @@
 import {invoke} from "@tauri-apps/api/core";
 import {el} from "./ui";
+import {AdminMutations,AdminPresentationSession} from "./host-admin-lifecycle";
 import {adminActionNames,adminDate,adminOutcomeText,adminOutcomeDetail,hostAdminProblem,canConfirmAdmin,parseAdminReference,permissionName,
   type AdminAction,type AdminEntry,type AdminOutcome,type AdminReference,type AdminReview,type AdminStatus} from "./host-admin-state";
 
@@ -7,13 +8,44 @@ export function setupHostAdministration() {
   const dialog=el<HTMLDialogElement>("host-admin-dialog");
   let status:AdminStatus|null=null, review:AdminReview|null=null, outcome:AdminOutcome|null=null;
   let pending:AdminReference|null=null, busy=false, storageProblem=false;
+  const presentation=new AdminPresentationSession(), mutations=new AdminMutations();
+  const current=(token:number)=>dialog.open&&presentation.current(token);
   const storageKey=(scope:string)=>`connect.host-admin.check.v1.${scope}`;
   function problem(message:string) {el("host-admin-problem").textContent=message;el("host-admin-problem").hidden=!message;}
-  function saveReference(value:AdminReference|null) {
-    const scope=status?.view?.scope;if(!scope)return;
+  function saveReference(scope:string,value:AdminReference|null) {
     try {if(value)localStorage.setItem(storageKey(scope),JSON.stringify(value));else localStorage.removeItem(storageKey(scope));}
     catch {storageProblem=true;}
   }
+  function syncMutation(scope:string) {
+    let record=mutations.get(scope);
+    if(!record) {
+      try {
+        const raw=localStorage.getItem(storageKey(scope)), saved=parseAdminReference(raw);
+        if(saved?.scope===scope)record=mutations.restore(saved);
+        else if(raw)storageProblem=true;
+      } catch {storageProblem=true;}
+    }
+    outcome=record?.outcome||null;
+    pending=record&&(record.inFlight||!record.outcome||record.outcome.kind==="uncertain")?record.reference:null;
+  }
+  function settleMutation(reference:AdminReference,value:AdminOutcome,expectedRevision?:number) {
+    if(!mutations.settle(reference,value,expectedRevision))return;
+    const record=mutations.get(reference.scope)!;
+    saveReference(reference.scope,record.inFlight||!record.outcome||record.outcome.kind==="uncertain"?reference:null);
+    // Mutation bookkeeping survives a closed session. It may update only the
+    // matching observation, never an abandoned review or another host's view.
+    if(dialog.open&&status?.view?.scope===reference.scope&&pending?.review_id===reference.review_id) {
+      syncMutation(reference.scope);render();
+    }
+  }
+  function invalidatePresentation() {
+    presentation.close();busy=false;review=null;status=null;outcome=null;pending=null;
+  }
+  function close() {invalidatePresentation();if(dialog.open)dialog.close();}
+  function open() {
+    invalidatePresentation();presentation.open();problem("");if(!dialog.open)dialog.showModal();void load();
+  }
+  function restart() {invalidatePresentation();if(dialog.open){presentation.open();void load();}}
   function node<K extends keyof HTMLElementTagNameMap>(tag:K,text:string,className="") {
     const value=document.createElement(tag);value.textContent=text;value.className=className;return value;
   }
@@ -78,52 +110,49 @@ export function setupHostAdministration() {
     el("host-admin-storage-note").hidden=!storageProblem;
   }
   async function load() {
-    if(busy)return;busy=true;problem("");render();
+    const token=presentation.token();if(!current(token)||busy)return;busy=true;problem("");render();
     try {
       const next=await invoke<AdminStatus>("host_admin_status");
+      if(!current(token))return;
       const scope=next.view?.scope;
       const priorScope=status?.view?.scope||pending?.scope||review?.reference.scope;
       if(scope && priorScope && scope!==priorScope) {review=null;pending=null;if(outcome?.kind==="confirmed")outcome=null;}
       status=next;
-      if(scope&&!pending) {
-        try {
-          const raw=localStorage.getItem(storageKey(scope));
-          pending=parseAdminReference(raw);
-          if(raw&&!pending)storageProblem=true;
-        } catch {storageProblem=true;}
-      }
-    } catch(error) {status=null;problem(hostAdminProblem(error));}
-    finally {busy=false;render();}
+      if(scope)syncMutation(scope);
+    } catch(error) {if(current(token)){status=null;problem(hostAdminProblem(error));}}
+    finally {if(current(token)){busy=false;render();}}
   }
   async function prepare(action:AdminAction,enrollment_id:string|null=null) {
-    if(busy||pending)return;busy=true;problem("");outcome=null;render();
-    try {review=await invoke<AdminReview>("host_admin_review",{query:{action,enrollment_id}});}
-    catch {problem("This request changed, expired, or could not be checked. Refresh the current requests before reviewing again. No change was sent.");}
-    finally {busy=false;render();if(review){dialog.scrollTop=0;const heading=el("host-admin-review-title");heading.tabIndex=-1;heading.focus({preventScroll:true});}}
+    const token=presentation.token();if(!current(token)||busy||pending)return;busy=true;problem("");outcome=null;render();
+    try {const next=await invoke<AdminReview>("host_admin_review",{query:{action,enrollment_id}});if(current(token))review=next;}
+    catch {if(current(token))problem("This request changed, expired, or could not be checked. Refresh the current requests before reviewing again. No change was sent.");}
+    finally {if(current(token)){busy=false;render();if(review){dialog.scrollTop=0;const heading=el("host-admin-review-title");heading.tabIndex=-1;heading.focus({preventScroll:true});}}}
   }
   async function commit() {
-    if(busy||!canConfirmAdmin(status,review,pending)||!review)return;
-    const reference=review.reference;pending=reference;saveReference(reference);busy=true;problem("");render();
+    const token=presentation.token();if(!current(token)||busy||!canConfirmAdmin(status,review,pending)||!review)return;
+    const reference=review.reference;
+    mutations.begin(reference);pending=reference;saveReference(reference.scope,reference);busy=true;problem("");render();
     try {
-      outcome=await invoke<AdminOutcome>("host_admin_commit",{reference});
-      if(outcome.kind!=="uncertain"){pending=null;saveReference(null);}
-    } catch {outcome={reference,kind:"uncertain",observed:null,detail:"The reply was not received. Check status; the change will not be sent again automatically."};}
-    finally {review=null;busy=false;render();}
-    await load();
+      const value=await invoke<AdminOutcome>("host_admin_commit",{reference});settleMutation(reference,value);
+    } catch {settleMutation(reference,{reference,kind:"uncertain",observed:null,detail:"The reply was not received. Check status; the change will not be sent again automatically."});}
+    finally {if(current(token)){review=null;busy=false;syncMutation(reference.scope);render();}}
+    if(current(token))await load();
   }
   async function check() {
-    if(busy||!pending)return;const reference=pending;busy=true;problem("");render();
+    const token=presentation.token();if(!current(token)||busy||!pending)return;
+    const reference=pending, revision=mutations.restore(reference).revision;busy=true;problem("");render();
     try {
-      outcome=await invoke<AdminOutcome>("host_admin_check",{reference});
-      if(outcome.kind!=="uncertain"){pending=null;saveReference(null);}
-    } catch {problem("Couldn’t confirm the saved change in this network. Keep the original network open and check status again. No change was resent.");}
-    finally {busy=false;render();}
-    await load();
+      const value=await invoke<AdminOutcome>("host_admin_check",{reference});if(current(token))settleMutation(reference,value,revision);
+    } catch {if(current(token))problem("Couldn’t confirm the saved change in this network. Keep the original network open and check status again. No change was resent.");}
+    finally {if(current(token)){busy=false;render();}}
+    if(current(token))await load();
   }
-  el("host-admin-open").addEventListener("click",()=>{review=null;outcome=null;dialog.showModal();void load();});
-  el("host-admin-close").addEventListener("click",()=>dialog.close());
-  el("host-admin-refresh").addEventListener("click",()=>{review=null;void load();});
-  el("host-admin-back").addEventListener("click",()=>{review=null;render();void load();});
+  el("host-admin-open").addEventListener("click",open);
+  el("host-admin-close").addEventListener("click",close);
+  dialog.addEventListener("cancel",invalidatePresentation);
+  dialog.addEventListener("close",()=>{if(!dialog.open)invalidatePresentation();});
+  el("host-admin-refresh").addEventListener("click",restart);
+  el("host-admin-back").addEventListener("click",restart);
   el("host-admin-enable").addEventListener("click",()=>void prepare("enable"));
   el("host-admin-confirm").addEventListener("click",()=>void commit());
   el("host-admin-check").addEventListener("click",()=>void check());
@@ -131,5 +160,5 @@ export function setupHostAdministration() {
     el("host-admin-review-expired").hidden=Date.now()<Date.parse(review.expires_at);
     el<HTMLButtonElement>("host-admin-confirm").disabled=busy||!canConfirmAdmin(status,review,pending);
   }},1000);
-  return {close:()=>dialog.close()};
+  return {close};
 }

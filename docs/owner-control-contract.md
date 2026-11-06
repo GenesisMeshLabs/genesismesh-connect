@@ -54,6 +54,16 @@ state, not proof of which UI click caused it. Changed/expired context and cancel
 or unavailable confirmation are refused before dispatch; a lost or uncertain
 dispatch reply offers Check status and never automatic resubmission.
 
+Closing the dialog, pressing Escape or leaving Devices invalidates its presentation
+session. Abandoned status, review and readback replies (including their busy-state
+cleanup) cannot restore a review or replace a reopened view. Submitted mutations
+remain tracked separately by host scope and exact reference: closing preserves
+their bookmark and eventual outcome, without replay. A newer explicit state
+observation takes presentation precedence over an older submission reply; both
+results remain tracked while the app is running. The bookmark remains until any
+in-flight submission finishes and its state is resolved. Reloaded bookmarks offer
+readback only, not a new commit.
+
 The host app uses the existing owner → device lock order and a nonblocking busy
 response while another operation owns them. Local review is desktop/owner only;
 member/mobile and unqualified external authority paths remain unavailable.

@@ -99,6 +99,11 @@ Confirmed current state, a refused change and uncertainty have separate messages
 After interruption, checking status observes the same enrollment/digest in the
 same host/network and never repeats the change. Matching state is not attributed
 to a particular click, and missing retained records stay unconfirmed.
+Dialog close, Escape and navigation now fence abandoned asynchronous reviews,
+loads and readbacks. Reopening loads fresh state without waiting for an old
+presentation. Already-submitted changes retain their scoped bookmark and eventual
+outcome independently; status checking never resends them. Delayed browser
+fixtures cover these lifecycle cases separately from native/device acceptance.
 
 **Production administration mutations remain gated.** No native user-presence
 provider has been qualified for this app. A DOM confirmation, OS-store reopening,
