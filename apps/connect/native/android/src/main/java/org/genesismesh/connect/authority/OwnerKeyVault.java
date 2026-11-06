@@ -153,6 +153,22 @@ public final class OwnerKeyVault {
         return rootAuthorization == null ? "unavailable" : rootAuthorization.status();
     }
 
+    /** Fixed-alias policy metadata for the isolated developer qualification report. */
+    public synchronized String rootPolicyMetadata() {
+        org.json.JSONObject result = new org.json.JSONObject();
+        try {
+            result.put("readiness", readiness());
+            ready();
+            if (!keys.containsAlias(ROOT)) return result.put("present", false).toString();
+            SecretKey root = (SecretKey) keys.getKey(ROOT, null);
+            KeyInfo info = (KeyInfo) SecretKeyFactory.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+                .getKeySpec(root, KeyInfo.class);
+            return result.put("present", true).put("authentication_required", info.isUserAuthenticationRequired())
+                .put("validity_seconds", info.getUserAuthenticationValidityDurationSeconds())
+                .put("authenticator_types", info.getUserAuthenticationType()).toString();
+        } catch (Exception ignored) { return "{\"status\":\"unavailable\"}"; }
+    }
+
     public synchronized byte[] seal_root(String instance, byte[] value) throws Exception { return seal(ROOT, "Root", instance, value); }
     // Native ceremony primitive only; no root-export or generic signing IPC exists.
     public synchronized byte[] open_root(String instance, byte[] value) throws Exception { return open(ROOT, "Root", instance, value); }
