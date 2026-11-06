@@ -48,7 +48,8 @@ public final class AuthorityCheckActivity extends Activity {
                         new OwnerKeyVault(getApplicationContext())).toString());
                     report.put("owner_check", owner);
                     if (!"passed".equals(owner.optString("status"))) {
-                        report.put("status", "failed").put("stage", owner.optString("stage", "Owner custody"));
+                        report.put("status", "blocked".equals(owner.optString("status")) ? "blocked" : "failed")
+                            .put("stage", owner.optString("stage", "Owner custody"));
                     }
                 }
                 report.put("source_commit", BuildConfig.SOURCE_COMMIT);
@@ -101,6 +102,12 @@ public final class AuthorityCheckActivity extends Activity {
         if (!passed) text.append("\nCheck: ").append(report.optString("stage", "startup")).append("\n");
         JSONObject owner = report.optJSONObject("owner_check");
         if (owner != null) {
+            if ("secure_screen_lock_required".equals(owner.optString("readiness"))) {
+                text.append("\nThis owner profile requires a PIN, password or pattern on the phone. ")
+                    .append("Set one locally in Settings, then reopen this check.\n");
+            } else if ("device_unlock_required".equals(owner.optString("readiness"))) {
+                text.append("\nUnlock this phone, then reopen this check.\n");
+            }
             JSONArray ownerChecks = owner.optJSONArray("checks");
             if (ownerChecks != null) for (int i = 0; i < ownerChecks.length(); i++) {
                 text.append(ownerChecks.optJSONObject(i).optString("name")).append(": Passed\n");
