@@ -405,3 +405,36 @@ browser, embedded-core/QUIC and unperformed app/physical gates. The focused CI
 workflow explicitly selects the display/coordinator and browser files; no hosted
 run, device operation or full-app build retry was performed. Phone-local hosting
 remains required, and optional NAS/server hosting stays optional.
+
+## PR 24 interruption follow-up — 6 November 2026
+
+The ordinary pairing protocol retains its already approved, freshly verified
+host route before final confirmation, so a lost final reply no longer leaves an
+enrolled device without a reconnect path. The ceremony still returns an error;
+the route is not proof of original completion. Default-feature restart coverage
+requires the same key/certificate, no new invitation/enrollment and refusal after
+revocation. Qualified exact-completion recovery remains separate.
+
+Foreground owner Open accepts a changed certificate ID only after the same
+pinned root/network/member passes current signed authority trust. The checkpoint
+is then updated; no renewal or enrollment is replayed. Finishing setup requires
+that verification. Real-core fixtures cover persisted renewal and refusal of
+revoked, tampered and another node's valid certificate.
+
+Expired Requests reviews may be explicitly archived locally only when the
+durable record shows they were never submitted. History remains and another
+command requires a separate explicit review. Dispatch expiry is unchanged;
+submitted uncertainty cannot use this path. The display explains that an unsent
+archive was never sent rather than describing a checked host result.
+
+The existing owner-app branch and committed second-device helper are retained.
+These are local source/disposable-core tests, not new app/physical acceptance;
+public Create and production administrative authentication gates remain as they
+were. No device, security, publication or full-app build operation is implied.
+
+See the [follow-up validation record](evidence/pr24-continuity-2026-11-06.json)
+for selected checks and separate app/physical/hosted gates.
+
+Validation: 55 selected source/disposable-core/frontend checks passed, plus
+TypeScript, scoped Rust formatting, focused workflow lint, contract and whitespace
+checks. Hosted CI, full-app/workspace and physical acceptance were not rerun.

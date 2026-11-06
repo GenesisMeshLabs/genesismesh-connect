@@ -38,7 +38,7 @@ async fn interrupted(
     };
     drop(joining);
     assert!(member.status()?.certificate_id.is_some());
-    assert!(member.status()?.paired_device.is_none());
+    assert_eq!(member.status()?.paired_device.is_none(), recoverable);
     if committed {
         owner.device.commit_local_pairing(&target, joined).await?;
     } else {
@@ -59,7 +59,7 @@ async fn interrupted(
     let member = DeviceController::open(&root.join("candidate"))?;
     assert_eq!(member.status()?.node_public_key, before.node_public_key);
     assert_eq!(member.status()?.certificate_id, before.certificate_id);
-    assert!(member.status()?.paired_device.is_none());
+    assert_eq!(member.status()?.paired_device.is_none(), recoverable);
     Ok((owner, member))
 }
 fn readbacks(
@@ -197,6 +197,10 @@ async fn legacy_pairing_without_original_reference_is_not_recoverable_from_match
     let root = dir.path();
     let (owner, mut member) = interrupted(root, false, true).await?;
     let expected = counts(root);
+    let saved_route = member
+        .status()?
+        .paired_device
+        .context("Missing legacy reconnect route")?;
     let (owner, task) = readbacks(owner);
     let error = member.inspect_pairing_completion().await.unwrap_err();
     assert!(
@@ -204,7 +208,7 @@ async fn legacy_pairing_without_original_reference_is_not_recoverable_from_match
         "{error:#}"
     );
     assert!(member.finish_pairing_completion().await.is_err());
-    assert!(member.status()?.paired_device.is_none());
+    assert_eq!(member.status()?.paired_device, Some(saved_route));
     assert_eq!(counts(root), expected);
     close(owner, task, &mut member).await;
     Ok(())

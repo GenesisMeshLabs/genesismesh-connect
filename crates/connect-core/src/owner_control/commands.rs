@@ -167,7 +167,9 @@ impl State {
                             && record.serial == 0
                             && record.last_observed.is_none()
                             && record.retained_outcome.is_none()))
-                    && (!record.archived || record.submitted)
+                    && (!record.archived
+                        || record.submitted
+                        || self.high_water >= record.command.intent.expires_at)
                     && (index + 1 == self.records.len() || record.archived),
                 "Invalid or ambiguous command history"
             );
@@ -190,6 +192,7 @@ impl State {
             ensure!(
                 record.retained_outcome.as_ref().is_none_or(terminal)
                     && (!record.archived
+                        || !record.submitted
                         || (record.last_observed.as_ref().is_some_and(terminal)
                             && record.last_observed == record.retained_outcome)),
                 "Uncertain commands cannot be archived"
@@ -433,16 +436,20 @@ impl ClientCommands {
         self.observed = true;
         self.view()
     }
-    /// Explicit local retirement only after this call's fresh terminal readback.
+    /// Explicit local retirement of an expired never-submitted review, or after
+    /// this call's fresh terminal readback for a submitted operation.
     /// History remains; another operation needs another separate native review.
     pub fn archive(&mut self, digest: &str, now: DateTime<Utc>) -> Result<ClientCommandView> {
         self.clock(now)?;
         let record = self.record()?;
         ensure!(
-            self.observed
+            !record.archived
                 && record.digest == digest
-                && record.last_observed.as_ref().is_some_and(terminal),
-            "Uncertain or historical command outcomes cannot be retired"
+                && ((!record.submitted && now >= record.command.intent.expires_at)
+                    || (record.submitted
+                        && self.observed
+                        && record.last_observed.as_ref().is_some_and(terminal))),
+            "Retire only the exact expired unsent review or a freshly confirmed submitted result"
         );
         self.state
             .records
@@ -758,6 +765,74 @@ mod tests {
             ClientCommands::open(&path, &binding, true, now).is_err(),
             "Lost initialized history must not be recreated"
         );
+        Ok(())
+    }
+    #[cfg(feature = "owner-requests-qualification")]
+    #[test]
+    fn expired_unsent_review_archives_locally_and_preserves_history_without_dispatch() -> Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("commands.json");
+        let (binding, grant, command, now) = fixture(OwnerAction::ListPairing)?;
+        let mut workflow = ClientCommands::open(&path, &binding, true, now)?;
+        let review = workflow.retain(grant.clone(), command.clone(), now)?;
+        assert!(workflow.archive(&review.digest, now).is_err());
+        let expired = command.intent.expires_at;
+        assert!(workflow.reserve(Some(&review.digest), expired).is_err());
+        assert!(workflow.reserve(None, expired).is_err());
+        assert!(workflow.archive("different-review", expired).is_err());
+        drop(workflow);
+        let mut workflow = ClientCommands::open(&path, &binding, false, expired)?;
+        let archived = workflow.archive(&review.digest, expired)?;
+        assert_eq!(archived.status, ClientCommandStatus::Archived);
+        assert!(archived.current_observation.is_none());
+        assert!(archived.retained_outcome.is_none());
+        let first = &workflow.state.records[0];
+        assert!(!first.submitted && first.serial == 0);
+        assert_eq!(first.digest, review.digest);
+        assert!(workflow.reserve(Some(&review.digest), expired).is_err());
+        assert!(workflow.reserve(None, expired).is_err());
+        drop(workflow);
+        let mut workflow = ClientCommands::open(&path, &binding, false, expired)?;
+        workflow.require_new()?;
+        let mut intent = command.intent;
+        intent.nonce = uuid::Uuid::new_v4().to_string();
+        intent.created_at = expired;
+        intent.expires_at = expired + Duration::seconds(60);
+        let next = OwnerCommand::sign(intent, &SigningKey::from_bytes(&[11; 32]))?;
+        let next = workflow.retain(grant, next, expired)?;
+        assert_ne!(next.nonce, review.nonce);
+        assert_eq!(workflow.state.records.len(), 2);
+        assert!(workflow.state.records[0].archived);
+        assert!(!workflow.state.records[0].submitted);
+        assert!(matches!(
+            workflow
+                .reserve(Some(&next.digest), expired)?
+                .envelope
+                .request,
+            ControlExchange::Execute { .. }
+        ));
+        Ok(())
+    }
+    #[cfg(feature = "owner-requests-qualification")]
+    #[test]
+    fn expired_submitted_uncertainty_cannot_be_archived_as_an_unsent_review() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("commands.json");
+        let (binding, grant, command, now) = fixture(OwnerAction::ListPairing)?;
+        let expired = command.intent.expires_at;
+        let mut workflow = ClientCommands::open(&path, &binding, true, now)?;
+        let review = workflow.retain(grant, command, now)?;
+        workflow.reserve(Some(&review.digest), now)?;
+        drop(workflow);
+        let mut workflow = ClientCommands::open(&path, &binding, false, expired)?;
+        assert!(workflow.archive(&review.digest, expired).is_err());
+        assert!(workflow.require_new().is_err());
+        assert!(workflow.reserve(Some(&review.digest), expired).is_err());
+        assert!(matches!(
+            workflow.reserve(None, expired)?.envelope.request,
+            ControlExchange::Result { .. }
+        ));
         Ok(())
     }
     #[cfg(feature = "owner-requests-qualification")]

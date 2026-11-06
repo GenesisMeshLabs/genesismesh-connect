@@ -136,6 +136,25 @@ impl DeviceController {
         self.read_owner_action(None).await
     }
     pub async fn archive_owner_action(&mut self, digest: &str) -> Result<ClientCommandView> {
+        // An expired review that was never reserved cannot have reached the
+        // host. Retire it locally, even when the original grant/host is offline.
+        // Submitted uncertainty always takes the existing authenticated path.
+        commands_qualified()?;
+        {
+            let binding = CommandBinding {
+                profile_id: self.vault.storage_id().into(),
+                enrollment: self.enrollment_binding()?,
+            };
+            let mut saved = ClientCommands::open(
+                &self.state_directory.join(CLIENT_COMMAND_FILE),
+                &binding,
+                false,
+                Utc::now(),
+            )?;
+            if saved.view()?.status == ClientCommandStatus::Reviewed {
+                return saved.archive(digest, Utc::now());
+            }
+        }
         self.read_owner_action(Some(digest)).await
     }
     async fn read_owner_action(&mut self, archive: Option<&str>) -> Result<ClientCommandView> {

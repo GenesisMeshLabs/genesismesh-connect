@@ -11,6 +11,8 @@ mod admin_enrollment;
 mod enrollment_display;
 mod requests_display;
 pub use requests_display::*;
+#[cfg(all(test, target_os = "linux"))]
+mod foreground_reopen_tests;
 pub mod pairing_completion;
 mod pairing_flow;
 pub use enrollment_display::*;
@@ -175,6 +177,26 @@ impl DeviceController {
         self.vault.save_authority(authority)?;
         self.authority = Some(client);
         Ok(())
+    }
+    /// Check an already saved local credential against current signed authority
+    /// trust without renewing, enrolling, or replacing the device identity.
+    pub(crate) async fn verify_owned_membership(&mut self) -> Result<()> {
+        ensure!(
+            self.bridge_client.is_none(),
+            "Use the locally owned authority"
+        );
+        let trust = self
+            .authority
+            .as_ref()
+            .context("Missing local authority")?
+            .refresh(&mut self.trust)
+            .await?;
+        let device = self.device.as_ref().context("Missing saved membership")?;
+        trust.renewable_certificate(
+            device.certificate(),
+            &device.public_key(),
+            chrono::Utc::now(),
+        )
     }
     /// Atomically install the initial profile. The caller chooses its private
     /// application data parent, not a peer-supplied filesystem path.

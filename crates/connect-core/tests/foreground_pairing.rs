@@ -224,7 +224,7 @@ async fn core_revocation_during_join_is_rechecked_before_trusting_or_confirming_
 
 #[tokio::test]
 #[ignore = "Requires the disposable pinned-core foreground fixture"]
-async fn unobserved_final_reply_keeps_enrollment_but_does_not_claim_pairing_or_repeat_it()
+async fn ordinary_lost_final_reply_retains_reconnect_route_without_claiming_confirmation_or_reenrolling()
 -> Result<()> {
     let dir = tempfile::tempdir()?;
     let root = dir.path();
@@ -237,18 +237,43 @@ async fn unobserved_final_reply_keeps_enrollment_but_does_not_claim_pairing_or_r
         .device
         .issue_local_pairing(&mut owner.runtime, &target)?;
     let issued = grant(client.grant().await?)?;
+    assert!(
+        issued.completion.is_none(),
+        "This exercises the ordinary protocol without recovery support"
+    );
     let mut joining = Box::pin(member.complete_approved_pairing(&mut client, &card, issued));
     let joined = tokio::select! {
         result=joined(completion)=>result?,
         result=&mut joining=> { result?; anyhow::bail!("Pairing completed before host verification") }
     };
-    drop(joining); // Application loses the completion response, not its saved credential.
+    pair.close().await; // Lose the final channel before the host confirms.
+    let outcome = tokio::time::timeout(Duration::from_secs(5), joining).await?;
+    assert!(
+        outcome.is_err(),
+        "A lost final reply must never report success"
+    );
     assert!(member.status()?.certificate_id.is_some());
     assert!(
-        member.status()?.paired_device.is_none(),
-        "Do not persist a confirmed pair before observing confirmation"
+        member.status()?.paired_device.is_some(),
+        "The ordinary protocol needs the approved host route to reconnect without reenrollment"
     );
-    owner.device.commit_local_pairing(&target, joined).await?;
+    // The host can retain its verified relationship, but cannot deliver its
+    // final confirmation over the closed ceremony channel.
+    assert!(
+        owner
+            .device
+            .commit_local_pairing(&target, joined)
+            .await
+            .is_err()
+    );
+    assert!(
+        owner
+            .device
+            .status()?
+            .devices
+            .iter()
+            .any(|p| p.node == target.node)
+    );
     stop(&mut owner, &mut member, &pair, &client).await;
     let before = member.status()?;
     drop(member);
@@ -257,6 +282,25 @@ async fn unobserved_final_reply_keeps_enrollment_but_does_not_claim_pairing_or_r
     assert_eq!(before.certificate_id, member.status()?.certificate_id);
     assert!(member.request_pairing(card, "Retry".into()).await.is_err());
     assert!(member.enroll_host("must-not-be-used").await.is_err());
+    owner.device.start(&before.node_public_key).await?;
+    member.reconnect_saved().await?;
+    let host_ticket = ticket(
+        owner
+            .device
+            .status()?
+            .ticket
+            .context("Missing host ticket")?,
+    )?;
+    member
+        .send(&host_ticket, "Reconnect after an unobserved final reply")
+        .await?;
+    owner.runtime.remove_device(&before.node_public_key)?;
+    assert!(
+        member.refresh().await.is_err(),
+        "The saved route grants no access after core revocation"
+    );
+    member.stop().await;
+    owner.device.stop().await;
     assert_eq!(calls(root, "invite"), 2);
     assert_eq!(core_calls(root, "/join"), baseline + 1);
     Ok(())

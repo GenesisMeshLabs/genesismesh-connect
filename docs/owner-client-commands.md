@@ -54,8 +54,13 @@ and retained host record remain valid; missing/pruned records do not permit repl
 ## Explicit retirement and storage limits
 
 `archive_owner_action` is a separate explicit local action. It freshly checks the
-same operation and current grant before retiring a terminal result. It never
-retires uncertainty or creates another command. History remains in the journal;
+same operation and current grant before retiring a submitted terminal result.
+An expired review that the durable journal proves was never reserved/submitted
+may instead be retired locally, without contacting the host or requiring the old
+grant to remain active. Its exact digest, original signed command and unsent
+state remain in history; no host result is invented. Live unsent reviews, wrong
+digests and submitted uncertainty do not qualify for that path. It never
+retires submitted uncertainty or creates another command. History remains in the journal;
 only a separate subsequent review can begin the next operation.
 
 The bounded private journal holds up to 32 operations and 256 KiB, uses exclusive
