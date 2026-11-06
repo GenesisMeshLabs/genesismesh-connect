@@ -231,11 +231,14 @@
                 <div id="access-choices">
                 <p id="access-description">Choose who can use this item. You’ll review the change before it is saved.</p>
                 <fieldset><legend>Allowed devices</legend><div id="access-devices"></div></fieldset>
-                <label for="access-expiry">Access expires</label><input id="access-expiry" type="datetime-local" /><p class="home-muted">Leave empty for ongoing access. Times use this device’s time zone.</p>
-                <details><summary>Limits and additional rules</summary>
-                  <label for="access-size">Maximum bytes per file or service connection</label><select id="access-size"><option value="9007199254740991">No extra size limit</option><option value="10485760">10 MB</option><option value="104857600">100 MB</option><option value="1073741824">1 GB</option><option value="10737418240">10 GB</option></select>
-                  <div id="access-duration-field"><label for="access-duration">Maximum service session</label><select id="access-duration"><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="3600">1 hour</option></select></div>
-                  <label for="access-extra">Additional Genesis Mesh gates (JSON)</label><textarea id="access-extra" rows="6" spellcheck="false"></textarea><p class="home-muted">Existing rules are preserved. The authority validates any changes. Resource and allowed-device gates are managed above.</p>
+                <label for="access-ends">Access ends</label><select id="access-ends"><option value="ongoing">When I stop sharing</option><option value="hour">In 1 hour</option><option value="tonight">Tonight at midnight</option><option value="week">In 1 week</option><option value="date">On a date I choose</option></select>
+                <div id="access-expiry-field" hidden><label for="access-expiry">Ends at</label><input id="access-expiry" type="datetime-local" /><p class="home-muted">Times use this device’s time zone.</p></div>
+                <details><summary>Limits</summary>
+                  <label for="access-size">Largest file or connection</label><select id="access-size"><option value="9007199254740991">No limit</option><option value="10485760">10 MB</option><option value="104857600">100 MB</option><option value="1073741824">1 GB</option><option value="10737418240">10 GB</option></select>
+                  <div id="access-duration-field"><label for="access-duration">Each visit can last</label><select id="access-duration"><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="3600">1 hour</option></select></div>
+                  <details><summary>Expert rules</summary>
+                    <label for="access-extra">Additional Genesis Mesh gates (JSON)</label><textarea id="access-extra" rows="6" spellcheck="false"></textarea><p class="home-muted">Existing rules are kept. Your network checks any change. Who can use the item and its end date are set above.</p>
+                  </details>
                 </details>
                 </div>
                 <section id="access-review" hidden aria-labelledby="access-review-title">

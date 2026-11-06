@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { el, input } from "./ui";
 import { isService, friendlyProblem, formatBytes, type HomeStatus, type HomeSpace } from "./home-state";
-import { accessOutcomeText, accessReviewLines, accessPrerequisiteText, needsAccessCheck, type ResourceCapabilities, type AccessPolicy, type AccessRecord, type AccessOutcome } from "./access-state";
+import { accessOutcomeText, accessReviewLines, accessPrerequisiteText, needsAccessCheck, type ResourceCapabilities, type AccessPolicy, type AccessRecord, type AccessOutcome , accessEndsAt, type AccessEnds } from "./access-state";
 export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Promise<void>, message:(s:string)=>void) {
   const dialog=el<HTMLDialogElement>("access-dialog");
   let editing:HomeSpace|null=null, policy:AccessPolicy|null=null, saving=false, originalExpiry="";
@@ -22,7 +22,7 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
     outcome=await invoke<AccessOutcome|null>("access_workflow_status",{collection:space.id,check:false});
     if(outcome?.record.stage==="conflict")outcome=null; // Settings above are freshly read.
     el("access-title").textContent=`Access to ${space.name}`;
-    el("access-version").textContent=`Policy version ${result.version} · Changes are enforced by your network authority.`;
+    el("access-version").textContent="";
     const list=el("access-devices");list.replaceChildren();
     const devices=new Map(getStatus()?.devices.map(d=>[d.id,d.name]) || []);
     // Retain existing grants even if the current member list is temporarily stale.
@@ -36,6 +36,8 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
       const date=new Date(result.expires_at);date.setMinutes(date.getMinutes()-date.getTimezoneOffset());input("access-expiry").value=date.toISOString().slice(0,16);
     } else input("access-expiry").value="";
     originalExpiry=input("access-expiry").value;
+    el<HTMLSelectElement>("access-ends").value=result.expires_at?"date":"ongoing";
+    el("access-expiry-field").hidden=!result.expires_at;
     selectCurrent("access-size",result.max_bytes,`Current limit: ${formatBytes(result.max_bytes)}`);
     selectCurrent("access-duration",result.max_seconds,`Current limit: ${result.max_seconds} seconds`);
     el("access-duration-field").hidden=!isService(space);
@@ -85,6 +87,7 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
   });
   el("access-reload").addEventListener("click",()=>{if(!saving&&editing)void access(editing).catch(e=>problem(friendlyProblem(String(e))));});
   dialog.addEventListener("cancel",e=>{if(saving)e.preventDefault();else void cancelReview().catch(()=>{});});
+  el("access-ends").addEventListener("change",()=>{el("access-expiry-field").hidden=el<HTMLSelectElement>("access-ends").value!=="date";});
   el("access-form").addEventListener("submit",async e=>{
     e.preventDefault();if(saving||prerequisite||!editing||!policy||needsAccessCheck(outcome))return;problem("");
     if(review) {
@@ -115,8 +118,12 @@ export function setupAccessEditor(getStatus:()=>HomeStatus|null, refresh:()=>Pro
     try{extra_gates=JSON.parse(input("access-extra").value);}catch{problem("Additional rules must be a valid JSON array.");return;}
     if(!Array.isArray(extra_gates)){problem("Additional rules must be a JSON array.");return;}
     let expires_at:string|null=null;
-    if(input("access-expiry").value){const date=new Date(input("access-expiry").value);if(!Number.isFinite(date.getTime())||date.getTime()<=Date.now()){problem("Choose a future expiry date.");return;}expires_at=date.toISOString();}
-    if(input("access-expiry").value===originalExpiry) expires_at=policy.expires_at;
+    const ends=el<HTMLSelectElement>("access-ends").value as AccessEnds;
+    if(ends==="date"){
+      if(!input("access-expiry").value){problem("Choose when access ends.");return;}
+      const date=new Date(input("access-expiry").value);if(!Number.isFinite(date.getTime())||date.getTime()<=Date.now()){problem("Choose a time in the future.");return;}expires_at=date.toISOString();
+      if(input("access-expiry").value===originalExpiry) expires_at=policy.expires_at;
+    } else expires_at=accessEndsAt(ends,new Date())?.toISOString()??null;
     saving=true;render();
     try {
       review=await invoke<AccessRecord>("review_access_policy",{request:{collection:editing.id,settings:{...policy,recipients,expires_at,max_bytes:Number(el<HTMLSelectElement>("access-size").value),max_seconds:Number(el<HTMLSelectElement>("access-duration").value),extra_gates}}});
