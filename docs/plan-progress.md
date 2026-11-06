@@ -80,6 +80,20 @@ availability. The full Create workflow remains disabled until those gates pass.
 
 ## Next user-visible acceptance milestones
 
+Embedded owner adapter progress on 6 November 2026 (PR #22): fixed in-memory core
+initialization, signed self-enrollment, purpose-separated Android Keystore custody
+and create/open/close persistence are implemented behind the developer harness.
+Twelve Windows host tests pass using the real core and explicitly test-only
+encrypted custody, including interrupted creation/key generation, missing/corrupt
+state or keys, domain swaps, erased profile with existing custody, lock contention,
+revoked/missing membership, invalid names and stable public identities. These are
+not Android hardware or end-user acceptance results.
+
+The first Samsung attempt passed the seven runtime checks, then was refused by
+the native device readiness guard before creating an owner network. Secure screen
+lock/unlock state is being clarified locally. Real Android create/reopen and
+process-restart identity acceptance remain pending; production Create stays off.
+
 **“Create and run my network on this Android phone.”** The independent-phone
 proof above is required alongside the optional server profile. Native dependency
 qualification and lifecycle work remain open; no unsupported Create button is

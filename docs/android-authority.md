@@ -10,6 +10,44 @@ The phone must run the unchanged pinned Python core and its genuine policy,
 membership, revocation and evidence paths. Rust/Tauri remains the client shell
 and fixed native adapter; it must not become an alternative authority engine.
 
+## Embedded owner adapter qualification
+
+`apps/connect/authority/embedded` supplies a fixed create/open/close adapter over
+the real core. It constructs and signs core GenesisBlock/PolicyManifest models
+in memory, starts NetworkAuthorityService on loopback, persists an initial
+no-service policy, and enrolls its member through signed admin invite and join
+requests. It avoids the desktop CLI's intermediate plaintext private-key files.
+No generic HTTP proxy, path selection, key export or Python console is exposed.
+
+The Android bridge in `apps/connect/native/android` uses separate non-exportable
+Keystore wrapping keys and authenticated domains for owner and member custody.
+Owner custody contains distinct root, authority and operator signing keys; it
+does not reuse the existing device/controller credential stores. This first
+owner profile requires Android API 28 or newer, an existing PIN/password/pattern,
+and an unlocked device. The existing client platform minimum and Join flow are
+unchanged. The app does not set credentials or weaken protection if unavailable.
+Android Keystore protection is not a claim of independent hardware attestation.
+
+Initialization reserves state before native key creation. Interrupted or existing
+keys/state cannot be silently replaced. Sealed records use bounded no-follow
+reads and fsynced no-replace commits under a live exclusive file lock. Reopen
+checks signatures, keys, policy, member certificate and the existing database
+before starting core; it never creates a replacement database for an old network.
+Complete snapshot rollback protection and recovery remain separate work.
+
+The isolated engine APK exercises this adapter with genuine Android Keystore.
+On first use it creates only its private qualification network; later starts
+reopen it. Within each check it closes/reopens and compares public identities,
+checks signed membership liveness and unsigned-request refusal, and checks that
+owner ciphertext fails in the member custody domain. No production Create UI
+is enabled by this harness. Physical process restart, missing/locked/corrupt key
+behavior, recovery and second-device lifecycle require separate evidence.
+
+Host tests in `test_embedded_owner.py` use the real core and a clearly test-only
+encrypted vault; these tests do not qualify Android Keystore. CI runs them against
+the single pinned core. Native build/installation and actual device acceptance
+are recorded separately in `docs/plan-progress.md`.
+
 ## Dependency gate
 
 Run from the repository root, using a Python environment with pip:
