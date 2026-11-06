@@ -268,6 +268,29 @@ class Owner:
                 "profile": "connect_managed" if enabled else "connect_restricted" if managed else "external_unverified",
                 "policy_version": settings["version"], "operations": operations}
 
+    def pairing_ready(self):
+        """Fixed local adapter prerequisite, never a remote authorization.
+
+        Only our live managed core can attest these flags. An attached service
+        needs its own authenticated capability contract before this is enabled.
+        Core still authenticates, checks the operator tier and validates roles
+        again on the actual edge invitation route.
+        """
+        runtime = self.capabilities()
+        service = self.service
+        if service is None or self.server is None:
+            raise Refused("Pairing Requests require a managed Connect authority.")
+        key_id = self.config["operator"]["key_id"]
+        public = base64.b64encode(bytes(self.operator.verify_key)).decode()
+        roles_ok, _ = service._validate_roles(["role:client"])
+        if (service.operator_key_tiers.get(key_id) != "privileged"
+                or service.operator_public_keys.get(key_id) != public
+                or service.db.is_operator_key_revoked(key_id) or not roles_ok):
+            raise Refused("The authority operator cannot administer Connect pairing.")
+        return {"schema": 1, "core_version": runtime["core_version"],
+                "pin": runtime["pin"], "transport": "local_inherited_pipe",
+                "operations": ["connect.pairing.requests.v1"]}
+
     def admin(self, path, body):
         if not self.config:
             raise Refused("Open the network first.")

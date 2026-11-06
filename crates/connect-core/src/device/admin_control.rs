@@ -10,6 +10,41 @@ use chrono::{Duration, Utc};
 use std::collections::BTreeSet;
 
 impl DeviceController {
+    fn host_control_path(&self) -> Result<(std::path::PathBuf, ControlScope)> {
+        ensure!(
+            self.network_computer(),
+            "Use Requests on the authority host"
+        );
+        Ok((
+            self.state_directory.join("owner-control.json"),
+            self.administrative_binding()?.scope,
+        ))
+    }
+    /// Explicit local enablement. No request or reopen may initialize this registry.
+    pub fn enable_owner_requests(&self) -> Result<()> {
+        let (path, scope) = self.host_control_path()?;
+        crate::owner_control::HostControl::create(&path, scope)?;
+        Ok(())
+    }
+    /// Local native review surface; never offered on the member transport.
+    pub fn open_owner_requests(&self) -> Result<crate::owner_control::HostControl> {
+        let (path, scope) = self.host_control_path()?;
+        crate::owner_control::HostControl::open(&path, scope)
+    }
+    pub async fn answer_owner_control(
+        &mut self,
+        owner: &mut crate::owner::OwnerRuntime,
+        node: &str,
+        certificate: &serde_json::Value,
+        request: crate::owner_control::ControlEnvelope,
+    ) -> Result<serde_json::Value> {
+        let mut control = self.open_owner_requests()?;
+        Ok(serde_json::to_value(
+            control
+                .answer(owner, self, node, certificate, request)
+                .await?,
+        )?)
+    }
     pub async fn owner_control_exchange(
         &mut self,
         request: &crate::owner_control::ControlEnvelope,
@@ -37,7 +72,20 @@ impl DeviceController {
             self.network_computer(),
             "This device is not the authority host"
         );
-        let trust = self.refresh_inner(false).await?;
+        // Validate against the current authority without republishing bridge
+        // credentials: republishing cancels the very QUIC request being checked.
+        // Periodic lifecycle maintenance still renews and publishes separately.
+        let trust = self
+            .authority
+            .as_ref()
+            .context("Authority host is unavailable")?
+            .refresh(&mut self.trust)
+            .await?;
+        let own = self
+            .device
+            .as_ref()
+            .context("Enroll the authority host first")?;
+        trust.certificate(own.certificate(), &own.public_key(), Utc::now())?;
         crate::owner_control::VerifiedController::from_session(
             &self.administrative_binding()?.scope,
             &trust,

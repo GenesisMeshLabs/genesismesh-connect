@@ -42,6 +42,9 @@ While the service runs:
                        Public relays, or private: local network only
   recovery NAME        Write recovery/NAME in the state directory and show its
                        key once
+  requests enable|list|approve ID DIGEST|decline ID DIGEST|revoke ID
+                       Advanced local pairing-administrator review. Approval
+                       must name the exact digest from list; never automatic.
 
 --state defaults to /var/lib/genesismesh-connect. --authority defaults to the
 genesismesh-authority runtime installed beside this program.";
@@ -195,6 +198,29 @@ pub async fn main(args: Vec<String>) -> Result<()> {
             Ok(())
         }
         "recovery" => recovery_file(&paths, options.argument("recovery file name")?).await,
+        "requests" => {
+            let value = match options
+                .arguments
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .as_slice()
+            {
+                ["enable"] => json!({"op":"requests_enable"}),
+                ["list"] => json!({"op":"requests_list"}),
+                ["approve", id, digest] => json!({"op":"requests_approve","id":id,"digest":digest}),
+                ["decline", id, digest] => json!({"op":"requests_decline","id":id,"digest":digest}),
+                ["revoke", id] => json!({"op":"requests_revoke","id":id}),
+                _ => bail!(
+                    "Use requests enable, list, approve ID DIGEST, decline ID DIGEST or revoke ID"
+                ),
+            };
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&request(&paths, value).await?)?
+            );
+            Ok(())
+        }
         "" | "help" | "--help" | "-h" => {
             println!("{USAGE}");
             Ok(())
@@ -391,7 +417,19 @@ async fn run(paths: &Paths) -> Result<()> {
 async fn answer_owner(node: Shared, mut requests: tokio::sync::mpsc::Receiver<OwnerRequest>) {
     while let Some(request) = requests.recv().await {
         let mut node = node.lock().await;
-        let result = tokio::task::block_in_place(|| node.owner.answer(request.call));
+        let result = match request.call {
+            connect_core::owner::OwnerCall::Control {
+                node: peer,
+                certificate,
+                request,
+            } => {
+                let Node { owner, device, .. } = &mut *node;
+                device
+                    .answer_owner_control(owner, &peer, &certificate, request)
+                    .await
+            }
+            call => tokio::task::block_in_place(|| node.owner.answer(call)),
+        };
         let _ = request.reply.send(result);
     }
 }
@@ -515,6 +553,45 @@ async fn handle(node: &Shared, request: Value) -> Result<Value> {
             }
             println!("Removed {name} from the network.");
             Ok(serde_json::to_value(removal)?)
+        }
+        "requests_enable" => {
+            let node = node.lock().await;
+            node.device.enable_owner_requests()?;
+            Ok(json!(true))
+        }
+        "requests_list" => {
+            let node = node.lock().await;
+            let control = node.device.open_owner_requests()?;
+            let pending = control
+                .pending_locally()
+                .into_iter()
+                .map(|p| Ok(json!({"digest":p.request.digest()?,"request":p.request})))
+                .collect::<Result<Vec<_>>>()?;
+            Ok(json!({"pending":pending,"grants":control.grants_locally()}))
+        }
+        "requests_approve" | "requests_decline" => {
+            let id = request["id"].as_str().context("Missing enrollment ID")?;
+            let digest = request["digest"]
+                .as_str()
+                .context("Missing reviewed digest")?;
+            let mut node = node.lock().await;
+            let mut control = node.device.open_owner_requests()?;
+            if request["op"] == "requests_approve" {
+                Ok(serde_json::to_value(
+                    control
+                        .approve_locally(&mut node.device, id, digest)
+                        .await?,
+                )?)
+            } else {
+                control.decline_locally(id, digest)?;
+                Ok(json!(true))
+            }
+        }
+        "requests_revoke" => {
+            let id = request["id"].as_str().context("Missing enrollment ID")?;
+            let node = node.lock().await;
+            node.device.open_owner_requests()?.revoke_locally(id)?;
+            Ok(json!(true))
         }
         "pair_begin" => {
             let name = request["name"]

@@ -1,12 +1,26 @@
-# Owner-control contract: pairing administration foundation
+# Owner-control contract: host pairing Requests
 
 `connect_core::owner_control` implements a separate, bounded administrative
-enrollment and request contract. **It is not exposed by a Tauri command, the
-member authority bridge, the node socket or the operation registry.** No phone
-has gained administrator access through this work. Native key custody and
-controller preparation are implemented; host enrollment UI, the authenticated
-owner-control wire protocol and Requests remain the next integration gates.
-The public-core administrator journey stays planned.
+enrollment and request contract. The authenticated authority bridge supplies the
+actual session node and certificate to the native `HostControl` adapter. Both
+desktop and headless host dispatch use that adapter. Ordinary membership grants
+no pairing administration. An initialized host-local registry and exact local
+approval are required; remote requests never create the registry or approve an
+administrator. Missing initialized state is preserved and refused.
+
+This is backend integration, not a completed phone-owner user journey. Native
+controller preparation and host dispatch exist, but the app does not expose
+these methods through Tauri IPC or its operation registry yet. Guided local
+enrollment review, mobile Requests UX, native user presence and physical device
+acceptance remain open. Embedded Android authority work stays isolated; this
+host adapter does not satisfy phone-hosted ownership or enable public Create.
+
+The headless host has an explicitly advanced, local Unix-socket review surface:
+`requests enable`, `requests list`, `requests approve ID DIGEST`,
+`requests decline ID DIGEST`, and `requests revoke ID`. List shows the complete
+signed enrollment intent and canonical digest. Approve requires that exact saved
+pending request and fresh member verification. No corresponding remote operation
+exists. Desktop enable/review remains a native API pending its guided UX.
 
 ## Three independent prerequisites
 
@@ -24,15 +38,19 @@ The public-core administrator journey stays planned.
    enroll or revoke another administrator.
 
 An enrollment review expires within two minutes. A requested grant lasts at most
-30 days; local revocation takes effect at the next reservation. The initial
+30 days; local revocation takes effect at the next dispatch or result readback. The initial
 allowlist contains only listing, approving and rejecting pairing requests.
 It cannot replace a root, issue arbitrary attestations, change network-wide
 policy, run a command or provide generic HTTP access.
 
 These are **Connect host delegations**, not core operator keys, role attestations
-or independently signed authority capabilities. The eventual fixed adapter
-still needs the host's real core operator and operation-specific role/key-tier
-checks. A second tap by the same owner is not independent approval.
+or independently signed authority capabilities. Before each pairing operation,
+the fixed inherited-pipe adapter checks its actual pinned managed core, operator
+public key, privileged key tier, operator revocation and allowed invitation role.
+An attached external authority is refused because its feature contract has not
+been qualified. The actual edge invitation still passes core's signed admin
+route and its independent tier/role checks. No operator credential crosses QUIC.
+A second tap by the same owner is not independent approval.
 
 ## Exact requests and durable replay refusal
 
@@ -85,8 +103,8 @@ envelopes larger than 16 KiB.
 
 `VerifiedController::from_session` takes the host's trusted scope, fresh local
 trust snapshot and the certificate/node from the authenticated session. It is
-not deserializable. Its context expires after five seconds; the future adapter
-must refresh membership and reconstruct this context for **every dispatch**.
+not deserializable. Its context expires after five seconds; the host adapter
+refreshes membership and reconstructs this context for **every dispatch**.
 The primitive validates freshness according to the supplied host trust policy;
 it does not itself fetch the latest authority state or authenticate a socket.
 Two device clocks must agree on the command window; future-dated requests are
@@ -100,12 +118,36 @@ request cannot be submitted again after restart, even if the reply was lost.
 Recording that a reply was observed does not permit replay or prove that the
 candidate completed enrollment.
 
-The fixed adapter must hold the exclusive host store through its final live
-target/core checks and immediate dispatch. Before issuing an invitation or
-rejecting a request it must call `OwnerAction::require_pending` against the
-current `PairHost` request under the same pairing lock. A matching signature is
-not sufficient when the pending request has changed or vanished. Root custody,
-new member invitations and enrollment completion remain separate facts.
+`HostControl` holds the exclusive host store through final live target/core
+checks and dispatch. `PairHost::control_dispatch` holds its pairing mutex across
+exact request validation, current host trust checks, the fixed core readiness
+check, invitation issuance and delivery/rejection. It checks expiry and device
+disconnect again after the core call. No invitation is issued against a different
+pending request. A matching signature is insufficient when the request vanished.
+The adapter rebuilds the controller context from a fresh authority refresh before
+every exchange and again immediately before dispatch. The five-second context,
+signed command window and active grant are checked inside the gate.
+
+Approval persists `Started` after delivery and waits for enrollment, an
+authenticated round trip bound to the exact candidate node, fresh controller
+membership/grant checks, and durable local relationship storage before final
+confirmation and `Approved`. `Approved` describes this host's completed checks;
+it is not proof that a human viewed the reply. Failure or process interruption
+leaves a consumed nonce with an unconfirmed/started result. No automatic invite
+reissue or execution retry occurs. Rejection and listing save exact results.
+
+The outer native host/device locks serialize an exchange, including the bounded
+80-second enrollment wait. Other Requests can time out or be busy meanwhile;
+they must read a saved result rather than replay execution. Result readback
+is also required when candidate preparation changes the host peer set: the
+existing bridge deliberately fences connections on that change, so an execution
+reply can be lost while the independently queued native adapter continues.
+Current-membership verification itself fetches trust without republishing bridge
+credentials, preserving read-only Requests connections. Result readback
+rechecks current membership and the original grant, permission and device binding,
+even after the command's dispatch window ends. Expired/revoked administrators
+cannot use readback to inspect a saved pairing target. Unknown/pruned results
+are refused; neither response permits redispatch.
 
 ## Persistence and recovery limits
 
@@ -121,7 +163,7 @@ Capacity exhaustion refuses new activity rather than evicting active replay
 protection. Expired reservations can be pruned because their signed validity
 window and the timestamp high-water mark still prevent reuse. This replay ledger
 is **not** a complete, indefinitely retained operation history. Grant-history
-compaction, operation-specific uncertain-result reconciliation and owner-control
+compaction, deeper uncertain-result reconciliation and owner-control
 Activity integration remain future work.
 
 The trusted native application directory and OS account are the storage
@@ -140,11 +182,17 @@ fresh peer context, strict envelopes, exact current pairing target, replay after
 restart, clock rollback after pruning, concurrent writers, corruption/loss,
 oversized storage, links, capacity and persistence failure.
 
-The real-core fixture creates a disposable authority, uses the same registered
+The membership fixture creates a disposable authority, uses the same registered
 edge-host enrollment as guided Connect devices, and verifies that a genuine
 member still needs local administrative enrollment. A real core revocation then
 prevents rebuilding its current controller context despite a retained grant.
-This is membership/revocation qualification, **not remote pairing dispatch**.
+The separate `owner_requests_authority` fixture exercises the actual host adapter
+over mutually authenticated QUIC: explicit opt-in, pending submission/status,
+local decline/approval, ordinary-member denial, lost-reply durable readback,
+duplicate execution refusal, expired commands, stale targets, rejection, real
+candidate enrollment/final proof, grant revocation and current core CRL refusal.
+Portable tests cover grant expiration, exact mutex scope, suspended hosts and
+core readiness refusals. Fixture evidence is not physical phone acceptance.
 
 Linux qualification now includes the real isolated native store, typed native
 controller signing with a disposable real authority, restart, recovery-export
@@ -159,9 +207,7 @@ compiled/installed/tested anew for this slice. The prior Windows Application
 Control blocker remains unresolved. No new browser or physical-device acceptance
 is claimed for these native-only changes.
 
-Before exposure: authenticate and bind the owner transport separately;
-add explicit local enrollment/revocation UX; enforce final core readiness and
-target checks in fixed app/node adapters; retain durable enrollment/dispatch
-recovery; then implement Requests with plain scope, approval and uncertainty.
-Qualify real core/QUIC negative cases, native user presence, lock/suspend and
+Before app exposure: add explicit local enrollment/revocation UX and the client
+Requests workflow with plain scope, approval and uncertainty. Qualify native user
+presence, lock/suspend, recovery after every product interruption point, and
 physical platforms. No new Windows, Mac, iOS or Android installation is claimed.

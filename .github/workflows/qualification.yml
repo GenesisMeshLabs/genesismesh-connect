@@ -111,7 +111,7 @@ jobs:
         run: |
           bash scripts/verify-linux-store.sh test -p connect-core --lib device:: --locked -- --ignored --nocapture
       - name: Real authority, QUIC, access and owner-control integration
-        run: bash scripts/verify-linux-store.sh test -p connect-core --test live_authority --test access_workflow_authority --test owner_control_authority --locked -- --ignored --nocapture
+        run: bash scripts/verify-linux-store.sh test -p connect-core --test live_authority --test access_workflow_authority --test owner_control_authority --test owner_requests_authority --locked -- --ignored --nocapture
       - name: Build standalone authority from installed pinned wheel
         run: python apps/connect/authority/build.py
       - name: Standalone runtime, recovery and prerequisites

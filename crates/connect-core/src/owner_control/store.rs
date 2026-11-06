@@ -274,6 +274,49 @@ impl ControlStore {
     pub fn grants(&self) -> &[Grant] {
         &self.state.grants
     }
+    pub(super) fn check_peer(&self, peer: &VerifiedController, now: DateTime<Utc>) -> Result<()> {
+        self.clock(now)?;
+        peer.require(&self.state.scope, &peer.node, now)
+    }
+    /// Readback never dispatches. Revalidate the original grant and permission,
+    /// even when the signed execution window has passed or its reply was lost.
+    pub fn checked_result(
+        &self,
+        peer: &VerifiedController,
+        nonce: &str,
+        digest: &str,
+        now: DateTime<Utc>,
+    ) -> Result<ControlResult> {
+        self.check_peer(peer, now)?;
+        let used = self
+            .state
+            .used
+            .iter()
+            .find(|r| {
+                r.command.intent.nonce == nonce
+                    && r.digest == digest
+                    && r.command.intent.controller_node == peer.node
+            })
+            .context("Request result is not retained for this device")?;
+        let grant = self
+            .state
+            .grants
+            .iter()
+            .find(|g| g.enrollment.intent.id == used.command.intent.grant_id)
+            .context("Administrative enrollment is missing")?;
+        ensure!(
+            grant.revoked_at.is_none()
+                && now >= grant.approved_at
+                && now < grant.enrollment.intent.grant_expires_at
+                && grant
+                    .enrollment
+                    .intent
+                    .permissions
+                    .contains(&used.command.intent.action.permission()),
+            "Administrative access expired or was revoked"
+        );
+        Ok(used.result.clone().unwrap_or(ControlResult::Unconfirmed))
+    }
 
     pub fn pending_enrollments(&self, now: DateTime<Utc>) -> Vec<PendingEnrollment> {
         self.state
