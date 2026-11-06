@@ -84,6 +84,33 @@ impl Network {
     pub(crate) async fn new(root: &Path, lost: bool) -> Result<Self> {
         let (mut owner, _) = owner(root).await?;
         let member = pair(&mut owner, &root.join("candidate"), lost).await?;
+        let mut network = Self::serve(owner, member);
+        if lost {
+            let before = network.member.status()?;
+            let invites = support::calls(root, "invite");
+            let joins = support::core_calls(root, "/join");
+            network.member.inspect_pairing_completion().await?;
+            assert!(network.member.status()?.paired_device.is_none());
+            network.member.finish_pairing_completion().await?;
+            assert_eq!(
+                before.certificate_id,
+                network.member.status()?.certificate_id
+            );
+            assert_eq!(support::calls(root, "invite"), invites);
+            assert_eq!(support::core_calls(root, "/join"), joins);
+            network.member.reconnect_saved().await?;
+        }
+        Ok(network)
+    }
+    /// A network with a second, independent member, both paired before the
+    /// owner starts serving bridge requests.
+    pub(crate) async fn with_second(root: &Path, path: &Path) -> Result<(Self, DeviceController)> {
+        let (mut owner, _) = owner(root).await?;
+        let member = pair(&mut owner, &root.join("candidate"), false).await?;
+        let second = pair(&mut owner, path, false).await?;
+        Ok((Self::serve(owner, member), second))
+    }
+    fn serve(mut owner: ForegroundNetwork, member: DeviceController) -> Self {
         let (send, mut receive) = tokio::sync::mpsc::channel::<OwnerRequest>(8);
         owner.device.serve_owner(send);
         let host = Arc::new(Mutex::new(owner));
@@ -108,32 +135,26 @@ impl Network {
                 let _ = request.reply.send(result);
             }
         });
-        let mut network = Self {
+        Self {
             host,
             worker,
             member,
-        };
-        if lost {
-            let before = network.member.status()?;
-            let invites = support::calls(root, "invite");
-            let joins = support::core_calls(root, "/join");
-            network.member.inspect_pairing_completion().await?;
-            assert!(network.member.status()?.paired_device.is_none());
-            network.member.finish_pairing_completion().await?;
-            assert_eq!(
-                before.certificate_id,
-                network.member.status()?.certificate_id
-            );
-            assert_eq!(support::calls(root, "invite"), invites);
-            assert_eq!(support::core_calls(root, "/join"), joins);
-            network.member.reconnect_saved().await?;
         }
-        Ok(network)
     }
     pub(crate) async fn host_folder(&self, directory: &Path, name: &str) -> Result<ShareConfig> {
+        let recipient = self.member.status()?.node_public_key;
+        self.host_folder_for(directory, name, &recipient).await
+    }
+    /// Share a folder from the owner with exactly one recipient.
+    pub(crate) async fn host_folder_for(
+        &self,
+        directory: &Path,
+        name: &str,
+        recipient: &str,
+    ) -> Result<ShareConfig> {
         let mut host = self.host.lock().await;
         let node = host.device.status()?.node_public_key;
-        let recipient = self.member.status()?.node_public_key;
+        let recipient = recipient.to_owned();
         let space = host.runtime.space_share(
             &node,
             &uuid::Uuid::new_v4().to_string(),

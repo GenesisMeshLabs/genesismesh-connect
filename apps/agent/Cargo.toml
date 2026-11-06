@@ -1,0 +1,14 @@
+[package]
+name = "genesismesh-connect-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "An AI agent's own identity on a Genesis Mesh Connect network, served to its tools over MCP"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+connect-core = { path = "../../crates/connect-core" }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "io-std"] }
+uuid = { version = "1", features = ["v4"] }

@@ -1917,6 +1917,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "genesismesh-connect-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "connect-core",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "genesismesh-connect-node"
 version = "0.1.0"
 dependencies = [
