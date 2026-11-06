@@ -126,7 +126,11 @@ jobs:
         run: python -m unittest -v test_embedded_owner
       - name: Native device and key lifecycle with private Secret Service
         run: |
-          bash scripts/verify-linux-store.sh test -p connect-core --lib device:: --locked -- --ignored --nocapture
+          bash scripts/verify-linux-store.sh test -p connect-core --lib device:: --locked -- --ignored --nocapture --skip device::foreground_reopen_tests
+      # These fixtures switch their process to the sealed store, a process-wide
+      # setting, so they never share a process with the Secret Service tests.
+      - name: Owner reopen fixtures in their own process
+        run: cargo test -p connect-core --lib device::foreground_reopen_tests --locked -- --ignored
       - name: Real authority, QUIC, access and owner-control integration
         run: bash scripts/verify-linux-store.sh test -p connect-core --test live_authority --test access_workflow_authority --test owner_control_authority --test owner_requests_authority --test owner_admin_authority --locked -- --ignored --nocapture
       - name: Build standalone authority from installed pinned wheel
