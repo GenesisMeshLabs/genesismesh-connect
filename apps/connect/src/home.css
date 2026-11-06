@@ -286,7 +286,8 @@
 }
 .device-row > div,
 .space-row > div {
-  flex: 1;
+  flex: 1 1 12rem;
+  min-width: 0;
 }
 .device-row h2,
 .device-row p,
@@ -619,7 +620,8 @@
 .library-filters button[aria-pressed=true] { background: #c8ed9d; color: #142014; border-color: #c8ed9d; }
 .space-row.home-card { margin: 0; padding: 18px 20px; }
 .space-row > div { min-width: 0; }
-.space-row h2, .device-row h2 { overflow-wrap: anywhere; }
+/* Break a long name only where a word cannot fit, never inside short words. */
+.space-row h2, .device-row h2 { overflow-wrap: break-word; }
 .resource-kind { display: block; text-transform: uppercase; letter-spacing: .06em; font-size: .64rem; color: #b3cf9d; margin-bottom: 7px; }
 .resource-options { position: relative; margin-left: auto; }
 .resource-options summary, .device-options summary { cursor: pointer; padding: 12px 8px; min-height: 44px; color: #c8d4c8; font-size: .8rem; }

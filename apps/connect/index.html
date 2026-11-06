@@ -154,11 +154,12 @@
         </section>
         <section id="joining-screen" class="home-card setup-card" hidden>
           <p class="home-eyebrow">ONE MORE STEP</p>
-          <h1>Meet on your computer.</h1>
+          <h1>Waiting for the network owner.</h1>
           <p id="joining-progress" role="status">Waiting for approval…</p>
+          <strong id="joining-code" class="approval-code" hidden></strong>
           <p class="home-muted">
-            Keep Connect open on both devices. Compare the six-digit code before
-            choosing Allow.
+            Keep Connect open on both devices. The owner checks that this code
+            matches the one on their screen.
           </p>
         </section>
         <div id="workspace" hidden>
@@ -203,7 +204,7 @@
               <p id="library-count" class="home-muted" role="status"></p>
               <div id="library-no-matches" class="home-empty" hidden><h2>Nothing here yet</h2><p id="library-empty-hint"></p><button id="clear-library-filters" class="secondary">Show all shared items</button></div>
             </div>
-            <dialog id="share-dialog" class="share-dialog">
+            <dialog id="share-dialog" class="share-dialog" aria-labelledby="share-title">
               <form id="share-form">
                 <div class="share-heading"><h2 id="share-title">What would you like to share?</h2><button type="button" id="share-close" class="text-button" aria-label="Close sharing">Close</button></div>
                 <p id="share-intro">Choose something from this device, then who can use it.</p>
@@ -224,7 +225,7 @@
               </form>
             </dialog>
             <section id="open-services" class="home-card" hidden><h2>Open connections</h2><p class="home-muted">Available to apps on this device for up to one hour. Close a connection when finished.</p><div id="open-service-list"></div></section>
-            <dialog id="access-dialog" class="share-dialog">
+            <dialog id="access-dialog" class="share-dialog" aria-labelledby="access-title">
               <form id="access-form">
                 <div class="share-heading"><h2 id="access-title">Manage access</h2><button id="access-close" type="button" class="text-button">Close</button></div>
                 <div id="access-choices">
@@ -387,7 +388,7 @@
             <p id="activity-problem" role="alert" hidden></p><p id="activity-loading" role="status" hidden>Loading saved activity…</p>
             <div id="activity-empty" class="home-empty" hidden><h2 id="activity-empty-title">Your access changes will appear here</h2><p id="activity-empty-text">When you review or change access to a shared item, Connect keeps a local record here.</p></div>
             <ol id="activity-list-main" class="access-activity-list"></ol><button id="activity-more" class="secondary" hidden>Load older changes</button>
-            <dialog id="activity-detail" class="share-dialog">
+            <dialog id="activity-detail" class="share-dialog" aria-labelledby="activity-detail-title">
               <div class="share-heading"><h2 id="activity-detail-title">Access record</h2><button id="activity-detail-close" class="text-button" type="button">Close</button></div>
               <h3 id="activity-detail-status"></h3><p id="activity-detail-explanation"></p>
               <p id="activity-detail-recovery" class="home-muted"></p>
@@ -832,9 +833,9 @@
                 />
                 <div class="peer-save-row">
                   <div>
-                    <label for="peer-name">Name you'll recognize</label
+                    <label for="advanced-peer-name">Name you'll recognize</label
                     ><input
-                      id="peer-name"
+                      id="advanced-peer-name"
                       maxlength="64"
                       placeholder="Home desktop, NAS, work laptop…"
                     />
@@ -1213,7 +1214,7 @@ Your verified text preview will appear here.</pre>
               </select>
             </div>
             <section>
-              <div id="activity-empty" class="empty-state">
+              <div id="advanced-activity-empty" class="empty-state">
                 <div class="empty-symbol" aria-hidden="true">≋</div>
                 <h2>No matching technical checks yet</h2>
                 <p>

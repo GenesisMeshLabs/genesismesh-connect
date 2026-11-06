@@ -101,6 +101,7 @@ async function run(button: HTMLButtonElement, action: () => Promise<void>) {
   if (busy) return;
   busy = true;
   button.disabled = true;
+  button.setAttribute("aria-busy", "true");
   const label = button.textContent;
   button.textContent = "Please wait…";
   problem("");
@@ -112,6 +113,7 @@ async function run(button: HTMLButtonElement, action: () => Promise<void>) {
   } finally {
     busy = false;
     button.disabled = false;
+    button.removeAttribute("aria-busy");
     button.textContent = label;
   }
 }
@@ -136,13 +138,19 @@ function render(status: HomeStatus) {
     show("leaving");
   } else if (next !== "welcome" || !["create-screen", "join-screen", "restore-screen"].includes(screen))
     show(next === "joining" ? "joining-screen" : next);
-  if (status.joining) text("joining-progress", status.joining);
+  if (status.joining) {
+    // The code is shown large on its own, as on the owner's screen.
+    const code = /Compare code (\d+)\./.exec(status.joining)?.[1];
+    text("joining-progress", status.joining.replace(/\s*Compare code \d+\./, ""));
+    text("joining-code", code ?? "");
+    visible("joining-code", code !== undefined);
+  }
   text("home-network", status.network || "Your private network");
   text("this-device-name", localName());
   text(
     "this-device-detail",
     status.owner
-      ? "Network computer"
+      ? "Runs your network"
       : "This device",
   );
   text("settings-network", status.network || "Your network");
@@ -155,8 +163,9 @@ function render(status: HomeStatus) {
   renderConnection(status);
   visible("recovery-card", status.owner && status.configured);
   visible("add-device-button", status.owner && status.devices.length < 32);
-  visible("host-admin-card",status.owner);
-  visible("client-admin-card",!status.owner&&status.configured);
+  // Hidden until this build can confirm administrator changes on the device.
+  visible("host-admin-card",status.owner&&status.administration===true);
+  visible("client-admin-card",!status.owner&&status.configured&&status.administration===true);
   clientAdministration.observeContext(JSON.stringify([status.activity_scope,status.devices.find(d=>d.authority_connection)?.id]),!status.owner&&status.configured);
   clientRequests.observeContext(JSON.stringify([status.activity_scope,status.devices.find(d=>d.authority_connection)?.id]),!status.owner&&status.configured);
   visible("share-button", !status.disconnected && status.devices.length > 0 && sharingChoices(status).length > 0);
@@ -253,7 +262,7 @@ function renderDevices(status: HomeStatus) {
     name.textContent = device.name;
     const detail = document.createElement("p");
     detail.textContent = device.authority_connection
-      ? "Network computer"
+      ? "Runs your network"
       : device.member
         ? "On your network"
         : "Your device";
