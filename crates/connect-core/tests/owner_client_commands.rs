@@ -666,3 +666,75 @@ async fn fresh_core_revocation_of_controller_blocks_dispatch_without_replacing_n
     f.close().await;
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "Requires disposable pinned-core foreground fixture"]
+async fn display_inspection_does_not_initialize_a_command_or_key_and_review_is_not_checkable()
+-> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    let mut f = Fixture::new(root, false).await?;
+    let key = std::fs::read(root.join("controller/administrative-key.json"))?;
+    let overview = f.member.owner_requests_overview()?;
+    assert!(overview.entry.is_none() && !overview.can_check && !overview.attention);
+    assert!(!root.join("controller/owner-commands.json").exists());
+    assert!(
+        !root
+            .join("controller/owner-commands.owner-commands-lock")
+            .exists()
+    );
+    let review = f
+        .member
+        .review_owner_action(OwnerAction::ListPairing)
+        .await?;
+    let view = f.member.owner_requests_overview()?;
+    assert_eq!(view.entry.as_ref().unwrap().nonce, review.nonce);
+    assert!(!view.can_check);
+    assert!(f.member.check_owner_requests_overview().await.is_err());
+    assert_eq!(f.observed.execute.load(Ordering::SeqCst), 0);
+    assert_eq!(f.observed.result.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        std::fs::read(root.join("controller/administrative-key.json"))?,
+        key
+    );
+    f.close().await;
+    Ok(())
+}
+#[tokio::test]
+#[ignore = "Requires disposable pinned-core foreground fixture"]
+async fn display_readback_projects_the_same_result_without_execute_and_does_not_promote_history()
+-> Result<()> {
+    use connect_core::device::RequestResultKind;
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    let mut f = Fixture::new(root, false).await?;
+    let review = f
+        .member
+        .review_owner_action(OwnerAction::ListPairing)
+        .await?;
+    f.observed.loss.store(1, Ordering::SeqCst);
+    f.member
+        .submit_owner_action(&review.digest, &mut FixturePresence::approve(&review))
+        .await?;
+    let saved = f.member.owner_requests_overview()?;
+    assert_eq!(
+        saved.entry.as_ref().unwrap().status,
+        ClientCommandStatus::Uncertain
+    );
+    assert!(saved.entry.as_ref().unwrap().current_result.is_none());
+    let checked = f.member.check_owner_requests_overview().await?;
+    assert_eq!(checked.context, saved.context);
+    let entry = checked.entry.unwrap();
+    assert_eq!(entry.nonce, review.nonce);
+    assert_eq!(entry.digest, review.digest);
+    assert_eq!(
+        entry.current_result.as_ref().unwrap().state,
+        RequestResultKind::QueueSnapshot
+    );
+    let again = f.member.owner_requests_overview()?.entry.unwrap();
+    assert!(again.current_result.is_none());
+    assert!(again.retained_result.is_some());
+    assert_eq!(f.observed.execute.load(Ordering::SeqCst), 1);
+    f.close().await;
+    Ok(())
+}

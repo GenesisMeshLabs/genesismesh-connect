@@ -381,3 +381,27 @@ optional. This library qualification does not complete app-shell, installed
 native presence, physical Requests, lifecycle, assisted or first-use acceptance.
 The completed membership inspector, pairing-completion recovery and production
 gates are preserved. No device operation or blocked full-app retry is implied.
+
+## Saved device-request story — 6 November 2026
+
+Devices now provides a read-only saved-request view: the original action, result
+at last check, retained history and one explicit Check status action. It links to
+joining permissions separately and keeps review codes/check timestamps in
+details. The display distinguishes unsent, unknown, in-progress, confirmed,
+retired, missing, damaged and unsupported states. A queue result stays a saved
+snapshot. No review, signing, Execute, archive or presence-provider IPC is added;
+production device-approval controls stay locked.
+
+The native projection derives current profile/host/network/key context and
+matches the exact saved reference around readback. Empty status checks create no
+command or administrative key. Browser lifecycle tests fence late results after
+close, Escape, navigation and network changes; errors retain historical evidence
+and untrusted names remain plain text. Phone-width layout was visually reviewed
+using a local browser fixture, with simulated native responses clearly separate
+from the real-core native checks.
+
+[Validation record](evidence/requests-display-2026-11-06.json) separates source,
+browser, embedded-core/QUIC and unperformed app/physical gates. The focused CI
+workflow explicitly selects the display/coordinator and browser files; no hosted
+run, device operation or full-app build retry was performed. Phone-local hosting
+remains required, and optional NAS/server hosting stays optional.

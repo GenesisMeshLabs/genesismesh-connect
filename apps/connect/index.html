@@ -324,8 +324,20 @@
             <section id="client-admin-card" class="home-card" hidden>
               <h2>Manage joining devices</h2>
               <p>Check this device's request to help manage who joins your network.</p>
-              <button id="client-admin-open" class="secondary">View joining permissions</button>
+              <div class="host-admin-footer"><button id="client-admin-open" class="secondary">View joining permissions</button><button id="client-requests-open" class="secondary">View saved device request</button></div>
             </section>
+            <dialog id="client-requests-dialog" class="share-dialog host-admin-dialog" aria-labelledby="client-requests-title">
+              <div class="home-page-heading"><div><p id="client-requests-network" class="home-muted"></p><h2 id="client-requests-title">Your saved device request</h2></div><button id="client-requests-close" class="secondary" aria-label="Close device request">Close</button></div>
+              <p>Check an approval, rejection or waiting-list check saved on this device.</p>
+              <section class="host-admin-notice" aria-live="polite"><h3 id="client-requests-state"></h3><p id="client-requests-description"></p><p id="client-requests-next"></p></section>
+              <p id="client-requests-problem" role="alert" hidden></p>
+              <div class="host-admin-footer"><button id="client-requests-check">Check status</button><button id="client-requests-refresh" class="secondary">Refresh this device</button><button id="client-requests-permissions" class="secondary">Joining permissions</button></div>
+              <section id="client-requests-details" class="host-admin-section" hidden>
+                <h3>Original request</h3><p id="client-requests-action"></p><dl class="host-admin-review-lines"><dt>Network host</dt><dd id="client-requests-host"></dd></dl>
+                <h3>Previously recorded</h3><p id="client-requests-history"></p><p id="client-requests-retained-at" class="home-muted"></p>
+                <details><summary>Original review and check details</summary><p id="client-requests-code-row">Code from the original review: <span id="client-requests-code"></span></p><dl class="host-admin-review-lines"><dt>Last result check</dt><dd id="client-requests-observed"></dd><dt>Joining permissions end</dt><dd id="client-requests-access-ends"></dd></dl></details>
+              </section>
+            </dialog>
             <dialog id="client-admin-dialog" class="share-dialog host-admin-dialog" aria-labelledby="client-admin-title">
               <div class="home-page-heading"><div><p id="client-admin-network" class="home-muted"></p><h2 id="client-admin-title">Manage joining devices</h2></div><button id="client-admin-close" class="secondary" aria-label="Close joining permissions">Close</button></div>
               <p>These permissions let a device help manage who joins. File and service permissions are separate.</p>

@@ -8,6 +8,7 @@ mod activity;
 #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
 mod android_owner;
 mod client_admin;
+mod client_requests;
 mod consumer;
 mod desktop;
 mod downloads;
@@ -122,6 +123,8 @@ pub fn run() {
             host_admin::host_admin_check,
             client_admin::client_admin_status,
             client_admin::client_admin_check,
+            client_requests::client_requests_status,
+            client_requests::client_requests_check,
             workflow::network_create,
             workflow::network_attach,
             workflow::recovery_create,

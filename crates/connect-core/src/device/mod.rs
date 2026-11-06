@@ -9,6 +9,8 @@ mod admin_commands;
 mod admin_control;
 mod admin_enrollment;
 mod enrollment_display;
+mod requests_display;
+pub use requests_display::*;
 pub mod pairing_completion;
 mod pairing_flow;
 pub use enrollment_display::*;

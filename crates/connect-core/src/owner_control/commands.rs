@@ -219,6 +219,12 @@ pub(crate) struct ClientCommands {
     observed: bool,
 }
 impl ClientCommands {
+    pub(crate) fn initialized(path: &Path) -> Result<bool> {
+        check_path(path)?;
+        let marker = path.with_extension("owner-commands-lock");
+        check_path(&marker)?;
+        Ok(path.try_exists()? || marker.try_exists()?)
+    }
     pub fn open(
         path: &Path,
         binding: &CommandBinding,

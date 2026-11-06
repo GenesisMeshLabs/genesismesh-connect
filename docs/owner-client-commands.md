@@ -86,3 +86,36 @@ The independent phone-local authority remains a requirement. This coordinator
 uses the same authority-host boundary; it introduces no mandatory Windows,
 NAS/server or hosted service. The membership inspector and pairing-completion
 recovery are separate and unchanged.
+
+## Read-only saved device-request view
+
+Devices now has a **View saved device request** entry. The view explains the
+original action, the last confirmed result and a safe next step. **Check status**
+reads only the original operation; it cannot approve/reject again, sign a new
+command, retire work or replace device identity. Joining permissions has its own
+next destination. Original review codes and timestamps are kept in details.
+
+The app receives a small native projection: an internal matching reference,
+context digest, human action/candidate, current host-record observation and
+clearly separate retained history. No keys, signed commands, grants, paths or
+endpoint details cross this display IPC. Local inspection does not initialize
+an empty command workflow or administrative key. Default builds report the
+capability unavailable before opening qualified command/key state.
+
+A confirmed queue result is described as a saved snapshot. Earlier success stays
+history on reopen, interruption, host/grant failure or an unconfirmed readback.
+Responses for a different profile/host/key context, original operation, candidate
+or code cannot replace the current screen. Close, Escape, navigation and network
+changes fence abandoned loads and checks.
+
+Only two fixed, no-input read-only handlers are registered:
+`client_requests_status` and `client_requests_check`. There is no new mutation,
+signing, presence-provider, Execute or archive IPC. Sending device approvals
+remains gated. Source/browser fixtures exercise the actual component against
+explicit simulated native replies; separate disposable embedded-core/QUIC
+fixtures qualify the native projection/readback. Neither demonstrates installed
+Tauri app, native device authentication or physical phone acceptance.
+
+See [display validation](evidence/requests-display-2026-11-06.json). The focused
+workflow selects these exact source tests and browser files, without dispatching
+broad or excluded startup-failure qualification.

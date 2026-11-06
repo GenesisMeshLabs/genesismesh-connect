@@ -80,9 +80,43 @@ jobs:
         run: |
           cargo +1.98.0 test -p connect-core --lib session::sharing::service::tests --locked
           CONNECT_FOREGROUND_FIXTURE_PYTHON="$(command -v python)" cargo +1.98.0 test -p connect-core --features pairing-completion-recovery --test foreground_resources --locked -- --ignored
+      - name: Saved Requests display projection and default-off inspection
+        run: |
+          cargo +1.98.0 test -p connect-core --lib device::requests_display::tests --locked
+          cargo +1.98.0 test -p connect-core --test requests_display --locked
       - name: Durable phone Requests commands (source and disposable core only)
         run: |
           cargo +1.98.0 test -p connect-core --test client_enrollment --test owner_control --locked
           cargo +1.98.0 test -p connect-core --lib owner_control::commands::tests --locked
           cargo +1.98.0 test -p connect-core --features owner-requests-qualification --lib owner_control::commands::tests --locked
           CONNECT_FOREGROUND_FIXTURE_PYTHON="$(command -v python)" cargo +1.98.0 test -p connect-core --features owner-requests-qualification,pairing-completion-recovery --test owner_client_commands --locked -- --ignored
+
+  saved-requests-ui:
+    name: Saved Requests source/browser fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/connect
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.0.1
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/connect/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: node --experimental-strip-types --test tests/client-requests-state.test.ts tests/client-admin-state.test.ts tests/host-admin-lifecycle.test.ts
+      - run: npx vite build
+      - name: Explicit browser fixtures only (simulated native replies)
+        run: |
+          google-chrome --version
+          npx playwright test client-requests.spec.ts client-admin.spec.ts --workers=2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: Saved-Requests-browser-fixtures-${{ github.sha }}
+          path: apps/connect/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
