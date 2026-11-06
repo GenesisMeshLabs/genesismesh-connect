@@ -82,6 +82,8 @@ enum Operation {
     ResourceCapabilities,
     OwnerControl,
     PairingCompletion,
+    /// A saved device asks the owner for access, in its own words.
+    AskAccess,
 }
 
 /// A Space as a device learns it from its network computer: another device's
@@ -176,6 +178,11 @@ struct AccessRequest {
     settings: Option<crate::owner::AccessPolicy>,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AskAccessRequest {
+    text: String,
+}
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct UnshareSpaceRequest {

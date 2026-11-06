@@ -6,6 +6,7 @@ import {
   formatBytes,
   folderCrumbs,
   friendlyProblem,
+  newAsks,
   connectionSummary,
   spaceSummary,
   sendSummary,
@@ -139,3 +140,12 @@ test("formats large transfer sizes without overflowing GB labels", () => {
   assert.equal(formatBytes(1024 ** 4), "1.0 TB");
   assert.equal(formatBytes(1024 ** 5), "1.0 PB");
 });
+
+test("only requests not seen before are announced", () => {
+  const ask = (id: string) => ({ id, node: `node-${id}`, name: `Agent ${id}`, text: "Tax papers", at: "2026-11-07T00:00:00Z" });
+  assert.deepEqual(newAsks(undefined, [ask("a")]).map((a) => a.id), ["a"]);
+  assert.deepEqual(newAsks([ask("a")], [ask("a"), ask("b")]).map((a) => a.id), ["b"]);
+  assert.deepEqual(newAsks([ask("a"), ask("b")], [ask("b")]), []);
+  assert.deepEqual(newAsks([ask("a")], undefined), []);
+});
+

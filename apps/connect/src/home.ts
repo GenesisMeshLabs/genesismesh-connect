@@ -22,6 +22,7 @@ import {
   spaceSummary,
   sendSummary,
   filesEmptyText,
+  newAsks,
   type HomeSpace,
   type HomeStatus,
   type FilePage,
@@ -117,11 +118,51 @@ async function run(button: HTMLButtonElement, action: () => Promise<void>) {
     button.textContent = label;
   }
 }
+/** Requests from devices and agents, for the owner to answer. */
+function renderAsks(status: HomeStatus) {
+  const asks = status.owner ? status.asks ?? [] : [];
+  visible("asks-card", asks.length > 0);
+  const list = el("asks-list");
+  list.replaceChildren();
+  for (const ask of asks) {
+    const item = document.createElement("div");
+    item.className = "ask";
+    const who = document.createElement("strong");
+    who.textContent = `${ask.name} asks for access`;
+    const words = document.createElement("blockquote");
+    words.textContent = ask.text;
+    const share = document.createElement("button");
+    share.textContent = "Share with it";
+    share.addEventListener("click", () =>
+      sharing.shareWith(ask.node, () =>
+        void invoke("ask_close", { id: ask.id }).then(refresh),
+      ),
+    );
+    const decline = document.createElement("button");
+    decline.className = "secondary";
+    decline.textContent = "Decline";
+    decline.addEventListener("click", () =>
+      void run(decline, async () => {
+        await invoke("ask_close", { id: ask.id });
+        message(`Declined. ${ask.name} got no access.`);
+      }),
+    );
+    const row = document.createElement("div");
+    row.className = "button-row";
+    row.append(share, decline);
+    item.append(who, words, row);
+    list.append(item);
+  }
+}
 function render(status: HomeStatus) {
   const hadStatus = current !== null;
   const oldPeer = current?.peer;
   const oldDevice = current?.selected_device;
+  const arrived = status.owner ? newAsks(current?.asks, status.asks) : [];
+  if (hadStatus && arrived.length)
+    message(`${arrived[0].name} asks for access. See Requests in Devices.`);
   current = status;
+  renderAsks(status);
   activity.changed(status);
   advanced.render();
   visible("disconnected-banner", status.disconnected);
@@ -1052,7 +1093,7 @@ const hostAdministration=setupHostAdministration();
 const clientAdministration=setupClientAdministration();
 const clientRequests=setupClientRequests();
 const activity = setupActivity(()=>current,()=>currentView==="activity",refresh,message,services.access);
-setupSharing(() => current, refresh, message, sendTo);
+const sharing = setupSharing(() => current, refresh, message, sendTo);
 
 const advanced = setupAdvanced(()=>current,refresh,(view,anchor)=>{
   leaveAdvanced();selectView(view);

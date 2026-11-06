@@ -5,6 +5,9 @@ import { sharingChoices, sharingDevices, receivingChoices, type ShareKind } from
 export function setupSharing(getStatus: () => HomeStatus | null, refresh: () => Promise<void>, message: (s: string) => void, send: (space: HomeSpace) => Promise<void>) {
   const dialog = el<HTMLDialogElement>("share-dialog"), confirm = el<HTMLButtonElement>("share-confirm");
   let submitting = false, selected: ShareKind = "file";
+  // Called once when something is shared, to answer the request it came from.
+  let afterShare: (() => void) | null = null;
+  dialog.addEventListener("close", () => { afterShare = null; });
   const failure = (s: string) => { el("share-problem").textContent = s; el("share-problem").hidden = !s; };
   const captions = {service:"Share service",file:"Choose file and share",media:"Choose photos & videos",folder:"Choose folder and share",inbox:"Start receiving here",send:"Choose file and send"};
   function targets() {
@@ -34,7 +37,7 @@ export function setupSharing(getStatus: () => HomeStatus | null, refresh: () => 
     if(waiting) el("share-description").textContent="No device is ready to receive yet. On your other device, open Connect → Receive files, select this device, then tap Start receiving here. Return here and refresh receiving devices.";
     confirm.textContent=waiting?"Waiting for a receiving device":captions[kind];confirm.disabled=submitting||waiting;
   }
-  function open(kind?: ShareKind) {
+  function open(kind?: ShareKind, only?: string) {
     const status = getStatus(); if (!status || status.disconnected) return;
     failure(""); const choices = sharingChoices(status); if (!choices.length) return;
     const kinds = el("share-kinds"); kinds.replaceChildren(); kinds.hidden = kind === "inbox" || kind === "send";
@@ -49,7 +52,7 @@ export function setupSharing(getStatus: () => HomeStatus | null, refresh: () => 
       const label = document.createElement("label"), box = document.createElement("input");
       box.type="checkbox"; box.name="share-recipient"; box.value=device.id;
       box.addEventListener("change", () => failure(""));
-      box.checked = device.id === status.selected_device || status.devices.length === 1;
+      box.checked = only ? device.id === only : device.id === status.selected_device || status.devices.length === 1;
       label.append(box, document.createTextNode(device.name)); devices.append(label);
     }
     const locations=el<HTMLSelectElement>("receive-location");locations.replaceChildren();
@@ -90,15 +93,19 @@ export function setupSharing(getStatus: () => HomeStatus | null, refresh: () => 
         const kind = el<HTMLSelectElement>("service-preset").value.split(":")[0];
         const name = input("service-name").value.trim(), port = Number(input("service-port").value);
         if (!name || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Name your service and choose a port from 1 to 65535.");
-        await invoke("share_service", {name, kind, port, recipients}); dialog.close(); message("Service shared. Your selected devices can connect from Shared → Apps & services.");
+        await invoke("share_service", {name, kind, port, recipients}); const answered = afterShare; afterShare = null; answered?.(); dialog.close(); message("Service shared. Your selected devices can connect from Shared → Apps & services.");
       } else {
         const command = selected === "inbox" ? "receive_files" : selected === "folder" ? "share_folder" : "share_file";
         if(selected==="media")confirm.textContent="Preparing your photos & videos…";
         const published = await invoke<boolean>(command, {recipients, media: selected === "media", ...(selected==="inbox"?{location:el<HTMLSelectElement>("receive-location").value}:{})});
-        if (published) { dialog.close(); message(selected === "inbox" ? "Ready to receive. On another device, choose Send files and select this device." : "Shared with your selected devices. They can open it now."); }
+        if (published) { const answered = afterShare; afterShare = null; answered?.(); dialog.close(); message(selected === "inbox" ? "Ready to receive. On another device, choose Send files and select this device." : "Shared with your selected devices. They can open it now."); }
       }
       await refresh();
     } catch (error) { failure(String(error).includes("Name your service") ? String(error).replace(/^Error: /, "") : friendlyProblem(String(error))); }
     finally { submitting = false; confirm.disabled = selected==="send"&&!el<HTMLSelectElement>("share-inbox").options.length; confirm.textContent=captions[selected]; }
   });
+  return {
+    /** Open the share dialog for one device; `shared` runs once it shares. */
+    shareWith(node: string, shared: () => void) { open(undefined, node); afterShare = dialog.open ? shared : null; },
+  };
 }

@@ -173,4 +173,13 @@ impl mcp::Shared for Agent {
             "receipt": report.receipt_id,
         }))
     }
+
+    async fn ask(&mut self, text: String) -> Result<Value> {
+        self.refreshed().await?;
+        self.device.ask_access(&text).await?;
+        Ok(json!({
+            "sent": true,
+            "next": "The owner answers on their device. Anything they share with this agent appears in list_shared.",
+        }))
+    }
 }

@@ -15,6 +15,8 @@ pub trait Shared {
     async fn list(&mut self) -> Result<Value>;
     async fn browse(&mut self, space: String, folder: Vec<String>) -> Result<Value>;
     async fn read(&mut self, space: String, name: String) -> Result<Value>;
+    /// Ask the network's owner for access, in the agent's own words.
+    async fn ask(&mut self, text: String) -> Result<Value>;
 }
 
 fn tools() -> Value {
@@ -47,6 +49,18 @@ fn tools() -> Value {
                     "name": {"type": "string", "description": "The file's name in the space, as browse lists it."}
                 },
                 "required": ["space", "name"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "ask_for_access",
+            "description": "Ask the network's owner for access: say what you need and why, in up to 280 characters. The owner answers on their device; anything they share appears in list_shared.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "request": {"type": "string", "description": "What you need and why, for example: The 2025 tax receipts, to prepare the yearly summary."}
+                },
+                "required": ["request"],
                 "additionalProperties": false
             }
         }
@@ -84,6 +98,10 @@ async fn call(shared: &mut impl Shared, params: &Value) -> Value {
         Some("read_file") => match (text(arguments, "space"), text(arguments, "name")) {
             (Ok(space), Ok(name)) => shared.read(space, name).await,
             (Err(error), _) | (_, Err(error)) => Err(error),
+        },
+        Some("ask_for_access") => match text(arguments, "request") {
+            Ok(request) => shared.ask(request).await,
+            Err(error) => Err(error),
         },
         _ => Err(anyhow::anyhow!("Unknown tool")),
     };
@@ -183,6 +201,10 @@ mod tests {
             anyhow::ensure!(space == "s1", "This space is not shared with this agent");
             Ok(json!({"name": name, "text": "Total: 42"}))
         }
+        async fn ask(&mut self, text: String) -> Result<Value> {
+            self.calls.push(format!("ask {text}"));
+            Ok(json!({"sent": true}))
+        }
     }
     fn fake() -> Fake {
         Fake { calls: vec![] }
@@ -192,7 +214,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn initialize_lists_three_read_only_tools_and_answers_ping() {
+    async fn initialize_lists_the_tools_and_answers_ping() {
         let mut shared = fake();
         let init = ask(&mut shared, json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}})).await;
         assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
@@ -210,7 +232,10 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["list_shared", "browse", "read_file"]);
+        assert_eq!(
+            names,
+            ["list_shared", "browse", "read_file", "ask_for_access"]
+        );
         assert_eq!(
             ask(&mut shared, json!({"jsonrpc":"2.0","id":3,"method":"ping"})).await["result"],
             json!({})
@@ -265,13 +290,25 @@ mod tests {
         assert_eq!(missing["result"]["isError"], true);
         let unknown = ask(&mut shared, call("delete_file", json!({}))).await;
         assert_eq!(unknown["result"]["isError"], true);
+        let asked = ask(
+            &mut shared,
+            call(
+                "ask_for_access",
+                json!({"request":"The 2025 receipts, for the summary"}),
+            ),
+        )
+        .await;
+        assert!(asked["result"].get("isError").is_none());
+        let empty = ask(&mut shared, call("ask_for_access", json!({"request":""}))).await;
+        assert_eq!(empty["result"]["isError"], true);
         assert_eq!(
             shared.calls,
             [
                 "list",
                 "browse s1 2025",
                 "read s1 summary.txt",
-                "read other secret.txt"
+                "read other secret.txt",
+                "ask The 2025 receipts, for the summary"
             ]
         );
     }

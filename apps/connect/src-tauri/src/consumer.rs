@@ -16,6 +16,15 @@ fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 #[derive(Serialize)]
+pub struct HomeAsk {
+    id: String,
+    node: String,
+    /// The name the device or agent joined with.
+    name: String,
+    text: String,
+    at: String,
+}
+#[derive(Serialize)]
 pub struct HomeDevice {
     id: String,
     name: String,
@@ -61,6 +70,8 @@ pub struct HomeStatus {
     /// Whether this build can confirm administrator changes with the device's
     /// own authentication. Until it can, the administrator screens stay hidden.
     administration: bool,
+    /// Access requests waiting for this network's owner.
+    asks: Vec<HomeAsk>,
     joining: Option<String>,
     request: Option<PairRequest>,
     problem: Option<String>,
@@ -75,10 +86,29 @@ pub async fn home_status(
     desktop: tauri::State<'_, DesktopState>,
     downloads: tauri::State<'_, crate::downloads::Downloads>,
 ) -> Result<HomeStatus, String> {
-    let owner = state.slot.lock().await;
+    let mut owner = state.slot.lock().await;
     let display = desktop.display_status()?;
     let device = display.device.as_deref();
     let configured = device.as_ref().is_some_and(|d| d.certificate_id.is_some());
+    let asks = owner
+        .asks
+        .waiting_now()
+        .into_iter()
+        .map(|ask| HomeAsk {
+            name: device
+                .and_then(|d| {
+                    d.devices
+                        .iter()
+                        .chain(&d.members)
+                        .find(|p| p.node == ask.node)
+                })
+                .map_or_else(|| "A device".to_owned(), |p| p.name.clone()),
+            id: ask.id,
+            node: ask.node,
+            text: ask.text,
+            at: ask.at.to_rfc3339(),
+        })
+        .collect();
     Ok(HomeStatus {
         disconnected: device.is_some_and(|d| d.disconnected),
         can_leave: !state.directory.join("owner.json").exists()
@@ -133,6 +163,7 @@ pub async fn home_status(
         can_share: device.as_ref().is_some_and(|d| d.sharing_host),
         can_share_folder: cfg!(desktop),
         administration: false,
+        asks,
         joining: owner.joining.clone(),
         request: owner.pairing.as_ref().and_then(|p| p.pending()),
         problem: owner
@@ -881,6 +912,7 @@ pub async fn remove_device(
     .map_err(|_| "Could not remove the device")?;
     owner.runtime = Some(outcome.0);
     let (removal, spaces) = outcome.1.map_err(error)?;
+    owner.asks.forget(&id);
     let mut slot = desktop.slot.lock().await;
     let device = slot.controller.as_mut().ok_or("Device is unavailable")?;
     device.forget_device(&id).await.map_err(error)?;
@@ -912,6 +944,13 @@ pub async fn remove_device(
     if let Err(problem) = tidied {
         slot.problem = Some(problem.to_string());
     }
+    Ok(())
+}
+/// Answer an access request: it leaves the list, whether the owner shared
+/// something with the device or declined. Nothing else changes.
+#[tauri::command]
+pub async fn ask_close(id: String, state: tauri::State<'_, WorkflowState>) -> Result<(), String> {
+    state.slot.lock().await.asks.close(&id);
     Ok(())
 }
 #[tauri::command]

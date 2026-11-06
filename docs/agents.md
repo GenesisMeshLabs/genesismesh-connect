@@ -43,18 +43,33 @@ The agent's MCP server runs over stdio. In an MCP client's configuration:
 }
 ```
 
-It offers three read-only tools:
+It offers four tools; none of them changes anything on your devices:
 
 | Tool | What it does |
 | --- | --- |
 | `list_shared` | Lists the Spaces shared with this agent and who shares them. |
 | `browse` | Lists files and folders in one shared Space. |
 | `read_file` | Reads one file: text as text, other files as size and SHA-256. |
+| `ask_for_access` | Asks you for access, in the agent's words: what it needs and why. |
 
 Every call goes through the same checks as any device: the sharing device asks
 your network's authority, so the agent can read only what its Spaces allow,
 until they expire. A refusal comes back to the agent as an error it can read.
 `genesismesh-connect-agent <profile> status` shows the same view in a terminal.
+
+## When an agent asks
+
+An agent can ask you for something it cannot reach yet, for example "The 2025
+tax receipts, to prepare the yearly summary". The request appears under
+**Requests** on the Devices screen of the device that runs your network, while
+Connect is open there. A request gives the agent nothing by itself:
+
+- **Share with it** opens the share dialog with only that agent ticked. What
+  you share appears in its `list_shared`; set an end date in **Manage access**.
+- **Decline** closes the request. The agent gets no access.
+
+Each agent keeps at most one waiting request; a newer one replaces it, and an
+unanswered request is dropped after a day.
 
 ## Remove an agent
 
@@ -70,9 +85,11 @@ and DPAPI on Windows. The profile folder holds its public records only.
 
 ## Not yet
 
-- **Approving each request:** an agent's reads are allowed by the Spaces you
-  share. Approving each request on your phone, with the exact document and
+- **Approving each read:** an agent's reads are allowed by the Spaces you
+  share. Approving each read on your phone, with the exact document and
   expiry, needs the phone approval that is still being qualified.
+- **Notifications:** requests show while Connect is open on the device that
+  runs your network; there is no system notification yet.
 - **Writing:** agents read only; sending files or using shared services is not
   offered over MCP yet.
 - **Owner's view:** an agent shows as a device named as it asked to join; the

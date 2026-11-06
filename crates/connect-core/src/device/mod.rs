@@ -689,6 +689,23 @@ impl DeviceController {
         self.set_space(config.clone()).await?;
         Ok(config)
     }
+    /// Ask the network's owner for access, in this device's own words. The
+    /// owner answers on screen by sharing something with it, or declines.
+    pub async fn ask_access(&mut self, text: &str) -> Result<()> {
+        self.require_connected()?;
+        let client = self
+            .bridge_client
+            .clone()
+            .context("Ask on a device that joined through the network computer")?;
+        let identity = self
+            .device
+            .as_ref()
+            .context("Join your network first")?
+            .session_identity()?;
+        let trust = client.refresh(&mut self.trust).await?;
+        client.ask_access(identity, trust, text.to_owned()).await
+    }
+
     pub async fn share_service(
         &mut self,
         directory: std::path::PathBuf,
