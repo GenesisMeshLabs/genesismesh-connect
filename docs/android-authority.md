@@ -174,6 +174,13 @@ remain gated.
 References: [Android auth-per-use crypto](https://developer.android.com/reference/android/hardware/biometrics/BiometricPrompt.CryptoObject),
 [Keystore authentication and unlocked-device policy](https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec.Builder).
 
+Root policy qualification accepts both per-use timeout representations: `-1`
+in the public KeyInfo documentation and `0` in current Keystore2. It still
+requires authentication and the exact strong-biometric/device-credential types,
+rejects positive cached-authentication windows and binds every use to its
+own system CryptoObject prompt. See [KeyInfo](https://developer.android.com/reference/android/security/keystore/KeyInfo)
+and [AOSP Keystore2 metadata](https://github.com/aosp-mirror/platform_frameworks_base/blob/master/keystore/java/android/security/keystore2/AndroidKeyStoreSecretKeyFactorySpi.java).
+
 The embedded owner follows core's founding-key lifetime semantics: the genesis
 authority's legacy `valid_to` is informational. Its `valid_from` retains a
 five-minute clock tolerance. This does not relax successor-key lifetimes or

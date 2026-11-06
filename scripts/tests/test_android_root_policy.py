@@ -6,7 +6,7 @@ import unittest
 
 
 class RootPolicyTests(unittest.TestCase):
-    def test_native_policy_accepts_keyinfo_minus_one_not_builder_zero(self):
+    def test_native_policy_accepts_documented_and_keystore2_per_use_values(self):
         root = Path(__file__).parents[2]
         with tempfile.TemporaryDirectory() as folder:
             subprocess.run(["javac", "--release", "8", "-d", folder,
