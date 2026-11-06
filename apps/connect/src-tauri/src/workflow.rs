@@ -293,14 +293,48 @@ async fn create_phone_network(app: tauri::AppHandle, name: String) -> Result<(),
         }
     }
     let name = name.trim().to_owned();
-    let network = prepare_foreground_phone(
+    let network = match prepare_foreground_phone(
         app.clone(),
         connect_core::owner::foreground::SetupChoice::Create { name },
     )
     .await
-    .map_err(|e| e.to_string())?;
+    {
+        Ok(network) => network,
+        Err(error) => {
+            return Err(if abandon_unstarted_phone_create(&app).await {
+                "Creating your network was cancelled before anything was saved. Try again, and confirm your screen lock when your phone asks.".into()
+            } else {
+                error.to_string()
+            });
+        }
+    };
     adopt_phone_network(&app, network).await;
     Ok(())
+}
+
+/// After a failed Create, for example when the screen lock prompt was declined
+/// or timed out: when the phone kept nothing, clear the setup record so Create
+/// can simply be tried again. Anything further along stays for review.
+#[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+async fn abandon_unstarted_phone_create(app: &tauri::AppHandle) -> bool {
+    use connect_core::owner::foreground::{NativeSetupConfig, abandon_unstarted_create};
+    let app = app.clone();
+    let mut attempt = 0;
+    loop {
+        // The failed session's native owner closes on the plugin's worker first.
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let handle = app.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let config = NativeSetupConfig::new(handle.path().app_data_dir()?.canonicalize()?)?;
+            abandon_unstarted_create(crate::android_owner::prepare(&handle)?, &config)
+        })
+        .await;
+        match outcome {
+            Ok(Ok(abandoned)) => return abandoned,
+            _ if attempt < 2 => attempt += 1,
+            _ => return false,
+        }
+    }
 }
 
 /// Reopen this phone's network in the foreground. Only saved, completed work is

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from test_embedded_owner import EmbeddedOwner, TestVault, required_core_version, Refused
-from owner_adapter import public, seed
+from owner_adapter import CreationCancelled, public, seed
 
 
 class RootVault(TestVault):
@@ -27,6 +27,38 @@ class RootVault(TestVault):
 
 
 class OwnerRootTests(unittest.TestCase):
+    def test_declined_root_authentication_leaves_nothing_and_create_can_be_retried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "owner"
+            vault = RootVault(); vault.root_authorized = False
+            owner = EmbeddedOwner(path, vault, required_core_version())
+            try:
+                with self.assertRaises(CreationCancelled):
+                    owner.create("Declined root")
+                self.assertEqual({p.name for p in path.iterdir()}, {".authority-lock"})
+                self.assertFalse(vault.has_custody())
+                vault.root_authorized = True
+                identity = owner.create("Declined root")
+                self.assertEqual(identity["network_name"], "Declined root")
+                self.assertEqual(vault.creations, 2)
+                owner.close()
+                self.assertEqual(owner.open(), identity)
+            finally: owner.close()
+
+    def test_failed_creation_never_discards_custody_it_did_not_make(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "owner"
+            vault = RootVault(); vault.create()  # Custody whose state files were erased.
+            before = dict(vault.keys)
+            owner = EmbeddedOwner(path, vault, required_core_version())
+            try:
+                with self.assertRaises(Refused) as refused:
+                    owner.create("Erased profile")
+                self.assertNotIsInstance(refused.exception, CreationCancelled)
+                self.assertEqual(vault.keys, before)
+                self.assertIn("initializing.json", {p.name for p in path.iterdir()})
+            finally: owner.close()
+
     def test_root_is_separate_and_ordinary_open_never_decrypts_it(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "owner"

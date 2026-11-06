@@ -121,6 +121,22 @@ pub struct SetupView {
     pub needs_review: bool,
 }
 
+/// After a Create that failed before its authority existed, for example when
+/// the root key's authentication was declined: when the native backend holds
+/// no custody or state either, remove the setup record so the person can simply
+/// try again. Returns whether it was removed; anything further along is kept.
+pub fn abandon_unstarted_create(
+    mut runtime: OwnerRuntime,
+    config: &NativeSetupConfig,
+) -> Result<bool> {
+    let status = runtime.embedded_status()?;
+    if status.configured || status.running || config.profile().exists() {
+        return Ok(false);
+    }
+    journal::Journal::abandon_unstarted(&config.directory)?;
+    Ok(true)
+}
+
 pub struct ForegroundSetup {
     config: NativeSetupConfig,
     journal: journal::Journal,

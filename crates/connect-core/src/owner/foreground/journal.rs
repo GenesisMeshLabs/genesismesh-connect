@@ -1,4 +1,4 @@
-use super::Saved;
+use super::{Saved, SetupStage};
 use anyhow::{Context, Result, ensure};
 use std::{
     fs::{File, OpenOptions},
@@ -148,6 +148,24 @@ impl Journal {
         #[cfg(unix)]
         File::open(parent)?.sync_all()?;
         self.bytes = bytes;
+        Ok(())
+    }
+    /// Remove a Create that never reached its authority: a first-stage record
+    /// with no network or device identity, under its own exclusive lock.
+    pub(super) fn abandon_unstarted(parent: &Path) -> Result<()> {
+        let journal = Self::acquire(parent, None)?;
+        ensure!(
+            journal.saved.stage == SetupStage::AuthorityReserved
+                && journal.saved.pin.is_none()
+                && journal.saved.node.is_none(),
+            "Only a setup that never reached its authority can be removed"
+        );
+        journal.check_current()?;
+        std::fs::remove_file(&journal.path)?;
+        drop(journal);
+        std::fs::remove_file(parent.join("foreground-setup.lock"))?;
+        #[cfg(unix)]
+        File::open(parent)?.sync_all()?;
         Ok(())
     }
     pub(super) fn check_current(&self) -> Result<()> {

@@ -59,6 +59,12 @@ class TestVault:
     def seal_member(self, instance, data): return self.seal("member", instance, data)
     def open_owner(self, instance, data): return self.open("owner", instance, data)
     def open_member(self, instance, data): return self.open("member", instance, data)
+    def has_custody(self):
+        self.ready()
+        return bool(self.keys)
+    def discard_unsealed(self):
+        self.ready()
+        self.keys = {}
     def require_root_custody(self):
         self.ready()
         if "root" not in self.keys: raise Refused("Missing root custody")
