@@ -73,7 +73,7 @@ Process-wide execution and unique run IDs prevent stale activity results;
 a deterministic Java regression covers overlapping runs and delayed UI updates.
 Physical recreation/process-death tests remain separate and unperformed.
 
-The harness creates no network or owner identity. This does not qualify authority
+At that runtime-only revision, the harness created no network or owner identity. It did not qualify authority
 creation, owner custody, persisted hosted identity, actual authority decisions,
 second-device enrollment/revocation, production library support, or lifecycle
 availability. The full Create workflow remains disabled until those gates pass.
@@ -172,11 +172,56 @@ staging file, and indexes its digest in signed local state. Ordinary open refuse
 unrecorded staging; unsigned or changed staging is refused without discarding it.
 These are hosted/host simulations, not physical elapsed-time or lifecycle tests.
 
-The first Samsung attempt passed the seven runtime checks, then was refused by
+The first Samsung attempt at that revision passed the seven runtime checks, then was refused by
 the native device readiness guard before creating an owner network. Its specific
 result is `secure_screen_lock_required`; configuring a credential is a local user
 step. Real Android create/reopen and
-process-restart identity acceptance remain pending; production Create stays off.
+process-restart identity acceptance were pending at that checkpoint; production Create stayed off.
+
+### Later storage proof and separate root/integration gates — 6 November 2026
+
+The Android atomic-publication repair at `3a1c7e9` subsequently passed genuine
+phone-local create/close/reopen on the Samsung SM-A176B/API36, followed by a cold
+process launch with unchanged root, authority, operator and member fingerprints
+and certificate ID. That was the earlier combined-root custody format. It proves
+that positive storage/persistence slice, not the newer per-use root ceremony,
+device-loss recovery, app Create or second-device acceptance.
+
+The checkpoint at `1423db5` separates root ciphertext/custody, leaves the root
+encrypted during ordinary reopen, matches core's founding-key lifetime and
+maintains routine membership through signed intents without automatic write
+replay. Focused host/native and contract CI passed there. The newer GM Root Check
+profile remains an unfinished initialization: no completed owner identity was
+recorded. Its key-policy metadata was inspected, but physical per-use root
+authentication and create/reopen under that root format are **not accepted**.
+Permission to discard that isolated test profile remains pending. It has not
+been reset, migrated or replaced by the following source/build work.
+
+The next independent dependency is now implemented behind the opt-in
+`android-owner-qualification` feature and fixed
+`org.genesismesh.connect.ownerqualification` identifier. A private native bridge
+connects `NativeOwnerTransport` to `ConnectOwner`, using native-selected no-backup
+storage and the existing vault. Registration activates nothing. A Rust catch-all
+rejects frontend plugin commands; no automatic startup, public Create or
+administrative mutation path is enabled. Native calls reserve their session and
+sequence before dispatch, have bounded queues/deadlines/replies, reject stale or
+foreign outcomes, and stop reuse after uncertainty. Lifecycle stop/destroy fences
+the session and queues shutdown; reopening is not automatic. This conservative
+qualification behavior also needs physical review around system-authentication
+screens. It is not a background or continuous-availability promise.
+
+This continuation's permitted host checks passed: three real-core bootstrap
+tests, three correlation tests, four existing transport tests, one native session
+guard test and two isolated packaging tests. The Android Kotlin/Java bridge and
+whitelisted Python closure compiled into a build-only AAR against the pinned
+Tauri SDK; all 74 packaged native objects passed 16 KiB ELF/RELRO inspection.
+The full Windows Android-app build stopped because Application Control blocked
+a Cargo build script (`OS4551`). It was not retried or bypassed. The Android Rust
+app boundary and complete APK therefore remain uncompiled/unaccepted locally.
+No device operation, install, data/key reset, excluded startup-failure suite,
+publication, merge or deployment was performed for this continuation.
+
+See [build-only bridge instructions](../spikes/android-owner-bridge/README.md).
 
 **“Create and run my network on this Android phone.”** The independent-phone
 proof above is required alongside the optional server profile. Native dependency

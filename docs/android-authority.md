@@ -132,9 +132,13 @@ does not provide hardware anti-rollback protection.
 `OwnerRuntime::from_native` is a native-code-only transport seam with existing
 typed operations and readiness checks. It bounds requests/replies, refuses
 key export and desktop import, and stops reuse after an uncertain result. It
-does not register a Tauri command, package Python in Connect, provide a qualified
-Android plugin or enable Create. Those remain the next integration gates after
-the root system-prompt/device checks. The focused CI workflow runs an explicit
+does not expose a Tauri command or enable Create. Opt-in qualification packaging
+and a private Android plugin now connect it to `ConnectOwner`: the plugin rejects
+frontend invocation, uses a fixed native directory and fences uncertain or stale
+sessions. The default app still has no embedded-owner activation. The Android
+bridge library compiles, but the full Rust/app build and root system-prompt/device
+checks remain open; see [the build-only bridge](../spikes/android-owner-bridge/README.md).
+The focused CI workflow runs an explicit
 allowlist of host real-core and native transport tests, not the full excluded
 startup-failure suite.
 

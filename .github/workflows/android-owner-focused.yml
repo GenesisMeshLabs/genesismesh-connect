@@ -23,13 +23,20 @@ jobs:
       - run: python -m pip check
       - name: Android KeyInfo per-use policy regression (no device/custody access)
         run: python -m unittest discover -s scripts/tests -p test_android_root_policy.py -v
+      - name: Native owner session guard regression (no device/custody access)
+        run: python -m unittest discover -s scripts/tests -p test_android_owner_bridge.py -v
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.0.1
+        with:
+          node-version: '24'
+      - name: Isolated qualification packaging
+        run: node --experimental-strip-types --test apps/connect/tests/android-owner-packaging.test.ts
       # Deliberately enumerate the permitted checks. Do not discover or invoke
       # the full embedded-owner suite, which includes excluded startup failures.
       - name: Focused real-core checks with test-only encrypted custody
         working-directory: apps/connect/authority
         run: >-
           python -m unittest -v
-          test_owner_lifetime test_owner_root test_owner_maintenance test_android_storage test_connect_embedded
+          test_owner_lifetime test_owner_root test_owner_maintenance test_android_storage test_connect_embedded test_android_bootstrap
           test_embedded_owner.EmbeddedOwnerTests.test_real_create_close_reopen_preserves_all_identities_and_member
           test_embedded_owner.EmbeddedOwnerTests.test_every_private_identity_is_durable_before_core_can_publish_it
 
@@ -50,5 +57,5 @@ jobs:
           key: owner-native-${{ runner.os }}-rust-1.98-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
             core-${{ runner.os }}-rust-1.98-
-      - run: cargo +1.98.0 test -p connect-core --test owner_native_transport --locked
+      - run: cargo +1.98.0 test -p connect-core --test owner_native_transport --test owner_native_protocol --locked
       - run: cargo +1.98.0 test -p connect-core --lib owner::tests --locked

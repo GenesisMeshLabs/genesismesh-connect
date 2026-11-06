@@ -1,8 +1,12 @@
 use connect_core::{EndpointStatus, NetworkMode, ProbeEndpoint, RoundTripReport};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+#[cfg(all(feature = "android-owner-qualification", not(debug_assertions)))]
+compile_error!("Android owner qualification is disabled outside debug builds");
 mod access;
 mod activity;
+#[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+mod android_owner;
 mod client_admin;
 mod consumer;
 mod desktop;
@@ -80,6 +84,8 @@ async fn send_probe(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
+    #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+    let builder = builder.plugin(android_owner::init());
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_opener::init());
     #[cfg(mobile)]

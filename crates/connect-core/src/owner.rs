@@ -1,5 +1,6 @@
 //! Owner-computer orchestration. Only a local inherited pipe reaches the sidecar.
 //! No operator credentials or generic administrative requests cross device links.
+pub mod native;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
