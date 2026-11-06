@@ -80,6 +80,37 @@ availability. The full Create workflow remains disabled until those gates pass.
 
 ## Next user-visible acceptance milestones
 
+Embedded owner adapter progress on 6 November 2026 (PR #22): fixed in-memory core
+initialization, signed self-enrollment, purpose-separated Android Keystore custody
+and create/open/close persistence are implemented behind the developer harness.
+Twenty-eight Windows host tests pass using the real core and explicitly test-only
+encrypted custody, including interrupted creation/key generation, missing/corrupt
+state or keys, domain swaps, erased profile with existing custody, lock contention,
+revoked/missing membership, invalid names and stable public identities. These are
+not Android hardware or end-user acceptance results.
+
+Review reproductions also drove bounded HTTP shutdown, durable key sealing before
+first core use, and explicit member-credential recovery. Time-controlled host/core
+tests cover exact expiry, the former grace boundary, owner reopen days later,
+fresh core re-enrollment with unchanged identity keys, expired-certificate refusal,
+lost replies, failed commits, delayed reconciliation, tampered intents and explicit
+cancel/retry without automatic write replay. Incomplete requests terminate;
+unsettled handlers retain keys and the exclusive state lock until safe shutdown.
+Failure to start the serving thread closes the unused listener/database and
+releases custody/state exclusivity; a genuine existing profile reopens unchanged.
+An actual child-process exit at the post-fsync/pre-replace boundary leaves a
+complete staged state and recorded core issuance. Authenticated reconciliation
+recovers that outcome without new enrollment, preserves identity keys and the
+staging file, and indexes its digest in signed local state. Ordinary open refuses
+unrecorded staging; unsigned or changed staging is refused without discarding it.
+These are hosted/host simulations, not physical elapsed-time or lifecycle tests.
+
+The first Samsung attempt passed the seven runtime checks, then was refused by
+the native device readiness guard before creating an owner network. Its specific
+result is `secure_screen_lock_required`; configuring a credential is a local user
+step. Real Android create/reopen and
+process-restart identity acceptance remain pending; production Create stays off.
+
 **“Create and run my network on this Android phone.”** The independent-phone
 proof above is required alongside the optional server profile. Native dependency
 qualification and lifecycle work remain open; no unsupported Create button is
