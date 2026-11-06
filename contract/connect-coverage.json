@@ -196,7 +196,7 @@
       "status": "planned",
       "manual": "planned",
       "assisted": "planned",
-      "scope_note": "Pairing-only owner-control contract and separate protected native key custody/controller preparation implemented, but deliberately unexposed. Native Linux store and real-core preparation qualified. Owner transport, final core role/target dispatch, explicit enrollment/revocation UI, phone Requests and recovery remain incomplete. This is not general core operator administration or an accepted journey.",
+      "scope_note": "Pairing-only native key custody, authenticated host dispatch with fresh core/target checks, gated local review, durable same-ID client enrollment/status recovery and a read-only member status screen are implemented with automated/native fixtures. Production mutations still lack qualified native presence. Phone request creation/pairing controls, complete replacement/recovery, installed/physical/usability and assisted parity remain open. This foundation is not general core operator administration or an accepted journey.",
       "execution_locations": [
         "requires-adapter-review"
       ],
@@ -233,7 +233,12 @@
           "crates/connect-core/tests/owner_control_authority.rs",
           "crates/connect-core/src/device/admin_vault_tests.rs",
           "crates/connect-core/src/device/admin_control.rs",
-          "crates/connect-core/tests/admin_key_sealed.rs"
+          "crates/connect-core/tests/admin_key_sealed.rs",
+          "crates/connect-core/tests/client_enrollment.rs",
+          "crates/connect-core/tests/owner_requests_authority.rs",
+          "crates/connect-core/tests/owner_admin_authority.rs",
+          "apps/connect/tests/browser/client-admin.spec.ts",
+          "apps/connect/tests/browser/host-admin.spec.ts"
         ],
         "physical": [],
         "accepted": false

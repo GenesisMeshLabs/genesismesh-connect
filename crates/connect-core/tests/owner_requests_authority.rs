@@ -7,7 +7,7 @@ use chrono::{Duration, Utc};
 use connect_core::{
     Connectivity,
     authority::{EnrolledDevice, LocalAuthority, TrustStore},
-    device::{DeviceController, PairedDevice},
+    device::{DeviceController, EnrollmentAvailability, PairedDevice},
     owner::{OwnerRequest, OwnerRuntime},
     owner_control::*,
     session::{
@@ -273,6 +273,10 @@ async fn native_client_enrollment_resumes_same_id_after_lost_reply_and_needs_exp
     host.enroll_host(&owner.invite(&host_node, true)?).await?;
     let profile = dir.path().join("client");
     let mut client = DeviceController::prepare(&profile, info.url.clone(), info.pin.clone())?;
+    assert_eq!(
+        client.owner_enrollment_overview()?.availability,
+        EnrollmentAvailability::Unjoined
+    );
     let client_node = client.status()?.node_public_key;
     client
         .enroll_host(&owner.invite(&client_node, true)?)
@@ -296,6 +300,15 @@ async fn native_client_enrollment_resumes_same_id_after_lost_reply_and_needs_exp
         node: client_node.clone(),
         ticket: ticket(client.status()?.ticket.context("Missing client session")?)?,
     })?;
+    client.remember_pairing(PairedDevice {
+        name: "Home hub".into(),
+        node: host_node.clone(),
+        ticket: ticket(host.status()?.ticket.context("Missing host session")?)?,
+    })?;
+    assert_eq!(
+        host.owner_enrollment_overview()?.availability,
+        EnrollmentAvailability::NetworkComputer
+    );
     host.enable_owner_requests()?;
     let independent = IndependentAdmin::from_fixture(&mut owner, info.url).await?;
     let (sender, mut messages) = tokio::sync::mpsc::channel::<OwnerRequest>(8);
@@ -344,6 +357,20 @@ async fn native_client_enrollment_resumes_same_id_after_lost_reply_and_needs_exp
             }
         }
     });
+    let absent = client.owner_enrollment_overview()?;
+    assert_eq!(absent.availability, EnrollmentAvailability::Member);
+    assert_eq!(absent.host, "Home hub");
+    assert!(absent.entry.is_none());
+    assert!(!absent.can_check);
+    assert!(client.check_owner_enrollment_overview().await.is_err());
+    for file in [
+        "owner-enrollment.json",
+        "owner-enrollment.owner-enrollment-lock",
+        "administrative-key.json",
+        "administrative-key.administrative-key-lock",
+    ] {
+        assert!(!profile.join(file).exists(), "Inspection created {file}");
+    }
     let request = client
         .prepare_owner_enrollment([Permission::ListPairing].into_iter().collect(), 600)
         .await?;
@@ -355,6 +382,12 @@ async fn native_client_enrollment_resumes_same_id_after_lost_reply_and_needs_exp
             .retain_owner_enrollment(request.clone(), &digest)
             .await?
             .status,
+        ClientEnrollmentStatus::Reviewed
+    );
+    let reviewed = client.owner_enrollment_overview()?;
+    assert!(!reviewed.can_check);
+    assert_eq!(
+        reviewed.entry.context("Missing reviewed display")?.status,
         ClientEnrollmentStatus::Reviewed
     );
     assert!(
@@ -446,6 +479,35 @@ async fn native_client_enrollment_resumes_same_id_after_lost_reply_and_needs_exp
     assert_eq!(active.status, ClientEnrollmentStatus::Active);
     assert_eq!(active.request.intent.id, id);
     assert_eq!(active.reviewed_digest, digest);
+    let display = client.check_owner_enrollment_overview().await?;
+    assert!(display.can_check);
+    assert_eq!(display.host, "Home hub");
+    let encoded = serde_json::to_string(&display)?;
+    for private in [
+        "signature",
+        "administrative_key",
+        "root_public_key",
+        "approval_digest",
+        "grant",
+        &request.intent.administrative_key,
+        &request.intent.scope.pin.root_public_key,
+    ] {
+        assert!(
+            !encoded.contains(private),
+            "Read-only projection exposed native proof/key material"
+        );
+    }
+    let display = display.entry.context("Missing active display")?;
+    assert_eq!(display.status, ClientEnrollmentStatus::Active);
+    assert_eq!(display.request_id, id);
+    assert_eq!(display.permissions, vec![Permission::ListPairing]);
+    assert_eq!(display.access_ends, request.intent.grant_expires_at);
+    let history = client
+        .owner_enrollment_overview()?
+        .entry
+        .context("Missing historical display")?;
+    assert_eq!(history.status, ClientEnrollmentStatus::Uncertain);
+    assert_eq!(history.last_observed, Some(ClientEnrollmentStatus::Active));
     {
         let mut server = state.lock().await;
         let (owner, host) = &mut *server;
@@ -480,6 +542,10 @@ async fn native_client_enrollment_resumes_same_id_after_lost_reply_and_needs_exp
     let key_path = profile.join("administrative-key.json");
     std::fs::remove_file(&key_path)?;
     let journal_before = std::fs::read(profile.join("owner-enrollment.json"))?;
+    let attention = client.owner_enrollment_overview()?;
+    assert!(attention.attention);
+    assert!(attention.entry.is_none());
+    assert!(!attention.can_check);
     assert!(client.check_owner_enrollment().await.is_err());
     assert!(
         client

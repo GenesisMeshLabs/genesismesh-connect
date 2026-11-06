@@ -1,4 +1,4 @@
-//! Native-only client workflow. No app IPC, presence bypass or pairing dispatch.
+//! Native client workflow. No mutation IPC, presence bypass or pairing dispatch.
 use super::{AdministrativeKey, DeviceController, admin_vault};
 use crate::owner_control::{
     CLIENT_ENROLLMENT_FILE, ClientEnrollment, ClientEnrollmentView, EnrollmentBinding,
@@ -8,6 +8,19 @@ use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 
 impl DeviceController {
+    /// An absent request is not initialized by inspection. An existing marker,
+    /// missing key or invalid journal remains a recovery error, never "empty".
+    pub fn retained_owner_enrollment(&self) -> Result<Option<ClientEnrollmentView>> {
+        self.require_connected()?;
+        ensure!(
+            self.device.is_some() && self.bridge_client.is_some() && !self.network_computer(),
+            "Use Requests on a joined device connected through its network computer"
+        );
+        if !ClientEnrollment::initialized(&self.state_directory.join(CLIENT_ENROLLMENT_FILE))? {
+            return Ok(None);
+        }
+        self.saved_owner_enrollment().map(Some)
+    }
     async fn current_enrollment_binding(&mut self) -> Result<EnrollmentBinding> {
         let expected = self.enrollment_binding()?;
         let trust = self.refresh_inner(false).await?;

@@ -7,6 +7,8 @@ mod sealed_store;
 pub use sealed_store::{MASTER_KEY_CREDENTIAL, use_sealed_store};
 mod admin_control;
 mod admin_enrollment;
+mod enrollment_display;
+pub use enrollment_display::*;
 mod admin_vault;
 mod lifecycle;
 pub use admin_vault::{AdministrativeBinding, AdministrativeKey};

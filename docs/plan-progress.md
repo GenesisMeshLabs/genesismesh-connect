@@ -15,7 +15,7 @@ manual/assisted/platform acceptance gate; no parity percentage is claimed.
 | CONNECT-02 typed operations | Closed resource/local-history registry, generated schemas, exact access review | General core outcome schemas and manual/assisted parity |
 | CONNECT-03 durable workflows | Access dispatch/readback journal, archives; owner nonce reservations; bounded native client admin-enrollment/status journal | Durable join/renewal/recovery, complete admin enrollment UX/replacement and operation-specific reconciliation |
 | CONNECT-04 prerequisites | Authenticated resource-host release/profile/ownership discovery | General feature, verifier, actor and deployment discovery |
-| CONNECT-05 owner Requests | Authenticated transport; fixed managed-core/target dispatch and fresh candidate verification; native key custody; durable host records and native client same-ID enrollment/status recovery; guided local host review, typed IPC and scoped readback | Qualified native user presence for UI mutations; installed host opt-in/review/revocation acceptance; usable phone Requests, recovery, assisted parity and physical gates |
+| CONNECT-05 owner Requests | Authenticated transport; fixed managed-core/target dispatch and fresh candidate verification; native key custody; durable host records and native client same-ID enrollment/status recovery; guided host review and read-only member status/recovery screens | Qualified native user presence for UI mutations; installed host opt-in/review/revocation acceptance; phone request creation/pairing actions, complete recovery, assisted parity and physical gates |
 | CONNECT-06 lifecycle | Existing disconnect/reconnect/leave; administrative native-store refusal and cleanup | Physical lock/suspend/force-quit/reboot/network switching and user-presence handling |
 | CONNECT-07 distribution/hosting | Existing Tauri packaging and headless Linux server | Signed fresh-machine installer/update/service/uninstall acceptance and guided host setup |
 | CONNECT-08 continuity | Existing encrypted recovery and server restore | Checkpoints, missing-history reconciliation, restricted restore and old-host fencing |
@@ -114,9 +114,20 @@ it does not generate another request/key, resend enrollment or dispatch pairing
 commands. Native context and fresh core membership are checked around transport,
 returned requests/grants are matched exactly, and status observations stay
 distinct from uncertainty and remembered history. This bounded coordinator is
-not exposed through app IPC. Full phone enrollment UX, explicit replacement/
+not exposed through mutation IPC. Full phone enrollment UX, explicit replacement/
 recovery, qualified presence and installed/physical/usability acceptance remain
 open; it does not substitute for independent phone-local authority hosting.
+
+Member phones/computers now have Devices → View joining permissions for their
+saved administration request. Two read-only native commands return a minimal
+display projection and check the retained ID; signed requests, grants and keys
+do not cross this IPC. Empty inspection creates no credentials or workflow
+marker. Each state explains its next step, previous approvals stay historical
+until a fresh check, and abandoned/network-changed screens ignore late replies.
+Request creation, approval and joining controls remain unavailable pending
+qualified native presence and their complete reviewed workflows. Browser fixture
+coverage and native source/packaged projection checks are recorded separately
+from installed-app, physical lifecycle and first-time usability acceptance.
 
 **Production administration mutations remain gated.** No native user-presence
 provider has been qualified for this app. A DOM confirmation, OS-store reopening,

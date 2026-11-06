@@ -163,14 +163,44 @@ the previous observation and its time. Reopening submitted work requires a fresh
 check; a remembered Active observation never authorizes a later operation. Missing
 native credentials block resume without creating replacements.
 
-This is a reusable native dependency, **not an app entrypoint or phone Requests
-UX**. No new app IPC, production presence provider or mutation bypass is enabled.
+Enrollment preparation, retention and submission remain native-only dependencies,
+**not a completed phone Requests journey**. No mutation IPC, production presence
+provider or mutation bypass is enabled.
 Explicit host approval remains independent. Source and packaged real-core QUIC
 fixtures cover lost enrollment/status replies, restart/same-ID checks, fixture-only
 host approval/revocation, unavailable production presence, missing credentials and
 current membership refusal. Installed-app, physical lifecycle and usability gates
 remain open. Independent phone-local authority acceptance is still required;
 mobile Create stays disabled.
+
+### Member-device status and recovery screen
+
+Devices → View joining permissions is a read-only screen on member phones and
+computers. The fixed `client_admin_status` and `client_admin_check` commands take
+no identities, URLs, paths, request IDs, actions or presence flags from IPC.
+They inspect the existing native profile and check only its retained enrollment
+ID through the coordinator. They cannot prepare, sign, retain, submit, approve,
+replace or execute an administrative request. Empty inspection creates no key,
+journal or initialization marker; damaged initialized state is attention, not empty.
+
+The display projection contains the network, the saved name of the actual
+network-computer route, requested permissions/expiry and status/observation time.
+It omits the signed request, grant, review digest, public/private key material and
+provider references. The context identifier is a native digest for presentation
+fencing only, not authority. Host names are rendered as text.
+
+The screen explains pending, active, declined, expired, revoked, missing,
+unsubmitted and uncertain states, with explicit next steps. A previous Active
+observation is history until a fresh native readback; starting a failed check
+cannot leave an approval presented as fresh. Closing, Escape, navigation and
+network/host context changes fence abandoned replies/finalizers. Native readback
+may finish durably after closing; reopening offers another read, never a mutation.
+
+Request creation and joining controls remain unavailable with a clear build
+limitation. Browser fixtures use the real component/HTML with simulated native
+replies; native source/packaged fixtures verify empty inspection, projection
+omissions, exact same-ID recovery and refusal. These are distinct from installed
+app, physical lifecycle and nontechnical usability acceptance.
 
 Leave/discard cleanup removes only a purpose-checked credential for that
 network/member and supports retry after native-secret deletion. An older host

@@ -321,6 +321,24 @@
               <span class="home-badge">This device</span>
             </section>
             <div id="saved-devices" aria-label="Saved devices"></div>
+            <section id="client-admin-card" class="home-card" hidden>
+              <h2>Manage joining devices</h2>
+              <p>Check this device's request to help manage who joins your network.</p>
+              <button id="client-admin-open" class="secondary">View joining permissions</button>
+            </section>
+            <dialog id="client-admin-dialog" class="share-dialog host-admin-dialog" aria-labelledby="client-admin-title">
+              <div class="home-page-heading"><div><p id="client-admin-network" class="home-muted"></p><h2 id="client-admin-title">Manage joining devices</h2></div><button id="client-admin-close" class="secondary" aria-label="Close joining permissions">Close</button></div>
+              <p>These permissions let a device help manage who joins. File and service permissions are separate.</p>
+              <section class="host-admin-notice" aria-live="polite"><h3 id="client-admin-state"></h3><p id="client-admin-description"></p><p id="client-admin-next"></p></section>
+              <p id="client-admin-problem" role="alert" hidden></p>
+              <div class="host-admin-footer"><button id="client-admin-check">Check status</button><button id="client-admin-refresh" class="secondary">Refresh</button></div>
+              <section id="client-admin-details" class="host-admin-section" hidden>
+                <h3>Permissions requested</h3><ul id="client-admin-permissions"></ul>
+                <dl class="host-admin-review-lines"><dt>Network computer</dt><dd id="client-admin-host"></dd><dt>Requested access ends</dt><dd id="client-admin-access-ends"></dd></dl>
+                <details><summary>Request and check details</summary><dl class="host-admin-review-lines"><dt>Request review ends</dt><dd id="client-admin-request-ends"></dd><dt>Last confirmed check</dt><dd id="client-admin-observed-at"></dd></dl><p id="client-admin-history" class="home-muted"></p></details>
+              </section>
+              <p class="home-muted">Checking only reads your saved request. Requesting administration and using joining controls are not available in this version; they need supported device authentication.</p>
+            </dialog>
             <section id="host-admin-card" class="home-card" hidden>
               <h2>Pairing administrators</h2>
               <p>Review requests from your devices to help manage who joins your network.</p>
