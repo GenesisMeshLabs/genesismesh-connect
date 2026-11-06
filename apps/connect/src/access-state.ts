@@ -38,6 +38,17 @@ export function accessOutcomeText(outcome:AccessOutcome):string {
   }
   return "Your change may have reached the network computer, but its result is unconfirmed. Choose Check status. Connect will not send it again automatically.";
 }
+export type AccessEnds = "ongoing" | "hour" | "tonight" | "week" | "date";
+/** When access ends for one of the quick choices; null for ongoing or a chosen date. */
+export function accessEndsAt(choice:AccessEnds, now:Date):Date|null {
+  if(choice==="hour") return new Date(now.getTime()+3600_000);
+  if(choice==="week") return new Date(now.getTime()+7*24*3600_000);
+  if(choice==="tonight") { const end=new Date(now); end.setHours(23,59,0,0); if(end<=now) end.setDate(end.getDate()+1); return end; }
+  return null;
+}
+function minutes(seconds:number):string {
+  return seconds%3600===0 ? `${seconds/3600} hour${seconds===3600?"":"s"}` : `${Math.round(seconds/60)} minutes`;
+}
 export function accessReviewLines(record:AccessRecord, devices:{id:string;name:string}[], service:boolean):[string,string][] {
   const {intent}=record, after=intent.after;
   const label=(id:string)=>{
@@ -45,15 +56,17 @@ export function accessReviewLines(record:AccessRecord, devices:{id:string;name:s
     return name ? (devices.filter(d=>d.name===name).length>1 ? `${name} (${id.slice(0,8)}…)` : name) : `Device ${id.slice(0,8)}…`;
   };
   const removed=intent.before.recipients.filter(id=>!after.recipients.includes(id));
+  const added=after.recipients.filter(id=>!intent.before.recipients.includes(id));
   const lines:[string,string][]=[
     ["Network",intent.context.pin.network_name], ["Shared item",intent.name],
     ["Allowed devices",after.recipients.map(label).join(", ")],
+    ["Devices gaining access",added.length ? added.map(label).join(", ") : "None"],
     ["Devices losing access",removed.length ? removed.map(label).join(", ") : "None"],
-    ["Access ends",after.expires_at ? new Date(after.expires_at).toLocaleString(undefined,{timeZoneName:"short"}) : "Ongoing access"],
-    ["Size per file or connection",after.max_bytes===9007199254740991 ? "No extra size limit" : formatBytes(after.max_bytes)],
+    ["Access ends",after.expires_at ? new Date(after.expires_at).toLocaleString(undefined,{weekday:"short",day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}) : "When you stop sharing"],
+    ["Largest file or connection",after.max_bytes===9007199254740991 ? "No limit" : formatBytes(after.max_bytes)],
   ];
-  if(service) lines.push(["Service session limit",`${after.max_seconds} seconds`]);
-  lines.push(["Additional rules",`${after.extra_gates.length} rule(s) · ${JSON.stringify(after.extra_gates)===JSON.stringify(intent.before.extra_gates) ? "unchanged" : "changed; the network validates them when saving"}`]);
-  lines.push(["Review valid until",new Date(intent.expires_at).toLocaleTimeString()]);
+  if(service) lines.push(["Each visit can last",minutes(after.max_seconds)]);
+  const changed=JSON.stringify(after.extra_gates)!==JSON.stringify(intent.before.extra_gates);
+  if(after.extra_gates.length||changed) lines.push(["Expert rules",`${after.extra_gates.length} · ${changed ? "changed; your network checks them when you confirm" : "unchanged"}`]);
   return lines;
 }

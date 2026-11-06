@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { accessOutcomeText, accessReviewLines, accessPrerequisiteText, needsAccessCheck, type AccessRecord, type AccessOutcome } from "../src/access-state.ts";
+import { accessEndsAt, accessOutcomeText, accessReviewLines, accessPrerequisiteText, needsAccessCheck, type AccessRecord, type AccessOutcome } from "../src/access-state.ts";
 
 const record:AccessRecord={
   intent:{id:"review",collection:"folder",name:"Family photos",context:{pin:{network_name:"My home",root_public_key:"root"},actor:"desktop",audience:"desktop"},
@@ -18,10 +18,14 @@ test("review names exact network, item, allowed and removed devices, limits and 
   const lines=new Map(accessReviewLines(record,[{id:"phone-a",name:"Phone"},{id:"phone-b",name:"Phone"},{id:"tablet",name:"iPad"}],true));
   assert.equal(lines.get("Network"),"My home");assert.equal(lines.get("Shared item"),"Family photos");
   assert.match(lines.get("Allowed devices")!,/Phone \(phone-a/);assert.match(lines.get("Allowed devices")!,/phone-b/);
-  assert.equal(lines.get("Devices losing access"),"iPad");assert.equal(lines.get("Access ends"),"Ongoing access");
-  assert.equal(lines.get("Service session limit"),"300 seconds");assert.match(lines.get("Additional rules")!,/unchanged/);
-  assert.ok(lines.get("Review valid until"));
-  assert.equal(new Map(accessReviewLines(record,[],false)).has("Service session limit"),false);
+  assert.equal(lines.get("Devices losing access"),"iPad");assert.equal(lines.get("Access ends"),"When you stop sharing");
+  assert.match(lines.get("Devices gaining access")!,/phone-b/);assert.doesNotMatch(lines.get("Devices gaining access")!,/phone-a/);
+  assert.equal(lines.get("Each visit can last"),"5 minutes");
+  assert.equal(lines.has("Expert rules"),false,"No expert rules, nothing to say");
+  assert.equal(lines.has("Review valid until"),false);
+  assert.equal(new Map(accessReviewLines(record,[],false)).has("Each visit can last"),false);
+  const ruled={...record,intent:{...record.intent,after:{...record.intent.after,extra_gates:[{gate:"x"}]}}};
+  assert.match(new Map(accessReviewLines(ruled,[],false)).get("Expert rules")!,/1 · changed/);
 });
 test("lost reply and submitted state offer status checking, never success or automatic retry",()=>{
   for(const stage of ["submitted","unknown"] as const){
@@ -39,3 +43,11 @@ test("readback, core authorization, local refresh and conflicting state remain d
   outcome.record.stage="conflict";assert.match(accessOutcomeText(outcome),/Reload the current settings/);
   assert.equal(needsAccessCheck(null),false);
 });
+test("quick end choices are an hour, tonight and a week from now",()=>{
+  const now=new Date(2026,10,7,15,30);
+  assert.equal(accessEndsAt("hour",now)!.getTime()-now.getTime(),3600_000);
+  assert.equal(accessEndsAt("week",now)!.getTime()-now.getTime(),7*24*3600_000);
+  const tonight=accessEndsAt("tonight",now)!;assert.equal(tonight.getDate(),7);assert.equal(tonight.getHours(),23);assert.equal(tonight.getMinutes(),59);
+  assert.equal(accessEndsAt("ongoing",now),null);assert.equal(accessEndsAt("date",now),null);
+});
+
