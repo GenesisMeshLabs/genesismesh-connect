@@ -38,7 +38,7 @@ jobs:
         working-directory: apps/connect/authority
         run: >-
           python -m unittest -v
-          test_owner_lifetime test_owner_root test_owner_maintenance test_android_storage test_connect_embedded test_android_bootstrap
+          test_owner_lifetime test_owner_root test_owner_recovery test_owner_maintenance test_android_storage test_connect_embedded test_android_bootstrap
           test_membership_inspection
           test_embedded_owner.EmbeddedOwnerTests.test_real_create_close_reopen_preserves_all_identities_and_member
           test_embedded_owner.EmbeddedOwnerTests.test_every_private_identity_is_durable_before_core_can_publish_it
