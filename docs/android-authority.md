@@ -118,6 +118,14 @@ startup-failure revalidation or merge was performed for this repair.
 
 ## Dependency gate
 
+The embedded owner follows core's founding-key lifetime semantics: the genesis
+authority's legacy `valid_to` is informational. Its `valid_from` retains a
+five-minute clock tolerance. This does not relax successor-key lifetimes or
+membership validity. A real-core, controlled-clock regression reopens the same
+identity on day 91 while refusing the expired member credential. Verification
+reports the particular signature, key binding, time, policy or membership check
+that failed, without including private values.
+
 Run from the repository root, using a Python environment with pip:
 
 ```text

@@ -170,18 +170,34 @@ class EmbeddedOwner:
     def _verify(self, genesis, policy, certificate, *, require_current=True):
         na = genesis.network_authority
         now = datetime.now(timezone.utc)
-        if (public(self.keys["root"]) != genesis.root_public_key or public(self.keys["na"]) != na.public_key
-                or not na.valid_from <= now <= na.valid_to
-                or not genesis.signatures or not all(verify_model_signature(genesis, s, genesis.root_public_key) for s in genesis.signatures)
-                or not policy.signatures or not all(verify_model_signature(policy, s, na.public_key) for s in policy.signatures)
-                or genesis.policy_manifest.hash != "sha256:" + hashlib.sha256(policy.to_canonical_json().encode()).hexdigest()
-                or certificate.node_public_key != public(self.member) or certificate.network_name != genesis.network_name
-                or certificate.roles != ["role:client"] or certificate.issued_at > certificate.expires_at
-                or certificate.issued_at - timedelta(minutes=5) > now
-                or (require_current and not (certificate.is_valid(now) and certificate.issued_at <= now < certificate.expires_at))
-                or certificate.issued_by != NA_ID or not certificate.signatures
-                or not all(verify_model_signature(certificate, s, na.public_key) for s in certificate.signatures)):
-            raise Refused("The protected network identity or membership is invalid.")
+        if public(self.keys["root"]) != genesis.root_public_key:
+            raise Refused("The protected root key does not match the founding record.")
+        if public(self.keys["na"]) != na.public_key:
+            raise Refused("The protected authority key does not match the founding record.")
+        # Core displays, but does not enforce, the founding authority key's
+        # legacy end date. Successor-key lifetimes remain core's responsibility.
+        if na.valid_from - timedelta(minutes=5) > now:
+            raise Refused("The founding authority key is not valid yet. Check this device's clock.")
+        if not genesis.signatures or not all(verify_model_signature(genesis, s, genesis.root_public_key) for s in genesis.signatures):
+            raise Refused("The founding record signature is invalid.")
+        if not policy.signatures or not all(verify_model_signature(policy, s, na.public_key) for s in policy.signatures):
+            raise Refused("The protected policy signature is invalid.")
+        if genesis.policy_manifest.hash != "sha256:" + hashlib.sha256(policy.to_canonical_json().encode()).hexdigest():
+            raise Refused("The protected policy does not match the founding record.")
+        if certificate.node_public_key != public(self.member) or certificate.network_name != genesis.network_name:
+            raise Refused("The membership does not match this device or network.")
+        if certificate.roles != ["role:client"]:
+            raise Refused("The protected membership roles are invalid.")
+        if certificate.issued_at > certificate.expires_at:
+            raise Refused("The protected membership validity window is invalid.")
+        if certificate.issued_at - timedelta(minutes=5) > now:
+            raise Refused("The membership was issued in the future. Check this device's clock.")
+        if require_current and not (certificate.is_valid(now) and certificate.issued_at <= now < certificate.expires_at):
+            raise Refused("The protected membership is expired or not active yet.")
+        if certificate.issued_by != NA_ID:
+            raise Refused("The protected membership issuer is invalid.")
+        if not certificate.signatures or not all(verify_model_signature(certificate, s, na.public_key) for s in certificate.signatures):
+            raise Refused("The protected membership signature is invalid.")
 
     def _identity(self, instance, genesis, certificate):
         return {"instance": instance, "network_name": genesis.network_name, "root_public_key": genesis.root_public_key,
