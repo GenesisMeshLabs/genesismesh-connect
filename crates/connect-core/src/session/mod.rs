@@ -172,6 +172,22 @@ pub struct SessionReport {
     pub genesis_mesh_authenticated: bool,
 }
 
+/// The exact certificate that completed a mutually authenticated round trip.
+/// Native only: a report, ticket or deserialized certificate cannot construct it.
+pub(crate) struct AuthenticatedPeer {
+    node: String,
+    certificate: Value,
+}
+impl AuthenticatedPeer {
+    pub(crate) fn require_current(&self, trust: &TrustSnapshot, expected_node: &str) -> Result<()> {
+        ensure!(
+            self.node == expected_node,
+            "Pairing proof names a different device"
+        );
+        trust.certificate(&self.certificate, expected_node, Utc::now())
+    }
+}
+
 /// A local-network diagnostic endpoint. One authentication and one bounded echo
 /// per connection; raw connections are not exposed to callers or the frontend.
 pub struct SessionEndpoint {
@@ -384,6 +400,29 @@ impl SessionEndpoint {
         ticket: &str,
         message: &str,
     ) -> Result<SessionReport> {
+        Ok(self
+            .authenticated_round_trip_to(node, ticket, message)
+            .await?
+            .0)
+    }
+
+    pub(crate) async fn prove_pairing_to(
+        &self,
+        node: &str,
+        ticket: &str,
+    ) -> Result<AuthenticatedPeer> {
+        Ok(self
+            .authenticated_round_trip_to(Some(node), ticket, "Connect pairing verification")
+            .await?
+            .1)
+    }
+
+    async fn authenticated_round_trip_to(
+        &self,
+        node: Option<&str>,
+        ticket: &str,
+        message: &str,
+    ) -> Result<(SessionReport, AuthenticatedPeer)> {
         ensure!(
             !message.is_empty() && message.len() <= MAX_MESSAGE,
             "Diagnostic message must contain 1 to 1024 UTF-8 bytes"
@@ -433,7 +472,7 @@ impl SessionEndpoint {
                 &self.node_public_key,
                 Utc::now(),
             )?;
-            Ok(SessionReport {
+            let report = SessionReport {
                 peer_endpoint: connection.remote_id().to_string(),
                 peer_node: credentials.expected_node.clone(),
                 peer_certificate: peer_certificate["cert_id"]
@@ -442,7 +481,14 @@ impl SessionEndpoint {
                     .to_owned(),
                 bytes: reply.len(),
                 genesis_mesh_authenticated: true,
-            })
+            };
+            Ok((
+                report,
+                AuthenticatedPeer {
+                    node: credentials.expected_node.clone(),
+                    certificate: peer_certificate,
+                },
+            ))
         });
         let result = tokio::select! {
             biased;

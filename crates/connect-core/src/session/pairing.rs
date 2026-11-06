@@ -231,6 +231,49 @@ impl PairHost {
         gate.pending.take(); // Dropping the sender refuses the request.
         Ok(())
     }
+    /// Fixed owner adapter only: validate the exact reviewed request while
+    /// holding the gate through the final authority check and grant delivery.
+    /// The callback is synchronous; no lock may be held across an await.
+    pub(crate) fn control_dispatch(
+        &self,
+        action: &crate::owner_control::OwnerAction,
+        prepare: impl FnOnce() -> Result<Option<PairGrant>>,
+    ) -> Result<Option<oneshot::Receiver<Joined>>> {
+        use crate::owner_control::OwnerAction;
+        let mut gate = self.gate.lock().expect("pair gate");
+        ensure!(self.created.elapsed() < WINDOW, "Pairing expired");
+        self.card.validate()?;
+        current_owner(&self.state, &self.card)?;
+        let pending = gate.pending.as_ref().context("No pending device")?;
+        ensure!(!pending.grant.is_closed(), "The device disconnected");
+        action.require_pending(&pending.info)?;
+        let grant = prepare()?;
+        // The core call can take time. A disconnect or expiry must not deliver
+        // an invitation to a stale request; its durable nonce stays consumed.
+        ensure!(self.created.elapsed() < WINDOW, "Pairing expired");
+        self.card.validate()?;
+        current_owner(&self.state, &self.card)?;
+        let pending = gate.pending.as_ref().context("No pending device")?;
+        ensure!(!pending.grant.is_closed(), "The device disconnected");
+        action.require_pending(&pending.info)?;
+        match action {
+            OwnerAction::ApprovePairing(_) => {
+                let grant = grant.context("Missing pairing grant")?;
+                let pending = gate.pending.take().context("No pending device")?;
+                pending
+                    .grant
+                    .send(grant)
+                    .map_err(|_| anyhow::anyhow!("The device disconnected"))?;
+                Ok(Some(pending.joined))
+            }
+            OwnerAction::RejectPairing(_) => {
+                ensure!(grant.is_none(), "Unexpected pairing grant");
+                gate.pending.take();
+                Ok(None)
+            }
+            OwnerAction::ListPairing => anyhow::bail!("Listing does not dispatch a pairing"),
+        }
+    }
     pub fn refresh(&self, identity: SessionIdentity, trust: TrustSnapshot) -> Result<()> {
         self.suspend();
         ensure!(
@@ -602,6 +645,75 @@ impl Drop for PairClient {
 mod tests {
     use super::*;
     use crate::session::tests::support::{Fixture, key, public};
+    #[tokio::test]
+    async fn control_dispatch_checks_live_exact_target_before_callback_and_holds_gate() -> Result<()>
+    {
+        use crate::owner_control::{OwnerAction, PairingTarget};
+        let f = Fixture::new();
+        let pair = PairHost::bind(
+            SessionIdentity::new(f.server.clone(), f.server_cert.clone())?,
+            f.trust()?,
+            LocalAuthority::new("http://127.0.0.1:9")?,
+            "Home".into(),
+            crate::Connectivity::LocalNetwork,
+        )
+        .await?;
+        let info = PairRequest {
+            id: uuid::Uuid::new_v4().to_string(),
+            node: public(&f.client),
+            name: "Phone".into(),
+            code: "123456".into(),
+        };
+        let (grant, mut received) = oneshot::channel();
+        let (_, joined) = oneshot::channel();
+        pair.gate.lock().unwrap().pending = Some(Pending {
+            info: info.clone(),
+            grant,
+            joined,
+        });
+        let target = PairingTarget::from_pending(&info);
+        let mut wrong = target.clone();
+        wrong.comparison_code = "654321".into();
+        assert!(
+            pair.control_dispatch(&OwnerAction::RejectPairing(wrong), || panic!(
+                "stale target dispatched"
+            ))
+            .is_err()
+        );
+        let action = OwnerAction::RejectPairing(target.clone());
+        assert!(
+            pair.control_dispatch(&action, || {
+                assert!(
+                    pair.gate.try_lock().is_err(),
+                    "pairing mutex must cover final core operation"
+                );
+                anyhow::bail!("core refused")
+            })
+            .is_err()
+        );
+        assert!(
+            pair.pending().is_some(),
+            "core refusal preserves pending target"
+        );
+        pair.suspend();
+        assert!(
+            pair.control_dispatch(&action, || panic!("suspended host dispatched"))
+                .is_err()
+        );
+        pair.refresh(
+            SessionIdentity::new(f.server.clone(), f.server_cert.clone())?,
+            f.trust()?,
+        )?;
+        pair.control_dispatch(&action, || Ok(None))?;
+        assert!(received.try_recv().is_err());
+        assert!(pair.pending().is_none());
+        assert!(
+            pair.control_dispatch(&action, || panic!("replayed rejection dispatched"))
+                .is_err()
+        );
+        pair.close().await;
+        Ok(())
+    }
     #[test]
     fn join_links_refuse_expiry_unknown_fields_and_bad_secrets() -> Result<()> {
         let f = Fixture::new();

@@ -356,6 +356,25 @@ async fn answer_owner(
     while let Some(request) = requests.recv().await {
         let state = app.state::<WorkflowState>();
         let mut owner = state.slot.lock().await;
+        if let connect_core::owner::OwnerCall::Control {
+            node,
+            certificate,
+            request: envelope,
+        } = request.call
+        {
+            let desktop = app.state::<crate::desktop::DesktopState>();
+            let mut slot = desktop.slot.lock().await;
+            let result = match (owner.runtime.as_mut(), slot.controller.as_mut()) {
+                (Some(runtime), Some(device)) => {
+                    device
+                        .answer_owner_control(runtime, &node, &certificate, envelope)
+                        .await
+                }
+                _ => Err(anyhow::anyhow!("Your network is still opening")),
+            };
+            let _ = request.reply.send(result);
+            continue;
+        }
         let Some(mut runtime) = owner.runtime.take() else {
             let _ = request
                 .reply

@@ -238,6 +238,15 @@ fn results_are_exact_private_durable_and_never_replay_permission() -> Result<()>
     );
     let result = ControlResult::Approved { node: target.node };
     store.record_result(reserved.nonce(), reserved.digest(), result.clone(), f.now)?;
+    assert_eq!(
+        store.checked_result(&peer(&f)?, reserved.nonce(), reserved.digest(), f.now)?,
+        result
+    );
+    assert!(
+        store
+            .checked_result(&peer(&f)?, reserved.nonce(), "wrong", f.now)
+            .is_err()
+    );
     assert!(
         store
             .record_result(
@@ -263,6 +272,12 @@ fn results_are_exact_private_durable_and_never_replay_permission() -> Result<()>
         result
     );
     assert!(store.reserve(&cmd, &peer(&f)?, f.now).is_err());
+    store.revoke_locally(&grant.enrollment.intent.id, f.now)?;
+    assert!(
+        store
+            .checked_result(&peer(&f)?, reserved.nonce(), reserved.digest(), f.now)
+            .is_err()
+    );
     drop(store);
     let mut saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
     saved["used"][0]["result"]["node"] = json!(public(&f.client));
@@ -626,6 +641,19 @@ fn expired_enrollment_and_expired_grant_do_not_gain_scope() -> Result<()> {
             .is_err()
     );
     let grant = store.enroll_locally(request.clone(), &request.digest()?, &peer(&f)?, f.now)?;
+    let earlier = command(
+        &f,
+        &admin,
+        &grant.enrollment.intent.id,
+        OwnerAction::ListPairing,
+    )?;
+    let reserved = store.reserve(&earlier, &peer(&f)?, f.now)?;
+    store.record_result(
+        reserved.nonce(),
+        reserved.digest(),
+        ControlResult::PairingList { request: None },
+        f.now,
+    )?;
     let expiry = grant.enrollment.intent.grant_expires_at;
     // Trust and membership remain valid at this short grant's exact expiry.
     let late_peer = VerifiedController::from_session(
@@ -635,6 +663,12 @@ fn expired_enrollment_and_expired_grant_do_not_gain_scope() -> Result<()> {
         &public(&f.client),
         expiry,
     )?;
+    assert!(
+        store
+            .checked_result(&late_peer, reserved.nonce(), reserved.digest(), expiry)
+            .is_err(),
+        "A retained result must not outlive its administrator grant"
+    );
     let mut intent = command(
         &f,
         &admin,

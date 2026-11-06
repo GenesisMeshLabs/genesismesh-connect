@@ -10,6 +10,54 @@ use chrono::{Duration, Utc};
 use std::collections::BTreeSet;
 
 impl DeviceController {
+    pub(crate) async fn local_admin_scope(&mut self) -> Result<ControlScope> {
+        self.current_owner_trust().await?;
+        Ok(self.host_control_path()?.1)
+    }
+    pub(crate) fn local_admin_enabled(&self) -> Result<bool> {
+        let (path, _) = self.host_control_path()?;
+        if path.try_exists()? || path.with_extension("owner-control-lock").try_exists()? {
+            self.open_owner_requests()?; // Missing initialized/corrupt state is never "off".
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    fn host_control_path(&self) -> Result<(std::path::PathBuf, ControlScope)> {
+        ensure!(
+            self.network_computer(),
+            "Use Requests on the authority host"
+        );
+        Ok((
+            self.state_directory.join("owner-control.json"),
+            self.administrative_binding()?.scope,
+        ))
+    }
+    /// Explicit local enablement. No request or reopen may initialize this registry.
+    pub fn enable_owner_requests(&self) -> Result<()> {
+        let (path, scope) = self.host_control_path()?;
+        crate::owner_control::HostControl::create(&path, scope)?;
+        Ok(())
+    }
+    /// Local native review surface; never offered on the member transport.
+    pub fn open_owner_requests(&self) -> Result<crate::owner_control::HostControl> {
+        let (path, scope) = self.host_control_path()?;
+        crate::owner_control::HostControl::open(&path, scope)
+    }
+    pub async fn answer_owner_control(
+        &mut self,
+        owner: &mut crate::owner::OwnerRuntime,
+        node: &str,
+        certificate: &serde_json::Value,
+        request: crate::owner_control::ControlEnvelope,
+    ) -> Result<serde_json::Value> {
+        let mut control = self.open_owner_requests()?;
+        Ok(serde_json::to_value(
+            control
+                .answer(owner, self, node, certificate, request)
+                .await?,
+        )?)
+    }
     pub async fn owner_control_exchange(
         &mut self,
         request: &crate::owner_control::ControlEnvelope,
@@ -32,12 +80,7 @@ impl DeviceController {
         certificate: &serde_json::Value,
         node: &str,
     ) -> Result<crate::owner_control::VerifiedController> {
-        self.require_connected()?;
-        ensure!(
-            self.network_computer(),
-            "This device is not the authority host"
-        );
-        let trust = self.refresh_inner(false).await?;
+        let trust = self.current_owner_trust().await?;
         crate::owner_control::VerifiedController::from_session(
             &self.administrative_binding()?.scope,
             &trust,
@@ -46,7 +89,48 @@ impl DeviceController {
             Utc::now(),
         )
     }
-    fn administrative_binding(&self) -> Result<AdministrativeBinding> {
+    pub(crate) async fn verify_pairing_commit(
+        &mut self,
+        certificate: &serde_json::Value,
+        controller: &str,
+        candidate: &crate::session::AuthenticatedPeer,
+        candidate_node: &str,
+    ) -> Result<crate::owner_control::VerifiedController> {
+        // The same newly fetched snapshot covers host, controller and the exact
+        // authenticated candidate. No retained session snapshot authorizes commit.
+        let trust = self.current_owner_trust().await?;
+        candidate.require_current(&trust, candidate_node)?;
+        crate::owner_control::VerifiedController::from_session(
+            &self.administrative_binding()?.scope,
+            &trust,
+            certificate,
+            controller,
+            Utc::now(),
+        )
+    }
+    async fn current_owner_trust(&mut self) -> Result<crate::session::TrustSnapshot> {
+        self.require_connected()?;
+        ensure!(
+            self.network_computer(),
+            "This device is not the authority host"
+        );
+        // Validate against the current authority without republishing bridge
+        // credentials: republishing cancels the very QUIC request being checked.
+        // Periodic lifecycle maintenance still renews and publishes separately.
+        let trust = self
+            .authority
+            .as_ref()
+            .context("Authority host is unavailable")?
+            .refresh(&mut self.trust)
+            .await?;
+        let own = self
+            .device
+            .as_ref()
+            .context("Enroll the authority host first")?;
+        trust.certificate(own.certificate(), &own.public_key(), Utc::now())?;
+        Ok(trust)
+    }
+    pub(super) fn administrative_binding(&self) -> Result<AdministrativeBinding> {
         let node = STANDARD.encode(self.vault.key().verifying_key().to_bytes());
         let host = if self.network_computer() {
             node.clone()
@@ -77,6 +161,14 @@ impl DeviceController {
         ensure!(
             !permissions.is_empty() && validity_seconds > 120 && validity_seconds <= 30 * 24 * 3600,
             "Choose pairing permissions and administrative access of at most 30 days"
+        );
+        ensure!(
+            !crate::owner_control::ClientEnrollment::initialized(
+                &self
+                    .state_directory
+                    .join(crate::owner_control::CLIENT_ENROLLMENT_FILE)
+            )?,
+            "Resume the saved administrative enrollment; no replacement request or key was created"
         );
         self.require_connected()?;
         self.check_network().await?;
