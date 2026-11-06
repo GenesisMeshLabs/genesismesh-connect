@@ -342,6 +342,7 @@ pub async fn pair_approve(id: String, app: tauri::AppHandle) -> Result<(), Strin
             .ok_or("Network device is unavailable")?;
         let reviewed = target.clone();
         let (runtime, device, result) = tokio::task::spawn_blocking(move || {
+            let mut device = device;
             let result = device.issue_local_pairing(&mut runtime, &reviewed);
             (runtime, device, result)
         })

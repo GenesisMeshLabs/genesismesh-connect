@@ -381,6 +381,7 @@ async fn exchange(
         | Operation::AccessPolicy
         | Operation::ResourceCapabilities
         | Operation::OwnerControl
+        | Operation::PairingCompletion
         | Operation::ShareSpace
         | Operation::UnshareSpace => {
             let peer = authenticate_for(
@@ -424,6 +425,39 @@ async fn exchange(
                 "Authority renewal budget exhausted"
             );
             match request.operation {
+                Operation::PairingCompletion => {
+                    crate::device::pairing_completion::qualified()?;
+                    credentials
+                        .trust
+                        .certificate(&peer, &credentials.expected_node, Utc::now())?;
+                    ensure!(
+                        serde_json::to_vec(&signed)?.len() <= 8192,
+                        "Completion query is too large"
+                    );
+                    let query: crate::device::pairing_completion::CompletionQuery =
+                        serde_json::from_value(signed)?;
+                    query.check()?;
+                    let owner = published
+                        .owner
+                        .lock()
+                        .expect("bridge owner")
+                        .clone()
+                        .context("Pairing completion host is unavailable")?;
+                    let (reply, receive) = tokio::sync::oneshot::channel();
+                    owner
+                        .try_send(crate::owner::OwnerRequest {
+                            call: crate::owner::OwnerCall::PairingCompletion {
+                                node: credentials.expected_node.clone(),
+                                certificate: peer,
+                                query,
+                            },
+                            reply,
+                        })
+                        .map_err(|_| anyhow::anyhow!("Pairing completion host is busy"))?;
+                    receive
+                        .await
+                        .context("Pairing completion host did not answer")?
+                }
                 Operation::OwnerControl => {
                     credentials
                         .trust

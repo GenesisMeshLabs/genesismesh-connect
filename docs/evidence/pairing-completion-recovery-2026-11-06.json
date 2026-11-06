@@ -1,0 +1,51 @@
+{
+  "date": "2026-11-06",
+  "baseline_commit": "547a930b5a4c3ee2594fc626e67d91dd44db1d6e",
+  "scope": "Source and explicitly selected disposable WSL embedded-core/QUIC qualification only",
+  "rustc": "1.99.0 (b940084d7 2026-09-28)",
+  "dependency_pins": [
+    "crates/connect-core/Cargo.toml",
+    "apps/connect/authority/core-requirements.txt"
+  ],
+  "checks": {
+    "foreground_owner_fixtures": 7,
+    "existing_pairing_fixtures": 6,
+    "foreground_setup_refusals": 5,
+    "native_transport": 4,
+    "native_correlation": 3,
+    "unchanged_membership_inspector_dto": 3,
+    "exact_pairing_gate": 1,
+    "completion_recovery_fixtures": 7,
+    "completion_proof_and_challenge": 2,
+    "vault_history_and_legacy_omission": 2,
+    "production_default_off_gate": 1
+  },
+  "passed_total": 41,
+  "other_checks": [
+    "cargo fmt --all --check",
+    "actionlint focused workflow",
+    "connect-contract check: 419 declarations, 0 complete accepted outcomes",
+    "git diff --check"
+  ],
+  "observations": [
+    "A lost final reply retains enrollment without claiming a completed local pairing.",
+    "Explicit recovery after reopening both profiles preserves node, certificate and original transport; invitation, join and renewal counts do not increase.",
+    "Inspection and attaching a responder do not finish pairing. Repeated explicit finish performs fresh checks.",
+    "Legacy missing references, reserved approval plus matching membership/graph, superseded identical relationships and unavailable readback remain refused or uncertain.",
+    "Fresh core client revocation and host revocation both refuse recovery.",
+    "Reference tampering, wrong relationship scope, stale challenges, duplicate/ambiguous history, duplicate map keys, missing relationships and substituted endpoints are refused.",
+    "The completed read-only pending membership inspector is unchanged."
+  ],
+  "gates": {
+    "recovery": "Qualification feature only; no public command or automatic finish",
+    "app_shell": "Source reviewed; full app boundary not built or retried",
+    "physical_devices": "Not accessed; no installation/reset or custody changes",
+    "hosted_ci": "Focused repeatable workflow updated; not dispatched",
+    "publication": "Local only; no push, merge, release or deployment"
+  },
+  "limits": [
+    "Host-signed references and local sealed evidence are not independent audit evidence or proof of human comparison-code review.",
+    "This does not qualify physical phone lifecycle, public first-use, or backup/restore after losing a device.",
+    "Existing profile and qualification gates remain required. No membership renewal or enrollment is part of recovery."
+  ]
+}

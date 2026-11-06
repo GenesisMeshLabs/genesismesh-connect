@@ -4,91 +4,13 @@
 #[path = "support/embedded_owner.rs"]
 mod support;
 use anyhow::{Context, Result};
-use connect_core::{
-    Connectivity,
-    device::DeviceController,
-    owner::foreground::{ForegroundNetwork, ForegroundSetup, NativeSetupConfig},
-    owner_control::PairingTarget,
-    session::pairing::{Joined, PairCard, PairClient, PairGrant, PairHost},
-};
-use serde_json::{Value, json};
-use std::{path::Path, sync::Arc, time::Duration};
+use connect_core::device::DeviceController;
+use std::time::Duration;
 use support::{calls, core_calls};
 
-fn loopback(mut value: Value) -> Result<Value> {
-    let address = value["endpoint"]["addrs"]
-        .as_array()
-        .context("Missing fixture addresses")?
-        .iter()
-        .filter_map(|a| a["Ip"].as_str()?.parse::<std::net::SocketAddr>().ok())
-        .find(|a| a.is_ipv4())
-        .context("Missing IPv4 fixture socket")?;
-    value["endpoint"]["addrs"] = json!([{"Ip":format!("127.0.0.1:{}",address.port())}]);
-    Ok(value)
-}
-fn ticket(text: String) -> Result<String> {
-    Ok(serde_json::to_string(&loopback(serde_json::from_str(
-        &text,
-    )?)?)?)
-}
-fn grant(mut value: PairGrant) -> Result<PairGrant> {
-    value.route.ticket = ticket(value.route.ticket)?;
-    value.session_ticket = ticket(value.session_ticket)?;
-    Ok(value)
-}
-async fn owner(root: &Path) -> Result<(ForegroundNetwork, support::Loss)> {
-    support::sealed_store();
-    std::fs::create_dir(root.join("native"))?;
-    let (runtime, _, loss) = support::controlled_backend(&root.join("backend"), None)?;
-    let mut setup = ForegroundSetup::begin(
-        runtime,
-        NativeSetupConfig::new(root.join("native"))?,
-        support::create(),
-    )?;
-    setup.open_authority()?;
-    setup.prepare_device()?;
-    setup.request_invitation()?;
-    setup.enroll_device().await?;
-    let mut owner = setup.finish()?;
-    owner
-        .device
-        .set_network_connectivity(Connectivity::LocalNetwork)
-        .await?;
-    Ok((owner, loss))
-}
-async fn request(
-    owner: &mut ForegroundNetwork,
-    member: &mut DeviceController,
-) -> Result<(Arc<PairHost>, PairCard, PairClient, PairingTarget)> {
-    let pair = owner.device.create_pairing("Fixture home".into()).await?;
-    let card: PairCard = serde_json::from_value(loopback(serde_json::to_value(pair.card())?)?)?;
-    let client = member
-        .request_pairing(card.clone(), "Second device".into())
-        .await?;
-    let target =
-        PairingTarget::from_pending(&pair.pending().context("No actual pending candidate")?);
-    assert_eq!(target.node, member.status()?.node_public_key);
-    assert_eq!(target.comparison_code, client.code);
-    assert_eq!(target.comparison_code.len(), 6);
-    Ok((pair, card, client, target))
-}
-fn candidate(root: &Path, owner: &ForegroundNetwork) -> Result<DeviceController> {
-    DeviceController::prepare_remote(&root.join("candidate"), owner.info.pin.clone())
-}
-async fn joined(completion: tokio::sync::oneshot::Receiver<Joined>) -> Result<Joined> {
-    Ok(tokio::time::timeout(Duration::from_secs(20), completion).await??)
-}
-async fn stop(
-    owner: &mut ForegroundNetwork,
-    member: &mut DeviceController,
-    pair: &PairHost,
-    client: &PairClient,
-) {
-    client.close().await;
-    pair.close().await;
-    member.stop().await;
-    owner.device.stop().await;
-}
+#[path = "support/foreground_pairing.rs"]
+mod pairing_support;
+use pairing_support::*;
 
 #[tokio::test]
 #[ignore = "Requires the disposable pinned-core foreground fixture"]
@@ -99,7 +21,7 @@ async fn embedded_owner_pairs_exact_candidate_then_core_revocation_refuses_refre
     let (mut owner, _) = owner(root).await?;
     let baseline = core_calls(root, "/join");
     let mut member = candidate(root, &owner)?;
-    let (pair, card, mut client, target) = request(&mut owner, &mut member).await?;
+    let (pair, card, mut client, target) = request(&mut owner, &mut member, false).await?;
     for field in ["node", "code", "name", "id"] {
         let mut wrong = target.clone();
         match field {
@@ -190,7 +112,7 @@ async fn decline_never_invites_or_enrolls_and_preserves_the_prepared_identity() 
     let baseline = core_calls(root, "/join");
     let mut member = candidate(root, &owner)?;
     let node = member.status()?.node_public_key;
-    let (pair, _, mut client, target) = request(&mut owner, &mut member).await?;
+    let (pair, _, mut client, target) = request(&mut owner, &mut member, false).await?;
     owner.device.decline_local_pairing(&target)?;
     assert!(client.grant().await.is_err());
     assert!(pair.pending().is_none());
@@ -218,7 +140,7 @@ async fn lost_native_invitation_reply_fences_the_same_exact_approval_before_anot
     let (mut owner, loss) = owner(root).await?;
     let baseline = core_calls(root, "/join");
     let mut member = candidate(root, &owner)?;
-    let (pair, _, mut client, target) = request(&mut owner, &mut member).await?;
+    let (pair, _, mut client, target) = request(&mut owner, &mut member, false).await?;
     owner.device.prepare_local_pairing(&target).await?;
     *loss.lock().unwrap() = Some("invite");
     assert!(
@@ -255,7 +177,7 @@ async fn core_revocation_during_join_is_rechecked_before_trusting_or_confirming_
     let root = dir.path();
     let (mut owner, _) = owner(root).await?;
     let mut member = candidate(root, &owner)?;
-    let (pair, card, mut client, target) = request(&mut owner, &mut member).await?;
+    let (pair, card, mut client, target) = request(&mut owner, &mut member, false).await?;
     owner.device.prepare_local_pairing(&target).await?;
     let completion = owner
         .device
@@ -309,7 +231,7 @@ async fn unobserved_final_reply_keeps_enrollment_but_does_not_claim_pairing_or_r
     let (mut owner, _) = owner(root).await?;
     let baseline = core_calls(root, "/join");
     let mut member = candidate(root, &owner)?;
-    let (pair, card, mut client, target) = request(&mut owner, &mut member).await?;
+    let (pair, card, mut client, target) = request(&mut owner, &mut member, false).await?;
     owner.device.prepare_local_pairing(&target).await?;
     let completion = owner
         .device
@@ -350,7 +272,7 @@ async fn interrupted_enrollment_blocks_a_fresh_ceremony_until_the_saved_outcome_
     let (mut owner, _) = owner(root).await?;
     let mut member = candidate(root, &owner)?;
     let node = member.status()?.node_public_key;
-    let (pair, _, client, target) = request(&mut owner, &mut member).await?;
+    let (pair, _, client, target) = request(&mut owner, &mut member, false).await?;
     owner.device.prepare_local_pairing(&target).await?;
     let _completion = owner
         .device

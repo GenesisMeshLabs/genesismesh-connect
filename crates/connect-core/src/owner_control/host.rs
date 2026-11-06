@@ -3,7 +3,7 @@ use super::*;
 use crate::{
     device::{DeviceController, PairedDevice},
     owner::OwnerRuntime,
-    session::{bridge::BridgeRoute, pairing::PairGrant},
+    session::bridge::BridgeRoute,
 };
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
@@ -167,15 +167,18 @@ impl HostControl {
                     None
                 };
                 let peer = device.verify_owner_controller(certificate, node).await?;
+                let recoverable = pair.completion_requested(target)?;
                 let completion = pair.control_dispatch(action, || {
                     owner.pairing_ready(&self.scope.pin)?;
                     self.require_dispatch(&peer, command)?;
                     let grant = if let Some((route, session_ticket)) = route {
-                        Some(PairGrant {
-                            invitation: owner.invite(&target.node, true)?,
+                        Some(device.make_pairing_grant(
+                            owner,
+                            target,
                             route,
                             session_ticket,
-                        })
+                            recoverable,
+                        )?)
                     } else {
                         None
                     };
@@ -214,11 +217,15 @@ impl HostControl {
                         reserved.digest(),
                         Utc::now(),
                     )?;
-                    device.remember_pairing(PairedDevice {
-                        name: target.name.clone(),
-                        node: target.node.clone(),
-                        ticket: joined.ticket.clone(),
-                    })
+                    device.remember_approved_pairing(
+                        target,
+                        joined.completion_digest.as_deref(),
+                        PairedDevice {
+                            name: target.name.clone(),
+                            node: target.node.clone(),
+                            ticket: joined.ticket.clone(),
+                        },
+                    )
                 }
                 .await;
                 if let Err(error) = commit {

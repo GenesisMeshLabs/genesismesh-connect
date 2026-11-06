@@ -861,7 +861,8 @@ async fn spaces_act_for_the_caller_name_only_saved_devices_and_show_only_its_own
         while let Some(request) = requests.recv().await {
             let result = match &request.call {
                 crate::owner::OwnerCall::ResourceCapabilities { .. }
-                | crate::owner::OwnerCall::Control { .. } => {
+                | crate::owner::OwnerCall::Control { .. }
+                | crate::owner::OwnerCall::PairingCompletion { .. } => {
                     Err(anyhow::anyhow!("Not configured in this fixture"))
                 }
                 crate::owner::OwnerCall::Share {

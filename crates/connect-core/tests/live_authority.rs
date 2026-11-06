@@ -191,6 +191,7 @@ async fn approved_pairing_enrolls_without_copying_keys_and_requires_final_peer_p
         pair.approve(
             "other-request",
             PairGrant {
+                completion: None,
                 invitation: "never-released".into(),
                 route: BridgeRoute {
                     ticket: "unused".into(),
@@ -225,6 +226,7 @@ async fn approved_pairing_enrolls_without_copying_keys_and_requires_final_peer_p
     let complete = pair.approve(
         &request.id,
         PairGrant {
+            completion: None,
             invitation: invitation["invite"].as_str().unwrap().into(),
             route: BridgeRoute {
                 ticket: bridge.ticket()?,
@@ -1834,6 +1836,7 @@ async fn guided_pairing_works_on_the_local_network_and_survives_a_computer_resta
     let completion = pair.approve(
         &request.id,
         PairGrant {
+            completion: None,
             invitation: invitation["invite"].as_str().unwrap().into(),
             route: BridgeRoute {
                 host_node: host.node_public_key.clone(),
@@ -1949,6 +1952,7 @@ async fn join_computer(
     let completion = pair.approve(
         &request.id,
         PairGrant {
+            completion: None,
             invitation: invitation["invite"].as_str().unwrap().into(),
             route: BridgeRoute {
                 host_node: host.node_public_key.clone(),

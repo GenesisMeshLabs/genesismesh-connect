@@ -81,6 +81,7 @@ enum Operation {
     AccessPolicy,
     ResourceCapabilities,
     OwnerControl,
+    PairingCompletion,
 }
 
 /// A Space as a device learns it from its network computer: another device's

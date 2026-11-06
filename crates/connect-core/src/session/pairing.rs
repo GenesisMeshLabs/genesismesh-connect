@@ -97,16 +97,20 @@ pub struct PairGrant {
     pub invitation: String,
     pub route: bridge::BridgeRoute,
     pub session_ticket: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<crate::device::pairing_completion::CompletionReference>,
 }
 pub struct Joined {
     pub ticket: String,
     pub confirm: oneshot::Sender<bool>,
+    pub(crate) completion_digest: Option<String>,
 }
 struct Pending {
     info: PairRequest,
     grant: oneshot::Sender<PairGrant>,
     joined: oneshot::Receiver<Joined>,
     approval_reserved: bool,
+    completion_requested: bool,
 }
 struct Gate {
     pending: Option<Pending>,
@@ -206,6 +210,16 @@ impl PairHost {
             .as_ref()
             .filter(|p| !p.grant.is_closed())
             .map(|p| p.info.clone())
+    }
+    pub(crate) fn completion_requested(
+        &self,
+        target: &crate::owner_control::PairingTarget,
+    ) -> Result<bool> {
+        let gate = self.gate.lock().expect("pair gate");
+        let pending = gate.pending.as_ref().context("No pending device")?;
+        crate::owner_control::OwnerAction::ApprovePairing(target.clone())
+            .require_pending(&pending.info)?;
+        Ok(pending.completion_requested)
     }
     pub fn approve(&self, id: &str, grant: PairGrant) -> Result<oneshot::Receiver<Joined>> {
         ensure!(self.created.elapsed() < WINDOW, "Pairing expired");
@@ -353,11 +367,15 @@ struct ClientHello {
 struct Ask {
     token: String,
     name: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    completion_v1: bool,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Finished {
     ticket: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completion_digest: Option<String>,
 }
 fn transcript(
     client: &ClientHello,
@@ -443,6 +461,9 @@ async fn serve(
     )?;
     let ask: Ask = read_frame(&mut recv).await?;
     valid_name(&ask.name)?;
+    if ask.completion_v1 {
+        crate::device::pairing_completion::qualified()?;
+    }
     // Compare a digest to avoid leaking a progressively matched secret prefix.
     ensure!(
         canonical_digest(&serde_json::json!(ask.token))?
@@ -459,7 +480,7 @@ async fn serve(
         gate.used = true;
         gate.pending = Some(Pending {
             info: PairRequest {
-                id,
+                id: id.clone(),
                 name: ask.name,
                 node: peer.node,
                 code: comparison(&binding),
@@ -467,27 +488,37 @@ async fn serve(
             grant: grant_tx,
             joined: joined_rx,
             approval_reserved: false,
+            completion_requested: ask.completion_v1,
         });
     }
-    write_frame(
-        &mut send,
-        &serde_json::json!({"waiting":true,"code":comparison(&binding)}),
-    )
-    .await?;
+    let mut waiting = serde_json::json!({"waiting":true,"code":comparison(&binding)});
+    if ask.completion_v1 {
+        waiting["request_id"] = Value::String(id);
+    }
+    write_frame(&mut send, &waiting).await?;
     let grant = timeout(APPROVAL, grant_rx)
         .await
         .context("Approval expired")?
         .context("Owner declined")?;
     card.validate()?;
     current_owner(state, card)?;
+    ensure!(
+        ask.completion_v1 == grant.completion.is_some(),
+        "Pairing completion negotiation changed"
+    );
     write_frame(&mut send, &grant).await?;
     let finished: Finished = timeout(Duration::from_secs(75), read_frame(&mut recv)).await??;
+    ensure!(
+        finished.completion_digest == grant.completion.as_ref().map(|r| r.digest()).transpose()?,
+        "Original pairing completion reference changed"
+    );
     let _: super::SessionTicket = wire::decode(finished.ticket.as_bytes())?;
     let (confirm_tx, confirm_rx) = oneshot::channel();
     joined_tx
         .send(Joined {
             ticket: finished.ticket,
             confirm: confirm_tx,
+            completion_digest: finished.completion_digest,
         })
         .map_err(|_| anyhow::anyhow!("Pairing cancelled"))?;
     ensure!(
@@ -547,6 +578,8 @@ pub struct PairClient {
     recv: RecvStream,
     pub card: PairCard,
     pub code: String,
+    expected_completion: Option<crate::owner_control::PairingTarget>,
+    completion_digest: Option<String>,
 }
 impl PairClient {
     pub async fn request(
@@ -555,6 +588,18 @@ impl PairClient {
         store: &mut TrustStore,
         name: String,
     ) -> Result<Self> {
+        Self::request_mode(card, key, store, name, false).await
+    }
+    pub(crate) async fn request_mode(
+        card: PairCard,
+        key: &SigningKey,
+        store: &mut TrustStore,
+        name: String,
+        completion_v1: bool,
+    ) -> Result<Self> {
+        if completion_v1 {
+            crate::device::pairing_completion::qualified()?;
+        }
         card.validate()?;
         valid_name(&name)?;
         let endpoint = crate::Connectivity::of_destination(&card.endpoint)
@@ -607,27 +652,48 @@ impl PairClient {
                 &mut send,
                 &Ask {
                     token: card.token.clone(),
-                    name,
+                    name: name.clone(),
+                    completion_v1,
                 },
             )
             .await?;
-            let waiting: Value = read_frame(&mut recv).await?;
+            let mut waiting: Value = read_frame(&mut recv).await?;
+            let original_id = if completion_v1 {
+                Some(
+                    waiting
+                        .as_object_mut()
+                        .context("Invalid pairing response")?
+                        .remove("request_id")
+                        .and_then(|v| v.as_str().map(str::to_owned))
+                        .context("Host did not retain the original pairing reference")?,
+                )
+            } else {
+                None
+            };
             let code = comparison(&binding);
             ensure!(
                 waiting == serde_json::json!({"waiting":true,"code":code}),
                 "Pairing request refused"
             );
-            Ok::<_, anyhow::Error>((connection, send, recv, code))
+            let expected = original_id.map(|request_id| crate::owner_control::PairingTarget {
+                request_id,
+                node: ours.node,
+                name: name.clone(),
+                comparison_code: code.clone(),
+            });
+            Ok::<_, anyhow::Error>((connection, send, recv, code, expected))
         })
         .await;
         match outcome {
-            Ok(Ok((connection, send, recv, code))) => Ok(Self {
+            Ok(Ok((connection, send, recv, code, expected_completion))) => Ok(Self {
                 endpoint,
                 connection,
                 send,
                 recv,
                 card,
                 code,
+                expected_completion,
+                completion_digest: None,
             }),
             other => {
                 endpoint.close().await;
@@ -648,15 +714,43 @@ impl PairClient {
             grant.route.host_node == self.card.host_node,
             "Approval named another owner"
         );
+        match (&self.expected_completion, &grant.completion) {
+            (Some(expected), Some(reference)) => {
+                reference.require_scope(&self.card.pin, &self.card.host_node, &expected.node)?;
+                ensure!(
+                    &reference.target == expected
+                        && super::ticket_endpoint(&grant.session_ticket)?.to_string()
+                            == reference.host_endpoint,
+                    "Approval belongs to another original pairing"
+                );
+                self.completion_digest = Some(reference.digest()?);
+            }
+            (None, None) => (),
+            _ => anyhow::bail!("Pairing completion protocol was not agreed"),
+        }
         Ok(grant)
     }
     pub async fn finish(&mut self, ticket: String) -> Result<()> {
-        write_frame(&mut self.send, &Finished { ticket }).await?;
+        write_frame(
+            &mut self.send,
+            &Finished {
+                ticket,
+                completion_digest: self.completion_digest.clone(),
+            },
+        )
+        .await?;
         self.send.finish()?;
         let paired: Value = timeout(Duration::from_secs(25), read_frame(&mut self.recv)).await??;
         ensure!(
             paired == serde_json::json!({"paired":true}),
             "Pairing was not confirmed"
+        );
+        Ok(())
+    }
+    pub(crate) fn require_grant(&self, grant: &PairGrant) -> Result<()> {
+        ensure!(
+            grant.completion.as_ref().map(|r| r.digest()).transpose()? == self.completion_digest,
+            "Pairing completion reference changed after approval"
         );
         Ok(())
     }
@@ -701,6 +795,7 @@ mod tests {
             grant,
             joined,
             approval_reserved: false,
+            completion_requested: false,
         });
         let target = PairingTarget::from_pending(&info);
         let mut wrong = target.clone();

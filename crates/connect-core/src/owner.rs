@@ -204,6 +204,11 @@ pub fn orphaned(
 /// a device's behalf. The host is always the authenticated device.
 #[derive(Debug)]
 pub enum OwnerCall {
+    PairingCompletion {
+        node: String,
+        certificate: Value,
+        query: crate::device::pairing_completion::CompletionQuery,
+    },
     Control {
         node: String,
         certificate: Value,
@@ -630,7 +635,7 @@ impl OwnerRuntime {
     /// Answer one bridge request.
     pub fn answer(&mut self, call: OwnerCall) -> Result<Value> {
         Ok(match call {
-            OwnerCall::Control { .. } => anyhow::bail!(
+            OwnerCall::Control { .. } | OwnerCall::PairingCompletion { .. } => anyhow::bail!(
                 "Update the network computer: this host has no owner Requests adapter"
             ),
             OwnerCall::ResourceCapabilities { host, collection } => {

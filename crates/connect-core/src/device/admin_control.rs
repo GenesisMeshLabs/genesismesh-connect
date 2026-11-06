@@ -118,7 +118,7 @@ impl DeviceController {
         candidate.require_current(&trust, candidate_node)?;
         Ok(trust)
     }
-    async fn current_owner_trust(&mut self) -> Result<crate::session::TrustSnapshot> {
+    pub(super) async fn current_owner_trust(&mut self) -> Result<crate::session::TrustSnapshot> {
         self.require_connected()?;
         ensure!(
             self.network_computer(),

@@ -386,6 +386,24 @@ async fn answer_owner(
     while let Some(request) = requests.recv().await {
         let state = app.state::<WorkflowState>();
         let mut owner = state.slot.lock().await;
+        if let connect_core::owner::OwnerCall::PairingCompletion {
+            node,
+            certificate,
+            query,
+        } = request.call
+        {
+            let desktop = app.state::<crate::desktop::DesktopState>();
+            let mut slot = desktop.slot.lock().await;
+            let result = match slot.controller.as_mut() {
+                Some(device) => device
+                    .answer_pairing_completion(&node, &certificate, query)
+                    .await
+                    .and_then(|answer| Ok(serde_json::to_value(answer)?)),
+                None => Err(anyhow::anyhow!("Your network is still opening")),
+            };
+            let _ = request.reply.send(result);
+            continue;
+        }
         if let connect_core::owner::OwnerCall::Control {
             node,
             certificate,

@@ -25,7 +25,7 @@ impl DeviceController {
     /// Blocking native owner call; callers use a worker thread. Approval applies
     /// to the exact reviewed ID, key, name and comparison code under the gate.
     pub fn issue_local_pairing(
-        &self,
+        &mut self,
         owner: &mut OwnerRuntime,
         target: &PairingTarget,
     ) -> Result<tokio::sync::oneshot::Receiver<Joined>> {
@@ -35,17 +35,75 @@ impl DeviceController {
         );
         let status = self.status()?;
         let pair = self.pairing().context("No open pairing")?;
+        let recoverable = pair.completion_requested(target)?;
         pair.approve_reviewed(target, || {
             owner.pairing_ready(self.vault.pin())?;
-            Ok(PairGrant {
-                invitation: owner.invite(&target.node, true)?,
-                route: BridgeRoute {
+            self.make_pairing_grant(
+                owner,
+                target,
+                BridgeRoute {
                     host_node: status.node_public_key,
                     ticket: status.bridge_ticket.context("Missing authority bridge")?,
                 },
-                session_ticket: status.ticket.context("Missing host session")?,
-            })
+                status.ticket.context("Missing host session")?,
+                recoverable,
+            )
         })
+    }
+    pub(crate) fn make_pairing_grant(
+        &mut self,
+        owner: &mut OwnerRuntime,
+        target: &PairingTarget,
+        route: BridgeRoute,
+        session_ticket: String,
+        recoverable: bool,
+    ) -> Result<PairGrant> {
+        let completion = if recoverable {
+            let reference = super::pairing_completion::CompletionReference::issue(
+                self.vault.pin().clone(),
+                target.clone(),
+                &session_ticket,
+                &self.vault.key(),
+            )?;
+            // Durable reservation precedes invitation. A lost invite reply never
+            // upgrades this reservation into a committed relationship.
+            self.vault.reserve_completion(reference.clone())?;
+            Some(reference)
+        } else {
+            None
+        };
+        Ok(PairGrant {
+            invitation: owner.invite(&target.node, true)?,
+            route,
+            session_ticket,
+            completion,
+        })
+    }
+    pub(crate) fn remember_approved_pairing(
+        &mut self,
+        target: &PairingTarget,
+        digest: Option<&str>,
+        peer: PairedDevice,
+    ) -> Result<()> {
+        if let Some(digest) = digest {
+            let evidence = self.vault.host_completion(digest)?;
+            ensure!(
+                &evidence.reference.target == target
+                    && peer.node == target.node
+                    && peer.name == target.name,
+                "Completion evidence belongs to another original pairing"
+            );
+            ensure!(
+                self.vault.peer() == Some(target.node.as_str()),
+                "Pairing does not match the selected identity"
+            );
+            self.vault
+                .save_completed_pairing(peer, Some(digest), true)?;
+            self.publish_members();
+            Ok(())
+        } else {
+            self.remember_pairing(peer)
+        }
     }
 
     pub fn decline_local_pairing(&self, target: &PairingTarget) -> Result<()> {
@@ -70,11 +128,15 @@ impl DeviceController {
                 .await?;
             self.current_pairing_trust(&proof, &target.node).await?;
             // No await between the fresh trust check and the native commit.
-            self.remember_pairing(PairedDevice {
-                name: target.name.clone(),
-                node: target.node.clone(),
-                ticket: joined.ticket.clone(),
-            })
+            self.remember_approved_pairing(
+                target,
+                joined.completion_digest.as_deref(),
+                PairedDevice {
+                    name: target.name.clone(),
+                    node: target.node.clone(),
+                    ticket: joined.ticket.clone(),
+                },
+            )
         }
         .await;
         if let Err(error) = verified {
@@ -102,6 +164,18 @@ impl DeviceController {
             self.vault.pin() == &card.pin && grant.route.host_node == card.host_node,
             "Pairing grant belongs to another authority host"
         );
+        if let Some(reference) = &grant.completion {
+            super::pairing_completion::qualified()?;
+            let node = self.status()?.node_public_key;
+            reference.require_scope(self.vault.pin(), &card.host_node, &node)?;
+            ensure!(
+                crate::session::ticket_endpoint(&grant.session_ticket)?.to_string()
+                    == reference.host_endpoint,
+                "Original host endpoint changed"
+            );
+            self.vault
+                .save_client_completion(reference.clone(), card.host_name.clone())?;
+        }
         self.use_bridge(grant.route.clone()).await?;
         self.enroll_host(&grant.invitation).await?;
         self.start(&card.host_node).await?;
@@ -118,12 +192,21 @@ impl DeviceController {
         card: &PairCard,
         grant: PairGrant,
     ) -> Result<()> {
+        pairing.require_grant(&grant)?;
         let ticket = self.prepare_approved_pairing(card, &grant).await?;
         pairing.finish(ticket).await?;
-        self.remember_pairing(PairedDevice {
+        let peer = PairedDevice {
             name: card.host_name.clone(),
             node: card.host_node.clone(),
             ticket: grant.session_ticket,
-        })
+        };
+        if let Some(reference) = &grant.completion {
+            self.vault
+                .save_completed_pairing(peer, Some(&reference.digest()?), false)?;
+            self.publish_members();
+            Ok(())
+        } else {
+            self.remember_pairing(peer)
+        }
     }
 }
