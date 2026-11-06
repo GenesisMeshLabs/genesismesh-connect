@@ -71,7 +71,10 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .parent()
         .ok_or("Missing application directory")?
         .join("network-owner");
-    let configured = directory.join("owner.json").is_file();
+    // Mobile foreground setup uses native custody discovery, never desktop files
+    // and never automatic authority startup. Its private coordinator is below.
+    let configured = cfg!(any(windows, target_os = "macos", target_os = "linux"))
+        && directory.join("owner.json").is_file();
     let (owner, requests) = tokio::sync::mpsc::channel(8);
     app.manage(WorkflowState {
         directory,
@@ -136,10 +139,37 @@ pub async fn network_status(
     let slot = state.slot.lock().await;
     Ok(NetworkStatus {
         runtime_available: runtime_available(),
-        owner: state.directory.join("owner.json").is_file(),
+        owner: slot.info.is_some()
+            || (cfg!(any(windows, target_os = "macos", target_os = "linux"))
+                && state.directory.join("owner.json").is_file()),
         network_name: slot.info.as_ref().map(|i| i.pin.network_name.clone()),
         problem: slot.problem.clone(),
     })
+}
+
+/// Source-only qualification entry: foreground/native callers only. No frontend
+/// command, startup task or public Create/admin gate calls this function.
+#[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+#[allow(dead_code)]
+pub(crate) async fn prepare_foreground_phone(
+    app: tauri::AppHandle,
+    choice: connect_core::owner::foreground::SetupChoice,
+) -> anyhow::Result<connect_core::owner::foreground::ForegroundNetwork> {
+    use connect_core::owner::foreground::{ForegroundSetup, NativeSetupConfig};
+    // The fixed qualification app's OS-private directory is selected natively.
+    // Neither owner.json nor a frontend-selected path/origin participates.
+    let config = NativeSetupConfig::new(app.path().app_data_dir()?.canonicalize()?)?;
+    let mut setup = tokio::task::spawn_blocking(move || {
+        let runtime = crate::android_owner::prepare(&app)?;
+        let mut setup = ForegroundSetup::begin(runtime, config, choice)?;
+        setup.open_authority()?;
+        setup.prepare_device()?;
+        setup.request_invitation()?;
+        Ok::<_, anyhow::Error>(setup)
+    })
+    .await??;
+    setup.enroll_device().await?;
+    setup.finish()
 }
 
 #[tauri::command]

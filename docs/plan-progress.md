@@ -268,6 +268,19 @@ proof above is required alongside the optional server profile. Native dependency
 qualification and lifecycle work remain open; no unsupported Create button is
 enabled by the plan update.
 
+A subsequent local source/host-fixture slice adds the portable foreground
+setup/open coordinator. Native embedded discovery replaces desktop-file
+assumptions on this path. Durable reservations bind one authority setup and one
+saved device; lost invitations or unfinished enrollment are not replayed. Fresh
+Open can finish an already persisted matching credential and rebind only the
+same pin/device to a new loopback port. Five refusal fixtures and seven explicit
+disposable real-core fixtures pass; existing native/inspection checks also pass.
+The disabled private Android workflow factory now calls `android_owner::prepare`;
+it is not invoked by frontend commands or startup. Source glue defers saved
+local-owner maintenance until rebinding. Full-app compilation, actual phone
+setup/lifecycle, recovery and second-device acceptance remain open; no device,
+reset, installation, publication or merge operation occurred in this slice.
+
 **“Use my phone to review and approve a new device joining my network.”**
 
 An existing member explicitly requests limited administration; the host owner

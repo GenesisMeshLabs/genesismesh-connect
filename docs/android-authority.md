@@ -151,6 +151,60 @@ never replayed on reopen. Revoked membership is not re-enrolled. The low-level
 `open` operation remains read-only for recovery tools. This does not enable
 Create in the main app or make a background-availability promise.
 
+### Foreground setup/open coordination
+
+`owner::foreground::ForegroundSetup` is a portable native-only coordinator over
+an injected `OwnerRuntime` and the existing `DeviceController`. Its native
+configuration selects fixed `device`, `foreground-setup.json` and
+`foreground-setup.lock` paths beneath OS-private application storage. Embedded
+authority discovery uses the strict native `status` response, not `owner.json`
+or a desktop executable. Create and Open are separate choices; Open never
+falls back to creation, and Create refuses any existing device, journal or
+configured authority custody.
+
+The exclusive bounded journal reserves every nonrepeatable stage before work:
+
+| Saved stage | Allowed continuation after an explicit fresh Open |
+| --- | --- |
+| Authority reserved | Open protected existing custody if native discovery finds it; otherwise stop for review |
+| Authority ready | Reserve device preparation before creating one profile |
+| Device preparing | Open the existing saved profile; missing/invalid state is preserved for review |
+| Device ready | Invite the exact bound node once, after saving the reservation |
+| Invitation reserved | Stop for review; a lost invitation is not issued again |
+| Enrollment reserved | Finish only from an already saved matching host credential; otherwise stop for review |
+| Ready | Open the same pin/node/credential and rebind to the current numeric-loopback origin |
+
+Existing invitation and host-enrollment implementations perform the actual
+core work. The coordinator stores no invite tokens, private keys or authority
+URLs in the progress journal. Invitations live briefly in zeroizing memory;
+cancelled enrollment retains the controller's existing pending marker. Errors
+fence that coordinator instance, and journal changes are checked before further
+work. A completed result retains an exclusive journal lease alongside its runtime
+and controller. Expired or unexpectedly changed saved credentials require
+maintenance/review; this slice adds no automatic re-enrollment or recovery action.
+Progress is local state, not authorization, rollback protection or independent
+core audit evidence. Resource use still follows the ordinary core checks.
+
+Under the disabled Android qualification feature, the private workflow factory
+calls `android_owner::prepare`, runs blocking native work on a worker, and uses
+the existing async enrollment path. Native code canonicalizes the OS-selected
+application directory; debug profile overrides do not select this configuration.
+Saved local-owner startup is deferred until explicit foreground Open can rebind
+the controller, avoiding maintenance against a stale loopback port. Ordinary
+desktop startup and member-phone joining remain on their existing paths. No
+frontend command, public Create/admin gate or automatic startup invokes the
+factory. The completed membership inspector remains unchanged and read-only.
+
+Validation is source/host-fixture-only: five portable refusal tests and seven
+explicit disposable real-core fixtures cover identity-preserving reopen,
+forced port changes, lost replies, interrupted device preparation, cancelled
+enrollment and readback of saved completion without another invitation. They
+use test-only encrypted custody and an explicitly selected disposable sealed
+device store, not Android Keystore. The focused workflow repeats these exact
+fixtures; it does not discover excluded startup-failure tests. The Android app
+boundary/full APK, physical lifecycle, recovery and second-device journey remain
+unperformed for this coordinator. The completed Root Check network is untouched.
+
 ### Read-only interrupted-membership inspection
 
 A separate native-only inspection path reads an existing protected profile and

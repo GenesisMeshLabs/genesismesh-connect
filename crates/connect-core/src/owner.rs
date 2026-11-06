@@ -1,5 +1,6 @@
 //! Owner-computer orchestration. Only a local inherited pipe reaches the sidecar.
 //! No operator credentials or generic administrative requests cross device links.
+pub mod foreground;
 pub mod inspection;
 pub mod native;
 use anyhow::{Context, Result, ensure};
@@ -19,6 +20,16 @@ pub struct OwnerInfo {
     pub url: String,
     pub pin: crate::authority::TrustPin,
     pub managed: bool,
+}
+
+/// Fixed embedded discovery, without desktop files or authority activation.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddedStatus {
+    pub configured: bool,
+    pub running: bool,
+    pub foreground_only: bool,
+    pub production_create_enabled: bool,
 }
 
 /// Readiness of the fixed adapter reached over our inherited local pipe.
@@ -248,6 +259,18 @@ pub struct OwnerRuntime {
     native_failed: bool,
 }
 impl OwnerRuntime {
+    pub fn embedded_status(&mut self) -> Result<EmbeddedStatus> {
+        ensure!(
+            self.native.is_some(),
+            "Embedded discovery requires a native backend"
+        );
+        let status: EmbeddedStatus = serde_json::from_value(self.request(json!({"op":"status"}))?)?;
+        ensure!(
+            status.foreground_only && !status.production_create_enabled,
+            "Unsupported embedded authority profile"
+        );
+        Ok(status)
+    }
     pub fn pairing_ready(&mut self, pin: &crate::authority::TrustPin) -> Result<()> {
         let readiness: RuntimeCapabilities =
             serde_json::from_value(self.request(json!({"op":"pairing_ready"}))?)?;

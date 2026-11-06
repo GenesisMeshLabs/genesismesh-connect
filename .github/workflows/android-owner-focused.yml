@@ -60,5 +60,12 @@ jobs:
           key: owner-native-${{ runner.os }}-rust-1.98-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
             core-${{ runner.os }}-rust-1.98-
-      - run: cargo +1.98.0 test -p connect-core --test owner_native_transport --test owner_native_protocol --test membership_inspection --locked
+      - run: cargo +1.98.0 test -p connect-core --test owner_native_transport --test owner_native_protocol --test membership_inspection --test foreground_setup --locked
       - run: cargo +1.98.0 test -p connect-core --lib owner::tests --locked
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install the pinned core for disposable foreground fixtures
+        run: 'python -m pip install --only-binary=:all: -r apps/connect/authority/core-requirements.txt'
+      - name: Explicit foreground coordinator fixtures (no devices/startup fault injection)
+        run: CONNECT_FOREGROUND_FIXTURE_PYTHON="$(command -v python)" cargo +1.98.0 test -p connect-core --test foreground_owner --locked -- --ignored

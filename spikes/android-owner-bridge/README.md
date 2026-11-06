@@ -23,6 +23,15 @@ the qualification session currently stops conservatively on Activity stop/destro
 
 ## Source generation and app build
 
+The source-only private workflow factory now selects the portable foreground
+coordinator, explicitly choosing Create or Open over this injected backend. It
+uses native custody status and OS-selected paths, and retains durable reservations
+around existing device preparation/invitation/enrollment. It is not called by
+public commands or startup. See [foreground coordination and its remaining gates](../../docs/android-authority.md#foreground-setupopen-coordination).
+The seven explicit real-core fixtures exercise this coordinator on the host;
+neither those fixtures nor this library build compile/qualify its Android Rust
+workflow boundary. No phone operations are part of that source/host slice.
+
 The native-only `inspectMembership` path has its own single-use read sessions.
 It does not reuse, close or unpoison the writer, and it is still rejected from
 frontend invocation. It reads the fixed existing profile without a publisher,
