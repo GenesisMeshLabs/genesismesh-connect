@@ -26,6 +26,10 @@ def run(expected_version, directory, native):
     first = second = None
     stage = "Protected owner custody"
     try:
+        readiness = str(native.readiness())
+        if readiness != "ready":
+            report.update(status="blocked", stage=stage, readiness=readiness)
+            return json.dumps(report)
         vault = AndroidVault(native)
         vault.ready()
         first = EmbeddedOwner(directory, vault, expected_version)

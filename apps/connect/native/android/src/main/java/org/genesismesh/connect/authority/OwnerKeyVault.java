@@ -29,9 +29,15 @@ public final class OwnerKeyVault {
     }
 
     public synchronized void ready() {
-        if (Build.VERSION.SDK_INT < 28 || keyguard == null || !keyguard.isDeviceSecure() || keyguard.isDeviceLocked()) {
-            throw new IllegalStateException("An unlocked Android device with a secure screen lock is required.");
-        }
+        String status = readiness();
+        if (!"ready".equals(status)) throw new IllegalStateException(status);
+    }
+
+    public synchronized String readiness() {
+        if (Build.VERSION.SDK_INT < 28 || keyguard == null) return "unsupported_device";
+        if (!keyguard.isDeviceSecure()) return "secure_screen_lock_required";
+        if (keyguard.isDeviceLocked()) return "device_unlock_required";
+        return "ready";
     }
 
     public synchronized void create() throws Exception {

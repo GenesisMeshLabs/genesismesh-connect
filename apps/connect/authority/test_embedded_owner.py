@@ -187,6 +187,12 @@ class EmbeddedOwnerTests(unittest.TestCase):
         with self.assertRaises(Refused): EmbeddedOwner(self.root, self.vault, "not-the-core-pin")
         self.assertFalse(self.root.exists())
 
+    def test_invalid_name_is_refused_before_native_key_creation(self):
+        for name in ("", " ", "x" * 81, "hidden\u0085control", None):
+            with self.assertRaises(Refused): self.owner().create(name)
+        self.assertFalse(self.root.exists())
+        self.assertEqual(self.vault.creations, 0)
+
     def test_partial_native_key_creation_preserves_the_entry_and_reservation(self):
         owner = self.owner()
         def partial():

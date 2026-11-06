@@ -14,6 +14,7 @@ import os
 import sqlite3
 import threading
 import uuid
+import unicodedata
 
 from nacl.signing import SigningKey
 import requests
@@ -57,7 +58,7 @@ class EmbeddedOwner:
 
     def create(self, network_name):
         with self.mutex:
-            if not isinstance(network_name, str) or not 1 <= len(network_name.strip()) <= 80 or any(ord(c) < 32 for c in network_name):
+            if not isinstance(network_name, str) or not 1 <= len(network_name.strip()) <= 80 or any(unicodedata.category(c) == "Cc" for c in network_name):
                 raise Refused("Choose a network name with 1 to 80 characters.")
             self.vault.ready()
             self.storage.acquire(create=True)
