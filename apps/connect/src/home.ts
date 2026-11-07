@@ -555,7 +555,8 @@ async function addDevice(button: HTMLButtonElement) {
       color: { dark: "#101613", light: "#ffffff" },
     });
     visible("pair-card", true);
-    el("pair-card").scrollIntoView({ behavior: "smooth", block: "start" });
+    // The invitation comes first on the page, clear of the top bar.
+    window.scrollTo({ top: 0, behavior: "smooth" });
   });
 }
 for (const id of ["add-device-button", "files-add-device"])
