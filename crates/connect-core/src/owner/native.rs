@@ -25,6 +25,17 @@ pub struct Reply {
     pub reply: Value,
 }
 
+/// The native owner refused an operation and nothing changed; unlike an
+/// unconfirmed result, the session may go on.
+#[derive(Debug)]
+pub struct Unchanged(pub String);
+impl std::fmt::Display for Unchanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for Unchanged {}
+
 pub struct NativeSession {
     id: String,
     next: u64,
@@ -87,10 +98,9 @@ impl NativeSession {
 
     pub fn accept(&mut self, call: &Call, value: Value) -> Result<Value> {
         let result = self.check(call, value);
-        if result.is_err() {
-            self.poisoned = true;
-        } else {
-            self.pending = None;
+        match &result {
+            Err(error) if error.downcast_ref::<Unchanged>().is_none() => self.poisoned = true,
+            _ => self.pending = None,
         }
         result
     }
@@ -117,6 +127,14 @@ impl NativeSession {
             .as_object()
             .filter(|fields| fields.len() == 1)
             .ok_or_else(|| anyhow::anyhow!("Invalid native owner outcome"))?;
+        // A refusal after which nothing changed: the session stays usable.
+        if let Some(reason) = fields.get("unchanged") {
+            let reason = reason
+                .as_str()
+                .filter(|s| s.len() <= 256)
+                .ok_or_else(|| anyhow::anyhow!("Invalid native owner refusal"))?;
+            return Err(Unchanged(reason.to_owned()).into());
+        }
         if let Some(error) = fields.get("error") {
             ensure!(
                 error.as_str().is_some_and(|s| s.len() <= 256),

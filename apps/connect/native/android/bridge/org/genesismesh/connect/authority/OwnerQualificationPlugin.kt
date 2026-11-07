@@ -143,7 +143,7 @@ private object OwnerQualificationEngine {
             require(result.toByteArray(Charsets.UTF_8).size <= 512 * 1024 - 256)
             require(guard.current(session) && System.nanoTime() < deadline)
             val outcome = JSObject(result)
-            require(outcome.length() == 1 && (outcome.has("ok") || outcome.has("error")))
+            require(outcome.length() == 1 && (outcome.has("ok") || outcome.has("error") || outcome.has("unchanged")))
             if (outcome.has("error")) stopAndClose()
             val reply = JSObject().put("schema", 1).put("session", session)
                 .put("sequence", sequence).put("reply", outcome)

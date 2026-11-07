@@ -433,7 +433,12 @@ impl OwnerRuntime {
                 );
                 Ok(reply)
             });
-            if outcome.is_err() {
+            // Only an unconfirmed result stops the runtime; a refusal after
+            // which nothing changed leaves it usable.
+            if outcome
+                .as_ref()
+                .is_err_and(|e| e.downcast_ref::<native::Unchanged>().is_none())
+            {
                 self.native_failed = true;
             }
             return outcome;

@@ -1,4 +1,4 @@
-use connect_core::owner::native::{Call, NativeSession};
+use connect_core::owner::native::{Call, NativeSession, Unchanged};
 use serde_json::{Value, json};
 
 fn reply(call: &Call, outcome: Value) -> Value {
@@ -77,4 +77,21 @@ fn requests_are_bounded_and_timeouts_poison_without_replay() {
             .prepare(&json!({"op":"create","name":"Home"}))
             .is_err()
     );
+}
+
+#[test]
+fn a_refusal_that_changed_nothing_keeps_the_session_and_an_unconfirmed_one_does_not() {
+    let mut session = NativeSession::new();
+    let call = session.prepare(&json!({"op":"recovery_export"})).unwrap();
+    let refused = session
+        .accept(&call, reply(&call, json!({"unchanged":"Nothing changed"})))
+        .unwrap_err();
+    assert!(refused.downcast_ref::<Unchanged>().is_some());
+    let next = session.prepare(&json!({"op":"space_list"})).unwrap();
+    assert!(
+        session
+            .accept(&next, reply(&next, json!({"error":"Unconfirmed"})))
+            .is_err()
+    );
+    assert!(session.prepare(&json!({"op":"space_list"})).is_err());
 }
