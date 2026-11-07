@@ -21,7 +21,7 @@ to the agent's tools over the Model Context Protocol (MCP).
 
    It prints a six-digit code and waits.
 3. On your network device, check that the code matches, then choose
-   **Allow device**. The agent is now on your network under its own name.
+   **Allow**. The agent is now on your network under its own name.
 4. Share a folder with it like with any device: choose the folder and tick the
    agent as a recipient. Until you do, it can reach nothing.
 

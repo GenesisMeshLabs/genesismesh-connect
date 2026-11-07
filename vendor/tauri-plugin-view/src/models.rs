@@ -30,3 +30,6 @@ pub struct WebRequest { pub url: String }
 
 #[derive(Debug, serde::Deserialize)]
 pub struct WebResponse {}
+
+#[derive(Debug, Serialize)]
+pub struct ShareTextRequest { pub text: String }

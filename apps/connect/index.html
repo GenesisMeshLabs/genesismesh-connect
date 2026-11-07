@@ -487,19 +487,20 @@
           </button>
           <h2>Add a device</h2>
           <p>
-            Open your phone’s camera and scan this code. Or copy the invitation
-            to your other device.
+            On the other device, scan this code with its camera, or send it the
+            invitation.
           </p>
           <img
             id="pair-qr"
-            alt="QR code containing this computer’s expiring invitation"
+            alt="QR code containing this expiring invitation"
             width="300"
             height="300"
           />
           <p id="pair-expiry" class="home-muted"></p>
-          <button id="copy-invitation" class="secondary">
-            Copy invitation
-          </button>
+          <div class="button-row">
+            <button id="share-invitation" hidden>Share invitation</button>
+            <button id="copy-invitation" class="secondary">Copy invitation</button>
+          </div>
         </section>
         <section
           id="approval-card"
@@ -514,7 +515,7 @@
           <strong id="approval-code" class="approval-code"></strong>
           <p class="home-muted">
             Allow only a device you recognize. This adds it to your network;
-            files stay private until you share a folder.
+            nothing is shared with it until you choose to.
           </p>
           <div class="button-row">
             <button id="reject-device" class="secondary">Decline</button

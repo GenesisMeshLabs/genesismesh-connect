@@ -983,6 +983,26 @@ fn own_inbox(
         .map(|s| s.directory.clone())
         .ok_or("Choose something this device shares".into())
 }
+/// Send an invitation through the phone's share sheet.
+#[tauri::command]
+pub async fn share_invitation(text: String, app: tauri::AppHandle) -> Result<(), String> {
+    if text.is_empty() || text.len() > 8192 {
+        return Err("Create a new invitation".into());
+    }
+    #[cfg(mobile)]
+    {
+        use tauri_plugin_view::ViewExt;
+        app.view()
+            .share_text(tauri_plugin_view::ShareTextRequest { text })
+            .map_err(error)?;
+        Ok(())
+    }
+    #[cfg(desktop)]
+    {
+        let _ = app;
+        Err("Copy the invitation on a computer".into())
+    }
+}
 #[tauri::command]
 pub async fn show_received_folder(
     space: String,
