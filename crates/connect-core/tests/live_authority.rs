@@ -672,6 +672,15 @@ async fn host_read_limit_is_16_a_window_says_busy_and_leaves_refusals_final() ->
     assert_eq!(released, 16 * 30);
     // The next window serves again.
     tokio::time::sleep(Duration::from_secs(61)).await;
+    // Both sides renew their trust meanwhile, as a running device does.
+    host_endpoint.refresh(
+        host.session_identity()?,
+        authority.refresh(&mut host_store).await?,
+    )?;
+    client_endpoint.refresh(
+        client.session_identity()?,
+        authority.refresh(&mut client_store).await?,
+    )?;
     assert_eq!(
         client_endpoint
             .read_file(&ticket, request("allowed", "sample.txt", None))
