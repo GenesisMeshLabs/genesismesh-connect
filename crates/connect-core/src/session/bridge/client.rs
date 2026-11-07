@@ -400,7 +400,7 @@ impl BridgeAuthority {
             result
         })
         .await
-        .context("Desktop authority timed out")?
+        .context("Your network computer did not answer in time")?
     }
 
     pub async fn renew(&self, device: &mut EnrolledDevice, store: &mut TrustStore) -> Result<()> {
@@ -597,6 +597,6 @@ impl BridgeAuthority {
             result
         })
         .await
-        .context("Desktop authority timed out")?
+        .context("Your network computer did not answer in time")?
     }
 }

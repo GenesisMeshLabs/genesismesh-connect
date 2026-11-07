@@ -1047,8 +1047,8 @@ fn only_a_cancel_for_new_credentials_is_asked_again() {
     assert!(client::interrupted(&cancelled));
     for refused in [
         "closed by peer: authority operation ended (code 0)",
-        "Desktop authority request refused or unavailable",
-        "Desktop authority timed out",
+        "Your network computer refused or could not answer this request",
+        "Your network computer did not answer in time",
     ] {
         assert!(!client::interrupted(&anyhow::anyhow!(refused)), "{refused}");
     }

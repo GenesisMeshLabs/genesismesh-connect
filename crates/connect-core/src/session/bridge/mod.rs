@@ -268,7 +268,9 @@ async fn response(recv: &mut RecvStream) -> Result<Value> {
     let value = genesis_mesh_sdk::parse_strict_json(std::str::from_utf8(&bytes)?)?;
     match serde_json::from_value(value)? {
         Response::Ok { value } => Ok(value),
-        Response::Refused => anyhow::bail!("Desktop authority request refused or unavailable"),
+        Response::Refused => {
+            anyhow::bail!("Your network computer refused or could not answer this request")
+        }
     }
 }
 

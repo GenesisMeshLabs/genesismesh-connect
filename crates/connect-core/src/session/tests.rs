@@ -701,3 +701,23 @@ async fn a_busy_host_is_asked_again_and_a_refusal_is_final() {
     assert!(refused.is_err());
     assert_eq!(calls.get(), 1, "A refusal is never asked again");
 }
+
+#[test]
+fn only_outcomes_that_clear_by_themselves_are_asked_again() {
+    let cut = anyhow::anyhow!("closed by peer: session ended (code 0)").context("connection lost");
+    assert!(clears_by_itself(&cut), "A trust refresh on the host");
+    assert!(clears_by_itself(&anyhow::anyhow!(
+        "Trust changed during read"
+    )));
+    assert!(clears_by_itself(&anyhow::Error::new(sharing::Busy(
+        "Not yet"
+    ))));
+    for final_answer in [
+        "Read unavailable or denied",
+        "This folder is unavailable or access was not allowed",
+        "closed by peer: authority operation ended (code 0)",
+        "Read timed out",
+    ] {
+        assert!(!clears_by_itself(&anyhow::anyhow!(final_answer)));
+    }
+}
