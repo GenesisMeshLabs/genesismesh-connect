@@ -74,6 +74,8 @@ pub(crate) async fn files(
     #[cfg(mobile)]
     {
         use tauri_plugin_view::ViewExt;
+        #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+        let _picker = crate::phone_lifecycle::LIFECYCLE.hold();
         let handle = app.clone();
         let selected = tokio::task::spawn_blocking(move || {
             handle

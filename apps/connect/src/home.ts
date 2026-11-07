@@ -233,8 +233,10 @@ function render(status: HomeStatus) {
     text("joining-code", code ?? "");
     visible("joining-code", code !== undefined);
   }
-  text("home-network", status.network || "Your private network");
-  el("home-network").dataset.state = status.disconnected ? "off" : "on";
+  // A phone closes its network while off screen and reopens it on return.
+  const reopening = phoneHosting && status.configured && !status.owner;
+  text("home-network", reopening ? "Reopening…" : status.network || "Your private network");
+  el("home-network").dataset.state = status.disconnected || reopening ? "off" : "on";
   visible("home-network", status.configured);
   setIcon("this-device-icon", status.owner ? "house" : /Android|iPhone|iPad/.test(navigator.userAgent) ? "smartphone" : "monitor-smartphone");
   text("this-device-name", localName());
