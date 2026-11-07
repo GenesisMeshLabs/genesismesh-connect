@@ -152,14 +152,14 @@ export function friendlyProblem(value: string) {
   if (/device is disconnected/i.test(value)) return "This device is disconnected. Tap Reconnect in Settings.";
   if (/current transfer|changing networks/i.test(value)) return "Finish or cancel the current transfer, then try again.";
   if (/leaving.*unfinished|finish leaving|could not finish leaving/i.test(value)) return "Leaving hasn’t finished. Unlock this device and retry leaving the network.";
-  if (/Share the folder again|larger files/i.test(value)) return "Share this folder again on your computer to allow larger files.";
+  if (/Share the folder again|larger files/i.test(value)) return "Share this folder again from the device it is on to allow larger files.";
   // A device that shares no folder offers no file protocols at all.
   if (/support any known protocol/i.test(value)) return "This device isn’t sharing anything with you yet.";
   if (/authority unavailable|connection is suspended/i.test(value)) return "Your network computer isn’t ready. Keep Connect open there and try again.";
   if (/timed out|timeout|connection lost|closed by peer|did not respond/i.test(value))
     return "Couldn’t reach your other device. Keep Connect open on both devices and try again.";
   if (/file changed|version changed/i.test(value)) return "This file changed. Refresh the list and try again.";
-  if (/permission|not allowed|denied/i.test(value)) return "Access wasn’t allowed. Check folder sharing on your computer.";
+  if (/permission|not allowed|denied/i.test(value)) return "Access wasn’t allowed. Check sharing on the device that shares it.";
   if (/another.*running|current download|too many/i.test(value)) return "Please finish the current operation, then try again.";
   if (/join your network|add your other device|set up this computer/i.test(value)) return "Connect your devices first.";
   return "Couldn’t complete this. Please try again.";

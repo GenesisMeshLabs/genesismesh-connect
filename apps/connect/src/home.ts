@@ -219,7 +219,7 @@ function render(status: HomeStatus) {
   if (!busy) text("toggle-network", status.disconnected ? "Reconnect" : "Disconnect");
   text("network-action-description", status.disconnected
     ? "Disconnected until you tap Reconnect, even after reopening the app."
-    : status.owner ? "Disconnecting this computer pauses access for your other devices. Your setup stays saved."
+    : status.owner ? `Disconnecting this ${phoneHosting ? "phone" : "computer"} pauses access for your other devices. Your setup stays saved.`
       : "Disconnect to pause connections. Your network and shared folders stay saved.");
   const next = primaryScreen(status);
   if (status.leaving) {
@@ -360,7 +360,7 @@ function renderDevices(status: HomeStatus) {
       ? "Runs your network"
       : device.member
         ? "On your network"
-        : "Your device";
+        : "On your network";
     words.append(name, detail);
     main.append(tile(device.authority_connection ? "house" : "monitor-smartphone"), words);
     main.setAttribute("aria-description", "View shared items");
@@ -411,7 +411,7 @@ el("choose-create").addEventListener("click", () => show("create-screen"));
 
 async function changeConnection(button: HTMLButtonElement) {
   const reconnect = !!current?.disconnected;
-  if (!reconnect && current?.owner && !window.confirm("Disconnect this network computer? Your other devices will lose access until you reconnect it.")) return;
+  if (!reconnect && current?.owner && !window.confirm(`Disconnect this ${phoneHosting ? "phone" : "computer"}? Your other devices will lose access until you reconnect it.`)) return;
   await run(button, async () => {
     await invoke(reconnect ? "reconnect_network" : "disconnect_network");
     message(reconnect ? "Reconnection enabled. Checking your network…" : "Disconnected. Tap Reconnect whenever you’re ready.");
@@ -452,7 +452,7 @@ el("restore-form").addEventListener("submit", (event) => {
       if (await invoke<boolean>("recovery_restore", { key: input("restore-key").value })) {
         input("restore-key").value = "";
         message(
-          "Your network is back. Your devices reconnect when they next check in. Share your folders again on this computer.",
+          "Your network is back. Your devices reconnect when they next check in. Share your items again from this device.",
         );
         selectView("devices");
       }
@@ -563,6 +563,13 @@ for (const id of ["add-device-button", "files-add-device"])
     "click",
     () => void addDevice(el<HTMLButtonElement>(id)),
   );
+el("share-invitation").addEventListener(
+  "click",
+  () =>
+    void run(el<HTMLButtonElement>("share-invitation"), async () => {
+      await invoke("share_invitation", { text: invitation });
+    }),
+);
 el("copy-invitation").addEventListener(
   "click",
   () =>
@@ -853,7 +860,7 @@ async function loadFiles(more: boolean, directory = folderPath) {
   visible("file-preview", false);
   text(
     "remote-folder-title",
-    currentSpace ? spaceTitle(currentSpace) : `From ${current?.peer || "your computer"}`,
+    currentSpace ? spaceTitle(currentSpace) : `From ${current?.peer || "your device"}`,
   );
   text("remote-folder-subtitle", currentSpace ? spaceSummary(currentSpace) : "");
   // Search, sort and the path appear only where they help.
@@ -1107,6 +1114,7 @@ let phoneHosting = false;
 /** This phone runs the network itself: say so where setup says "computer". */
 function usePhoneSetupWording() {
   phoneHosting = true;
+  visible("share-invitation", true);
   el("choose-create").querySelector("strong")!.textContent =
     "Start on this phone";
   el("choose-create").querySelector("span:not(.choice-symbol)")!.textContent =

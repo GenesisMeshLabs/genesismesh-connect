@@ -27,8 +27,19 @@ class PickArgs { var media: Boolean = false; var multiple: Boolean = false }
 @InvokeArg
 class WebArgs { var url: String = "" }
 
+@InvokeArg
+class ShareTextArgs { var text: String = "" }
+
 @TauriPlugin
 class ViewPlugin(private val activity: Activity) : Plugin(activity) {
+  @Command
+  fun shareText(invoke: Invoke) {
+    val args = invoke.parseArgs(ShareTextArgs::class.java)
+    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, args.text)
+    activity.startActivity(Intent.createChooser(send, null))
+    invoke.resolve(JSObject())
+  }
+
   @Command
   fun web(invoke: Invoke) {
     val args = invoke.parseArgs(WebArgs::class.java)
