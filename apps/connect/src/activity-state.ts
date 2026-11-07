@@ -6,6 +6,16 @@ export interface ActivitySummary {
   policy_before:number;policy_observed:number|null;recipients_before:number;recipients_after:number;
   archived:boolean;needs_attention:boolean;recovery:RecoveryHint;
 }
+/** "Today, 14:05", "Yesterday, 09:30" or "5 Nov, 18:20", in this device's time zone. */
+export function whenText(iso:string, now=new Date()):string {
+  const at=new Date(iso), time=at.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+  const day=(d:Date)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();
+  const days=Math.round((day(now)-day(at))/86400000);
+  if(days===0)return `Today, ${time}`;
+  if(days===1)return `Yesterday, ${time}`;
+  const date=at.toLocaleDateString(undefined,{day:"numeric",month:"short",...(at.getFullYear()===now.getFullYear()?{}:{year:"numeric"})});
+  return `${date}, ${time}`;
+}
 export interface HistoryCursor {scope_id:string;filter:"all"|"needs_attention";before_created_at:string;before_id:string}
 export interface HistoryPage {scope_id:string;entries:ActivitySummary[];next:HistoryCursor|null;attention_count:number;incomplete:boolean}
 export interface LocalAccessRecord {format:string;evidence_class:string;signed:false;archived:boolean;record:AccessRecord}
