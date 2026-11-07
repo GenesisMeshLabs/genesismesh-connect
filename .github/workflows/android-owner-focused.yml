@@ -69,9 +69,9 @@ jobs:
       - name: Install the pinned core for disposable foreground fixtures
         run: 'python -m pip install --only-binary=:all: -r apps/connect/authority/core-requirements.txt'
       - name: Explicit foreground coordinator fixtures (no devices/startup fault injection)
-        run: CONNECT_FOREGROUND_FIXTURE_PYTHON="$(command -v python)" cargo +1.98.0 test -p connect-core --test foreground_owner --test foreground_pairing --locked -- --ignored
+        run: CONNECT_FOREGROUND_FIXTURE_PYTHON="$(command -v python)" cargo +1.98.0 test -p connect-core --test foreground_owner --test foreground_pairing --locked -- --ignored --test-threads=1
       - name: Foreground reopen after real renewal and invalid-credential refusal
-        run: CONNECT_FOREGROUND_FIXTURE_PYTHON="$(command -v python)" cargo +1.98.0 test -p connect-core --lib device::foreground_reopen_tests --locked -- --ignored
+        run: CONNECT_FOREGROUND_FIXTURE_PYTHON="$(command -v python)" cargo +1.98.0 test -p connect-core --lib device::foreground_reopen_tests --locked -- --ignored --test-threads=1
       - name: Explicit pairing completion proof and recovery fixtures (qualification gate only)
         run: |
           cargo +1.98.0 test -p connect-core --lib device::pairing_completion::tests --locked
