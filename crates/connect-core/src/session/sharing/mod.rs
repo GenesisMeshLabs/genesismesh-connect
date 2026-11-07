@@ -198,7 +198,7 @@ impl Share {
             if window.0.elapsed() >= Duration::from_secs(60) {
                 *window = (std::time::Instant::now(), 0);
             }
-            ensure!(window.1 < 16, "Read budget exhausted");
+            ensure!(window.1 < 16, Busy("Too many reads; try again in a minute"));
             window.1 += 1;
         }
         storage::name(&request.file_name)?;

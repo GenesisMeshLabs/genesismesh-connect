@@ -107,7 +107,7 @@ impl Share {
             }
             ensure!(
                 window.1 < if nested { 120 } else { 16 },
-                "Too many file operations; try again in a minute"
+                Busy("Too many file operations; try again in a minute")
             );
             window.1 += 1;
         }

@@ -580,6 +580,131 @@ fn public(key: &SigningKey) -> String {
 
 #[tokio::test]
 #[ignore = "Requires CONNECT_NA_PYTHON; real edge enrollment, live read policy, receipts and zero-byte denial"]
+async fn host_read_limit_is_16_a_window_says_busy_and_leaves_refusals_final() -> Result<()> {
+    use connect_core::session::sharing::{ReadRequest, Share, ShareConfig};
+    use std::sync::Arc;
+    let (mut process, info) = AuthorityProcess::start()?;
+    let authority = LocalAuthority::new(info["url"].as_str().unwrap())?;
+    let pin: TrustPin = serde_json::from_value(info["pin"].clone())?;
+    let dir = tempfile::tempdir()?;
+    let root = dir.path().join("collection");
+    std::fs::create_dir(&root)?;
+    std::fs::write(root.join("sample.txt"), b"A protected Genesis Mesh read.")?;
+    let mut host_store = TrustStore::create(&dir.path().join("host.json"), pin.clone())?;
+    let host_key = key();
+    let executor = key();
+    let invitation =
+        process.command(json!({"op":"edge_invite","node_public_key":public(&host_key)}))?;
+    let (host, edge) = authority
+        .enroll_host(
+            host_key,
+            &executor,
+            invitation["invite"].as_str().unwrap(),
+            &mut host_store,
+        )
+        .await?;
+    assert_eq!(edge["node_sovereign_id"], "connect-host");
+    let mut client_store = TrustStore::create(&dir.path().join("client.json"), pin.clone())?;
+    let client_key = key();
+    let invitation =
+        process.command(json!({"op":"invite","node_public_key":public(&client_key)}))?;
+    let client = authority
+        .enroll(
+            client_key,
+            invitation["invite"].as_str().unwrap(),
+            &mut client_store,
+        )
+        .await?;
+    let policy=process.command(json!({"op":"read_policy","host_node":host.public_key(),"peer_node":client.public_key(),"collection":"allowed"}))?;
+    let share = Arc::new(Share::open(
+        ShareConfig {
+            collection_id: "allowed".into(),
+            directory: root.clone(),
+            attestation_id: policy["attestation_id"].as_str().unwrap().into(),
+            policy_id: "connect-read".into(),
+            ..Default::default()
+        },
+        authority.clone(),
+        pin,
+        &dir.path().join("sharing"),
+    )?);
+    let host_endpoint = SessionEndpoint::bind_with_share(
+        host.session_identity()?,
+        authority.refresh(&mut host_store).await?,
+        client.public_key(),
+        Some(share.clone()),
+    )
+    .await?;
+    let client_endpoint = SessionEndpoint::bind(
+        client.session_identity()?,
+        authority.refresh(&mut client_store).await?,
+        host.public_key(),
+    )
+    .await?;
+    let request = |collection: &str, name: &str, digest: Option<String>| ReadRequest {
+        request_id: uuid::Uuid::new_v4().to_string(),
+        collection_id: collection.into(),
+        file_name: name.into(),
+        expected_sha256: digest,
+    };
+    let ticket = host_endpoint.ticket()?;
+    // A fresh share's window: 16 reads release their bytes, the next does not.
+    let mut read = 0;
+    let refused = loop {
+        match client_endpoint
+            .read_file(&ticket, request("allowed", "sample.txt", None))
+            .await
+        {
+            Ok(report) => {
+                assert_eq!(report.bytes, 30);
+                read += 1;
+                assert!(read <= 16, "The host released more than its limit");
+            }
+            Err(error) => break error,
+        }
+    };
+    assert_eq!(read, 16, "Every read within the limit is served");
+    assert!(
+        refused.to_string().contains("busy"),
+        "Over the limit is busy, not a refusal: {refused:#}"
+    );
+    let released = share.released_bytes();
+    assert_eq!(released, 16 * 30);
+    // The next window serves again.
+    tokio::time::sleep(Duration::from_secs(61)).await;
+    // Both sides renew their trust meanwhile, as a running device does.
+    host_endpoint.refresh(
+        host.session_identity()?,
+        authority.refresh(&mut host_store).await?,
+    )?;
+    client_endpoint.refresh(
+        client.session_identity()?,
+        authority.refresh(&mut client_store).await?,
+    )?;
+    assert_eq!(
+        client_endpoint
+            .read_file(&ticket, request("allowed", "sample.txt", None))
+            .await?
+            .bytes,
+        30
+    );
+    // A policy refusal stays final: answered at once, never asked again.
+    let released = share.released_bytes();
+    process.command(json!({"op":"deny_reads","peer_node":client.public_key()}))?;
+    let asked = std::time::Instant::now();
+    let denied = client_endpoint
+        .read_file(&ticket, request("allowed", "sample.txt", None))
+        .await
+        .err()
+        .expect("A denied read must fail");
+    assert!(denied.to_string().contains("denied"), "{denied:#}");
+    assert!(asked.elapsed() < Duration::from_secs(5), "No retry waits");
+    assert_eq!(share.released_bytes(), released);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "Requires CONNECT_NA_PYTHON; real edge enrollment, live read policy, receipts and zero-byte denial"]
 async fn protected_read_binds_snapshot_and_peer_and_refuses_policy_revocation_and_outage()
 -> Result<()> {
     use connect_core::session::sharing::{ReadRequest, Share, ShareConfig};
@@ -709,8 +834,11 @@ async fn protected_read_binds_snapshot_and_peer_and_refuses_policy_revocation_an
             }) => result.context("Read did not reach authorization")?,
         }
         host_endpoint.suspend();
+        // The retry budget: 15 seconds of waits and 5 attempts of at most 10
+        // seconds to connect. The read must fail within it, and nothing is
+        // released (checked below).
         assert!(
-            tokio::time::timeout(Duration::from_secs(2), &mut reading)
+            tokio::time::timeout(Duration::from_secs(65), &mut reading)
                 .await?
                 .is_err()
         );

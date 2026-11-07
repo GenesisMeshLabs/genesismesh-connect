@@ -45,13 +45,28 @@ const BUSY_WAITS: [Duration; 4] = [
     Duration::from_secs(4),
     Duration::from_secs(8),
 ];
-/// A read that may answer if asked again: the host is busy, or a trust refresh
-/// on either side ended the connection, as it does for every open one. The next
-/// attempt runs under the new trust, so a revoked device is then refused.
+/// A host that cannot be reached may be coming back, as after a restart. One
+/// that answered without the protocol asked for shares nothing here: final.
+fn unreached(error: anyhow::Error) -> anyhow::Error {
+    if format!("{error:#}").contains("support any known protocol") {
+        return error;
+    }
+    error.context(sharing::Busy(
+        "The other device could not be reached. Keep Connect open on it and try again.",
+    ))
+}
+/// A read that may answer if asked again: the host is busy or unreachable, or a
+/// trust refresh on either side ended the connection, as it does for every open
+/// one, or this device's snapshot went stale or its session suspended during an
+/// outage and its background refresh may renew them. The next attempt runs under
+/// the new trust, so a revoked device is then refused.
 fn clears_by_itself(error: &anyhow::Error) -> bool {
     error.is::<sharing::Busy>() || {
         let text = format!("{error:#}");
-        text.starts_with("Trust changed during") || text.contains("closed by peer: session ended")
+        text.starts_with("Trust changed during")
+            || text.starts_with("Trust snapshot stale")
+            || text.starts_with("Connection is suspended")
+            || text.contains("closed by peer: session ended")
     }
 }
 /// Asks again, after each wait, while the answer may clear by itself. A read
@@ -584,7 +599,9 @@ impl SessionEndpoint {
                 .connect(ticket.endpoint, wire::Protocol::Read.alpn()),
         )
         .await
-        .context("Read connection timed out")??;
+        .context("Read connection timed out")
+        .and_then(|connecting| Ok(connecting?))
+        .map_err(unreached)?;
         limit_streams(&connection);
         let result = tokio::select! {biased;
             _=changes.changed()=>Err(anyhow::anyhow!("Trust changed during read")),
@@ -638,7 +655,9 @@ impl SessionEndpoint {
                 .connect(ticket.endpoint, wire::Protocol::List.alpn()),
         )
         .await
-        .context("Computer did not respond")??;
+        .context("Computer did not respond")
+        .and_then(|connecting| Ok(connecting?))
+        .map_err(unreached)?;
         limit_streams(&connection);
         let request = sharing::listing::ListRequest {
             request_id: uuid::Uuid::new_v4().to_string(),
@@ -688,7 +707,9 @@ impl SessionEndpoint {
                 .connect(ticket.endpoint, wire::Protocol::Catalog.alpn()),
         )
         .await
-        .context("Computer did not respond")??;
+        .context("Computer did not respond")
+        .and_then(|connecting| Ok(connecting?))
+        .map_err(unreached)?;
         limit_streams(&connection);
         let request = sharing::listing::ListRequest {
             request_id: uuid::Uuid::new_v4().to_string(),
@@ -753,7 +774,9 @@ impl SessionEndpoint {
                 .connect(ticket.endpoint, wire::Protocol::Browse.alpn()),
         )
         .await
-        .context("Computer did not respond")??;
+        .context("Computer did not respond")
+        .and_then(|connecting| Ok(connecting?))
+        .map_err(unreached)?;
         limit_streams(&connection);
         let request = sharing::listing::ListRequest {
             request_id: uuid::Uuid::new_v4().to_string(),
