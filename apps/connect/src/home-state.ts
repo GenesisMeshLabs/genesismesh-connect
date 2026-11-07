@@ -95,8 +95,8 @@ export interface FilePage {
   files: FileEntry[];
   next: string | null;
 }
-export function folderCrumbs(directory: string[]) {
-  return [{ name: "Shared folder", directory: [] as string[] },
+export function folderCrumbs(directory: string[], root = "Shared folder") {
+  return [{ name: root, directory: [] as string[] },
     ...directory.map((name, index) => ({ name, directory: directory.slice(0, index + 1) }))];
 }
 export function primaryScreen(status: HomeStatus) {

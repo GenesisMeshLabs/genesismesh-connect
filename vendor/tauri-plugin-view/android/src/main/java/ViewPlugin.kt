@@ -64,9 +64,19 @@ class ViewPlugin(private val activity: Activity) : Plugin(activity) {
     if (!picking.compareAndSet(false, true)) { invoke.reject("Finish choosing the current file first"); return }
     try {
       val args = invoke.parseArgs(PickArgs::class.java)
-      val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
-      intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, args.multiple)
-      if (args.media) intent.putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+      // Photos and videos open the system photo picker, with albums and
+      // thumbnails; other files the document picker.
+      val intent = if (args.media && android.os.Build.VERSION.SDK_INT >= 33) {
+        Intent(android.provider.MediaStore.ACTION_PICK_IMAGES).apply {
+          if (args.multiple) putExtra(android.provider.MediaStore.EXTRA_PICK_IMAGES_MAX,
+            minOf(100, android.provider.MediaStore.getPickImagesMaxLimit()))
+        }
+      } else {
+        Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").apply {
+          putExtra(Intent.EXTRA_ALLOW_MULTIPLE, args.multiple)
+          if (args.media) putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+        }
+      }
       startActivityForResult(invoke, intent, "picked")
     } catch (e: Exception) { picking.set(false); invoke.reject("Could not open the file picker") }
   }
