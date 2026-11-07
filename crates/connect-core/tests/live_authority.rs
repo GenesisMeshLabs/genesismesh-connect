@@ -709,8 +709,10 @@ async fn protected_read_binds_snapshot_and_peer_and_refuses_policy_revocation_an
             }) => result.context("Read did not reach authorization")?,
         }
         host_endpoint.suspend();
+        // A read asks a host that may be coming back again for about 15 seconds,
+        // then fails; nothing is released meanwhile (checked below).
         assert!(
-            tokio::time::timeout(Duration::from_secs(2), &mut reading)
+            tokio::time::timeout(Duration::from_secs(90), &mut reading)
                 .await?
                 .is_err()
         );
