@@ -47,10 +47,10 @@ test("disconnected and interrupted-leave states give a specific next action", ()
 });
 test("shared folders say where they live and what to do when there are none", () => {
   const space = { id: "1", name: "Photos", host: "Home PC", host_id: "a", own: false, kind: "folder" as const };
-  assert.equal(spaceSummary(space), "On Home PC");
-  assert.match(spaceSummary({ ...space, own: true }), /this device/);
-  assert.equal(spaceSummary({ ...space, kind: "inbox" }), "Send files to Home PC");
-  assert.match(spaceSummary({ ...space, kind: "inbox", own: true }), /Receiving files/);
+  assert.equal(spaceSummary(space), "From Home PC");
+  assert.equal(spaceSummary({ ...space, own: true }), "Shared by you · read-only");
+  assert.equal(spaceSummary({ ...space, kind: "inbox" }), "Files you send arrive there");
+  assert.match(spaceSummary({ ...space, kind: "inbox", own: true }), /^Receiving · saved/);
   const progress = { state: "sending", sent: 1024, total: 2048, saved_as: null };
   assert.equal(sendSummary(progress), "1.0 KB of 2.0 KB");
   assert.equal(sendSummary({ ...progress, state: "complete", saved_as: "photo (2).jpg" }), "Sent · saved as photo (2).jpg");

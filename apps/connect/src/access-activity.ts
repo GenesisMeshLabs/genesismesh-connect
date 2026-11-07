@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { el } from "./ui";
 import { friendlyProblem, isService, type HomeSpace, type HomeStatus } from "./home-state";
 import { accessOutcomeText, accessReviewLines, type AccessOutcome } from "./access-state";
-import { activityLabel, activityExplanation, activityCount, recoveryExplanation, exportRecordMessage, summaryAfterCheck, type ActivitySummary, type HistoryCursor, type HistoryPage, type LocalAccessRecord } from "./activity-state";
+import { whenText, activityLabel, activityExplanation, activityCount, recoveryExplanation, exportRecordMessage, summaryAfterCheck, type ActivitySummary, type HistoryCursor, type HistoryPage, type LocalAccessRecord } from "./activity-state";
 
 export function setupActivity(getStatus:()=>HomeStatus|null,isActive:()=>boolean,refreshHome:()=>Promise<void>,message:(s:string)=>void,manage:(space:HomeSpace)=>Promise<void>) {
   const detail=el<HTMLDialogElement>("activity-detail");
@@ -61,24 +61,23 @@ export function setupActivity(getStatus:()=>HomeStatus|null,isActive:()=>boolean
   function render(){
     const list=el("activity-list-main");list.replaceChildren();
     el("activity-empty").hidden=entries.length>0||loading||!loaded||failed;
-    el("activity-empty-title").textContent=filter==="needs_attention"?"No matching changes need attention":"Your access changes will appear here";
+    el("activity-empty-title").textContent=filter==="needs_attention"?"No matching changes need attention":"No access changes yet";
     el("activity-empty-text").textContent=filter==="needs_attention"?"This view shows unconfirmed or conflicting access changes saved on this device.":"When you review or change access to a shared item, Connect keeps a local record here.";
     for(const entry of entries){
       const card=document.createElement("li");card.className="home-card activity-entry";
       const heading=document.createElement("div");heading.className="activity-entry-heading";
       const title=document.createElement("h2");title.textContent=entry.name;
       const badge=document.createElement("span");badge.className=entry.needs_attention?"activity-status attention":"activity-status";badge.textContent=activityLabel(entry);heading.append(title,badge);
-      const when=document.createElement("p");when.className="home-muted";when.textContent=`${new Date(entry.created_at).toLocaleString()}${entry.archived?" · Older saved record":""}`;
+      const when=document.createElement("p");when.className="home-muted";when.textContent=`${whenText(entry.created_at)}${entry.archived?" · Older saved record":""}`;
       const description=document.createElement("p");description.textContent=activityExplanation(entry);
-      const scope=document.createElement("p");scope.className="home-muted";scope.textContent=`Allowed devices: ${entry.recipients_before} → ${entry.recipients_after} · Policy ${entry.policy_before}${entry.policy_observed===null?"":` → observed ${entry.policy_observed}`}`;
       const actions=document.createElement("div");actions.className="button-row";
       if(canCheck(entry))actions.append(button("Check status",b=>checked(entry,b)));
       else if(entry.needs_attention){const hint=document.createElement("p");hint.className="home-muted";hint.textContent=recoveryExplanation(entry.recovery);card.append(hint);}
       actions.append(button("View record",b=>showDetail(entry,b)));
-      card.prepend(heading,when,description,scope);card.append(actions);list.append(card);
+      card.prepend(heading,when,description);card.append(actions);list.append(card);
     }
     el<HTMLButtonElement>("activity-refresh").disabled=loading;
-    el("activity-refresh").textContent=loading?"Loading…":"Refresh";
+    el("activity-refresh").setAttribute("aria-busy",String(loading));
     el<HTMLButtonElement>("activity-more").disabled=loading;
     el("activity-more").hidden=!next;
     el("activity-loading").hidden=!loading;

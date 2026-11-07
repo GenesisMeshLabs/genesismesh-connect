@@ -45,10 +45,10 @@ export interface HomeSpace {
 /** Where a shared folder lives, or whose inbox it is, in a few words. */
 export function isService(space: HomeSpace) { return ["web", "ssh", "tcp"].includes(space.kind); }
 export function spaceSummary(space: HomeSpace) {
-  if (isService(space)) return `${space.kind === "web" ? "Web app" : space.kind === "ssh" ? "SSH" : "TCP service"} · ${space.own ? "Shared from this device" : `On ${space.host}`}`;
+  if (isService(space)) return `${space.kind === "web" ? "Web app" : space.kind === "ssh" ? "SSH" : "TCP service"} · ${space.own ? "Shared by you" : `From ${space.host}`}`;
   if (space.kind === "inbox")
-    return space.own ? `Receiving files · Saved ${space.destination ? `in ${space.destination}` : "on this device"}` : `Send files to ${space.host}`;
-  return space.own ? "Shared from this device · read-only" : `On ${space.host}`;
+    return space.own ? `Receiving · saved ${space.destination && !space.destination.startsWith("Connect") ? `in ${space.destination}` : "in Connect"}` : "Files you send arrive there";
+  return space.own ? "Shared by you · read-only" : `From ${space.host}`;
 }
 /** A send's progress in a few words. */
 export function sendSummary(progress: { state: string; sent: number; total: number; saved_as: string | null }) {

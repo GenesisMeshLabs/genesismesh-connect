@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {activityLabel,activityExplanation,activityCount,recoveryExplanation,exportRecordMessage,summaryAfterCheck,type ActivitySummary} from "../src/activity-state.ts";
+import {whenText,activityLabel,activityExplanation,activityCount,recoveryExplanation,exportRecordMessage,summaryAfterCheck,type ActivitySummary} from "../src/activity-state.ts";
 import type {AccessOutcome} from "../src/access-state.ts";
 
 test("activity distinguishes an acknowledged change from unattributed matching state",()=>{
@@ -47,4 +47,12 @@ test("a checked record removed from the attention filter updates its open detail
   assert.equal(next.needs_attention,false);assert.equal(next.recovery,"settled");
   assert.equal(next.policy_observed,2);assert.equal(next.authorization,"unknown");
   assert.equal(activityLabel(next),"Matching settings observed");
+});
+test("activity times read as today, yesterday or a short date",()=>{
+  const now=new Date(2026,10,7,15,30);
+  assert.match(whenText(new Date(2026,10,7,1,13).toISOString(),now),/^Today, /);
+  assert.match(whenText(new Date(2026,10,6,23,59).toISOString(),now),/^Yesterday, /);
+  const older=whenText(new Date(2026,10,1,9,0).toISOString(),now);
+  assert.doesNotMatch(older,/Today|Yesterday|2026/);assert.match(older,/1/);
+  assert.match(whenText(new Date(2025,10,1,9,0).toISOString(),now),/2025/,"Another year is named");
 });

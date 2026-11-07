@@ -15,15 +15,10 @@
     <div id="everyday" class="everyday">
       <header class="home-header">
         <a href="#" id="home-brand" class="home-brand"
-          ><img
-            src="/brand/logo.svg"
-            alt="Genesis Mesh"
-            width="64"
-            height="44"
-          /><span>Genesis Mesh <strong>Connect</strong></span></a
-        ><span id="home-network" class="network-chip"
-          >Your private network</span
-        >
+          ><img src="/brand/logo.svg" alt="Genesis Mesh" width="32" height="32" /><span id="home-title"
+            >Connect</span
+          ></a
+        ><span id="home-network" class="network-chip">Your private network</span>
       </header>
       <main class="home-main">
         <section id="startup" class="home-card setup-card" role="status">
@@ -32,9 +27,9 @@
           <button id="startup-retry" type="button" hidden>Try again</button>
         </section>
         <div id="home-message" class="home-message" role="status" hidden></div>
-        <div id="disconnected-banner" class="home-message" role="status" hidden>
-          This device is disconnected. Your network is saved.
-          <button id="reconnect-banner" class="secondary">Reconnect</button>
+        <div id="disconnected-banner" class="home-message home-warning" role="status" hidden>
+          <span data-icon="wifi-off"></span><span>Disconnected. Your network is saved.</span>
+          <button id="reconnect-banner" class="text-button">Reconnect</button>
         </div>
         <section id="leave-retry" class="home-card" hidden>
           <h2>Finish leaving this network</h2>
@@ -56,14 +51,14 @@
           </p>
           <div class="welcome-choices">
             <button id="choose-create" class="choice-card">
-              <span class="choice-symbol" aria-hidden="true">⌂</span
+              <span class="choice-symbol" data-icon="house"></span
               ><strong>Start on this computer</strong
               ><span
                 >Set up your network and share a folder.</span
               ><b>Set up my network →</b></button
             ><button id="choose-join" class="choice-card">
-              <span class="choice-symbol" aria-hidden="true">↗</span
-              ><strong>Join from another device</strong
+              <span class="choice-symbol" data-icon="link"></span
+              ><strong>Join with an invitation</strong
               ><span
                 >Connect with an invitation from the network owner.</span
               ><b>Join a network →</b>
@@ -164,44 +159,35 @@
         </section>
         <div id="workspace" hidden>
           <nav class="home-navigation" aria-label="Main navigation">
-            <button data-view="files" aria-pressed="true">Shared</button
-            ><button data-view="devices" aria-pressed="false">Devices</button
-            ><button data-view="activity" aria-pressed="false">Activity</button
-            ><button data-view="settings" aria-pressed="false">Settings</button>
+            <button data-view="files" aria-pressed="true"><span class="tab-icon" data-icon="folders"></span><span>Shared</span></button
+            ><button data-view="devices" aria-pressed="false"><span class="tab-icon" data-icon="monitor-smartphone"></span><span>Devices</span></button
+            ><button data-view="activity" aria-pressed="false"><span class="tab-icon" data-icon="history"></span><span>Activity</span></button
+            ><button data-view="settings" aria-pressed="false"><span class="tab-icon" data-icon="settings"></span><span>Settings</span></button>
           </nav>
           <div id="view-files">
             <div class="home-page-heading">
-              <div>
-                <h1>Your shared space</h1>
-                <p id="files-description">
-                  Choose a folder on your computer to make it available to your
-                  phone.
-                </p>
-              </div>
+              <h1 class="sr-only">Shared</h1>
+              <p id="files-description" class="sr-only"></p>
               <button id="share-button" hidden>Share</button
-              ><button id="cancel-send" class="secondary" hidden>
-                Cancel sending
-              </button
-              ><button id="browse-button" class="secondary" hidden>
-                Refresh files
-              </button>
+              ><button id="cancel-send" class="secondary" hidden>Cancel sending</button
+              ><button id="browse-button" class="secondary" hidden>Refresh</button>
             </div>
             <section id="sharing-shortcuts" class="sharing-shortcuts" aria-label="Sharing shortcuts"></section>
             <div id="library-tools" class="library-tools">
-              <div class="library-search-row">
+              <div id="library-search" class="library-search-row">
                 <label for="space-search" class="sr-only">Search shared items and devices</label>
                 <input id="space-search" type="search" placeholder="Search shared items…" />
                 <label for="space-device" class="sr-only">Filter by device</label>
                 <select id="space-device"><option value="">All devices</option></select>
               </div>
-              <div class="library-filters" role="group" aria-label="Filter shared items">
+              <div id="library-filters" class="library-filters" role="group" aria-label="Filter shared items">
                 <button data-library-filter="all" aria-pressed="true">All</button>
                 <button data-library-filter="remote" aria-pressed="false">From devices</button>
                 <button data-library-filter="mine" aria-pressed="false">Shared by me</button>
                 <button data-library-filter="inbox" aria-pressed="false">Send &amp; receive</button>
                 <button data-library-filter="services" aria-pressed="false">Apps & services</button>
               </div>
-              <p id="library-count" class="home-muted" role="status"></p>
+              <p id="library-count" class="sr-only" role="status"></p>
               <div id="library-no-matches" class="home-empty" hidden><h2>Nothing here yet</h2><p id="library-empty-hint"></p><button id="clear-library-filters" class="secondary">Show all shared items</button></div>
             </div>
             <dialog id="share-dialog" class="share-dialog" aria-labelledby="share-title">
@@ -230,7 +216,7 @@
                 <div class="share-heading"><h2 id="access-title">Manage access</h2><button id="access-close" type="button" class="text-button">Close</button></div>
                 <div id="access-choices">
                 <p id="access-description">Choose who can use this item. You’ll review the change before it is saved.</p>
-                <fieldset><legend>Allowed devices</legend><div id="access-devices"></div></fieldset>
+                <fieldset><legend>Who can use it</legend><div id="access-devices"></div></fieldset>
                 <label for="access-ends">Access ends</label><select id="access-ends"><option value="ongoing">When I stop sharing</option><option value="hour">In 1 hour</option><option value="tonight">Tonight at midnight</option><option value="week">In 1 week</option><option value="date">On a date I choose</option></select>
                 <div id="access-expiry-field" hidden><label for="access-expiry">Ends at</label><input id="access-expiry" type="datetime-local" /><p class="home-muted">Times use this device’s time zone.</p></div>
                 <details><summary>Limits</summary>
@@ -247,7 +233,7 @@
                   <dl id="access-review-lines"></dl>
                   <p>New requests use the saved rules. Open service sessions recheck access within 10 seconds.</p>
                   <details><summary>Exact policy and device identifiers</summary><pre id="access-review-exact"></pre></details>
-                  <button id="access-back" type="button" class="secondary">Change choices</button>
+                  <button id="access-back" type="button" class="secondary">Back</button>
                 </section>
                 <p id="access-version" class="home-muted"></p>
                 <p id="access-prerequisite" role="status" hidden></p>
@@ -256,8 +242,8 @@
               </form>
             </dialog>
             <div id="files-empty" class="home-empty">
-              <span aria-hidden="true">▤</span>
-              <h2>A place for your files.</h2>
+              <span class="empty-icon" data-icon="folders"></span>
+              <h2>Nothing shared yet</h2>
               <p id="files-empty-description">
                 Add your phone, then choose a folder to share.
               </p>
@@ -270,13 +256,10 @@
               <p class="home-muted">They continue where they stopped.</p>
               <div id="unfinished-list" role="list"></div>
             </section>
-            <div id="space-list" class="space-list" role="list"></div>
-            <section id="remote-folder" class="home-card" hidden>
-              <button id="all-spaces" class="text-button" hidden>
-                ← All shared items
-              </button>
+            <div id="space-list" class="space-list list-group" role="list"></div>
+            <section id="remote-folder" class="folder-view" hidden>
               <div class="folder-heading">
-                <span class="folder-symbol" aria-hidden="true">▤</span>
+                <button id="all-spaces" class="icon-button" aria-label="All shared items" hidden><span data-icon="arrow-left"></span></button>
                 <div>
                   <h2 id="remote-folder-title">Shared files</h2>
                   <p id="remote-folder-subtitle" class="home-muted"></p>
@@ -287,19 +270,19 @@
               ><input
                 id="file-search"
                 type="search"
-                placeholder="Search loaded files…"
+                placeholder="Search this folder"
               />
               <div class="file-sort-row"><label for="file-sort">Sort</label><select id="file-sort"><option value="name">Name</option><option value="size">Largest first</option></select><span id="file-count" class="home-muted"></span></div>
-              <div id="file-list" class="file-list" role="list"></div>
+              <div id="file-list" class="file-list list-group" role="list"></div>
               <button id="more-files" class="secondary" hidden>
                 Show more files
               </button>
             </section>
             <section id="file-preview" class="home-card" hidden>
-              <button id="close-preview" class="text-button">
-                ← Back to files
-              </button>
-              <h2 id="preview-name"></h2>
+              <div class="folder-heading">
+                <button id="close-preview" class="icon-button" aria-label="Back to files"><span data-icon="arrow-left"></span></button>
+                <h2 id="preview-name"></h2>
+              </div>
               <p id="preview-detail" class="home-muted"></p>
               <progress id="download-progress" max="100" value="0" aria-label="Download progress"></progress>
               <div class="button-row">
@@ -312,25 +295,23 @@
           </div>
           <div id="view-devices" hidden>
             <div class="home-page-heading">
-              <div>
-                <h1>Devices</h1>
-              </div>
-              <button id="add-device-button" hidden>Add device</button>
+              <h1 class="sr-only">Devices</h1>
+              <button id="add-device-button" class="fab" hidden><span data-icon="plus"></span><span>Add device</span></button>
             </div>
             <section id="asks-card" class="home-card asks-card" hidden aria-labelledby="asks-title">
               <h2 id="asks-title">Requests</h2>
               <p class="home-muted">A request gives nothing by itself. Share something with the device, or decline.</p>
               <div id="asks-list"></div>
             </section>
-            <section class="home-card device-row">
-              <span class="device-symbol" aria-hidden="true">⌂</span>
-              <div>
-                <h2 id="this-device-name">This device</h2>
-                <p id="this-device-detail">Part of your private network</p>
+            <h2 class="section-label">This device</h2>
+            <div class="list-group">
+              <div class="list-row">
+                <span id="this-device-icon" class="row-tile" data-icon="smartphone"></span>
+                <div class="row-text"><h3 id="this-device-name">This device</h3><p id="this-device-detail">Part of your private network</p></div>
               </div>
-              <span class="home-badge">This device</span>
-            </section>
-            <div id="saved-devices" aria-label="Saved devices"></div>
+            </div>
+            <h2 id="saved-devices-label" class="section-label" hidden>Your other devices</h2>
+            <div id="saved-devices" class="list-group" aria-labelledby="saved-devices-label"></div>
             <section id="client-admin-card" class="home-card" hidden>
               <h2>Manage joining devices</h2>
               <p>Check this device's request to help manage who joins your network.</p>
@@ -385,17 +366,19 @@
             </p>
           </div>
           <div id="view-activity" hidden>
-            <div class="home-page-heading"><div><h1>Access activity</h1><p>Access changes saved on this device, including older records.</p></div><button id="activity-refresh" class="secondary">Refresh</button></div>
-            <section class="home-card activity-overview" aria-label="Access change status">
+            <div class="home-page-heading"><h1 class="sr-only">Activity</h1></div>
+            <div class="activity-tools">
+              <div class="library-filters" aria-label="Activity filters"><button data-activity-filter="all" aria-pressed="true">All</button><button data-activity-filter="needs_attention" aria-pressed="false">Needs attention</button></div>
+              <button id="activity-refresh" class="icon-button" aria-label="Refresh activity"><span data-icon="refresh-cw"></span></button>
+            </div>
+            <p class="home-muted">Changes to who can use what, kept on this device. Not signed proof that something was used.</p>
+            <section class="activity-overview" aria-label="Access change status">
               <h2 id="activity-attention-text">Saved access history on this device</h2>
-              <p>Check an unconfirmed result or review the settings you chose. Checking status never sends the change again.</p>
               <button id="activity-review-attention" class="secondary" hidden>Review changes needing attention</button>
             </section>
-            <div class="library-filters" aria-label="Activity filters"><button data-activity-filter="all" aria-pressed="true">All changes</button><button data-activity-filter="needs_attention" aria-pressed="false">Needs attention</button></div>
-            <p class="home-muted">This is local workflow history, not your authority’s signed audit ledger or proof that a file or service was used.</p>
             <p id="activity-incomplete" class="activity-notice" role="status" hidden>Some older history could not be loaded or exceeded the reading limits. These results may be incomplete. Your existing records have been preserved.</p>
             <p id="activity-problem" role="alert" hidden></p><p id="activity-loading" role="status" hidden>Loading saved activity…</p>
-            <div id="activity-empty" class="home-empty" hidden><h2 id="activity-empty-title">Your access changes will appear here</h2><p id="activity-empty-text">When you review or change access to a shared item, Connect keeps a local record here.</p></div>
+            <div id="activity-empty" class="home-empty" hidden><span class="empty-icon" data-icon="history"></span><h2 id="activity-empty-title">No access changes yet</h2><p id="activity-empty-text">When you review or change access to a shared item, Connect keeps a local record here.</p></div>
             <ol id="activity-list-main" class="access-activity-list"></ol><button id="activity-more" class="secondary" hidden>Load older changes</button>
             <dialog id="activity-detail" class="share-dialog" aria-labelledby="activity-detail-title">
               <div class="share-heading"><h2 id="activity-detail-title">Access record</h2><button id="activity-detail-close" class="text-button" type="button">Close</button></div>
@@ -410,22 +393,13 @@
             </dialog>
           </div>
           <div id="view-settings" hidden>
-            <div class="home-page-heading">
-              <div>
-                <h1>Settings</h1>
-              </div>
-            </div>
+            <div class="home-page-heading"><h1 class="sr-only">Settings</h1></div>
             <section class="home-card">
               <h2>Your network</h2>
               <p id="settings-network"></p>
               <p id="settings-owner" class="home-muted"></p>
               <label for="friendly-name">This device’s name</label
-              ><input id="friendly-name" maxlength="64" /><button
-                id="save-name"
-                class="secondary"
-              >
-                Save name
-              </button>
+              ><div class="inline-field"><input id="friendly-name" maxlength="64" /><button id="save-name" class="secondary">Save</button></div>
             </section>
             <section id="recovery-card" class="home-card" hidden>
               <h2>Recovery</h2>
@@ -453,7 +427,7 @@
                   ><input type="radio" name="connection" id="connection-public" value="public_relays" /><span
                     ><strong>Public relays</strong
                     ><span class="home-muted"
-                      >Works from anywhere. Iroh relays help your devices find each other. They can see addresses and timing, never your files.</span
+                      >Works from anywhere. Relays see addresses and timing, never your files.</span
                     ></span
                   ></label
                 >
@@ -461,7 +435,7 @@
                   ><input type="radio" name="connection" id="connection-local" value="local_network" /><span
                     ><strong>Private: this local network only</strong
                     ><span class="home-muted"
-                      >No outside relay or lookup service. Devices connect only while they share a network with this computer.</span
+                      >No outside services. Devices connect only on the same local network as the device that runs your network.</span
                     ></span
                   ></label
                 >
@@ -488,15 +462,6 @@
                 <button id="leave-network" class="secondary">Leave network</button>
               </div>
               <p id="owner-leave-note" class="home-muted" hidden>This computer runs your network. Leaving here would affect your other devices; use Disconnect to pause it.</p>
-            </section>
-            <section class="home-card">
-              <h2>Sharing</h2>
-              <p>
-                You choose which folders to share. Other files stay private.
-              </p>
-              <p>
-                Keep Connect open on the device sharing your files.
-              </p>
             </section>
             <details class="home-card">
               <summary>Advanced</summary>
@@ -552,8 +517,8 @@
             files stay private until you share a folder.
           </p>
           <div class="button-row">
-            <button id="approve-device">Allow device</button
-            ><button id="reject-device" class="secondary">Don’t allow</button>
+            <button id="reject-device" class="secondary">Decline</button
+            ><button id="approve-device">Allow</button>
           </div>
         </section>
         <p class="home-footer">Genesis Mesh Connect · Preview</p>
