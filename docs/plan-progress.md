@@ -168,7 +168,11 @@ Known limits and open findings:
 - **Renewal gap, under investigation:** the phone's authority issued no
   certificate for it from 19:03 to 23:15 UTC on 7 November, although Connect was
   on screen and serving reads for part of that time (about 23:03 to 23:08 UTC).
-  Before and after, renewals came every 4 minutes. The cause is not known yet.
+  Before and after, renewals came every 4 minutes. A close and return did not
+  reproduce it: renewals continued every 241 s on screen and across the return,
+  in two separate processes. Builds before this change also had gaps of 150 to
+  155 minutes, with the app's state at the time unknown. The app keeps no log of
+  its own, so the cause could not be recovered; it remains open.
 - **During reopening** (about 25 s) actions can still show errors.
 - **Background CPU:** measured lower once the network is closed (debug build);
   unchanged during the two-minute grace period, where blocked relay probes still
