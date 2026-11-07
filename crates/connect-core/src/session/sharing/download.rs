@@ -44,15 +44,6 @@ pub struct Window {
     pub done: bool,
 }
 
-/// A refusal that clears by itself: the requester asks again shortly.
-#[derive(Debug)]
-struct Busy(&'static str);
-impl std::fmt::Display for Busy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-impl std::error::Error for Busy {}
 /// A download this device no longer has: it expired, or the device
 /// restarted. The requester asks again without its token.
 #[derive(Debug)]
@@ -421,7 +412,7 @@ impl Share {
                 .authority
                 .refresh(&mut store)
                 .await
-                .context(Busy("The network computer could not be asked just now."))?;
+                .context(UNREACHABLE)?;
             drop(store);
             trust.certificate(peer, &credentials.expected_node, Utc::now())?;
             let context = format!("connect-prepare:{}", uuid::Uuid::new_v4());
@@ -429,7 +420,8 @@ impl Share {
             let attestation = self
                 .authority
                 .attestation(&credentials.identity, &trust, &attestation_id)
-                .await?["attestation"]
+                .await
+                .context(UNREACHABLE)?["attestation"]
                 .clone();
             let decision = self
                 .authority
@@ -442,7 +434,8 @@ impl Share {
                     "peer_node":credentials.expected_node,"size":request.size,"phase":"prepare"}),
                     "connect.collection.read",
                 )
-                .await?["decision"]
+                .await
+                .context(UNREACHABLE)?["decision"]
                 .clone();
             trust.read_decision(
                 &decision,
@@ -476,9 +469,6 @@ impl Share {
             self.downloads.forget(&token);
             return Err(Expired.into());
         };
-        // An authority that could not be asked just now, for example under
-        // load, is not a refusal: the requester asks again.
-        const UNREACHABLE: Busy = Busy("The network computer could not be asked just now.");
         let mut store = self.trust.lock().await;
         let trust = self
             .authority
@@ -724,9 +714,10 @@ pub(in crate::session) async fn receive(
             "This file isn't available with the current folder permission. Share the folder again on the computer to allow larger files."
         ),
         Header::Busy => {
-            anyhow::bail!(
-                "The sharing device is busy with other downloads, or its network computer did not answer. Try again shortly."
+            return Err(Busy(
+                "The sharing device is busy with other downloads, or its network computer did not answer. Try again shortly.",
             )
+            .into());
         }
         Header::Expired => anyhow::bail!("The sharing device no longer has this download."),
     };
