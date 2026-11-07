@@ -13,6 +13,8 @@ enum Header {
         prepared: Value,
     },
     Denied,
+    /// The host cannot answer just now; the requester asks again.
+    Busy,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -82,26 +84,23 @@ pub(in crate::session) async fn serve(
     // An unknown Space is refused like any other denial: nothing tells the
     // peer whether it exists.
     let share = shares.get(&request.collection_id);
-    let _permit = match share {
-        Some(share) => Some(
-            share
-                .budget
-                .try_acquire()
-                .context("Another read is in progress")?,
-        ),
-        None => None,
-    };
+    let mut _permit = None;
     let prepared = match async {
-        share
-            .context("Unknown shared folder")?
-            .prepare(credentials, &peer, &request)
-            .await
+        let share = share.context("Unknown shared folder")?;
+        let permit = share.budget.try_acquire();
+        _permit = Some(permit.map_err(|_| Busy("Another read is in progress"))?);
+        share.prepare(credentials, &peer, &request).await
     }
     .await
     {
         Ok(prepared) => prepared,
-        Err(_) => {
-            header(&mut send, &Header::Denied).await?;
+        Err(error) => {
+            let answer = if error.is::<Busy>() {
+                Header::Busy
+            } else {
+                Header::Denied
+            };
+            header(&mut send, &answer).await?;
             send.finish()?;
             connection.closed().await;
             return Ok(());
@@ -203,14 +202,15 @@ pub(in crate::session) async fn receive(
     )
     .await?;
     write_frame(&mut send, request).await?;
-    let Header::Allowed {
-        intent,
-        decision,
-        attestation,
-        prepared,
-    } = read_header(&mut recv).await?
-    else {
-        anyhow::bail!("Read unavailable or denied")
+    let (intent, decision, attestation, prepared) = match read_header(&mut recv).await? {
+        Header::Allowed {
+            intent,
+            decision,
+            attestation,
+            prepared,
+        } => (intent, decision, attestation, prepared),
+        Header::Busy => return Err(HOST_BUSY.into()),
+        Header::Denied => anyhow::bail!("Read unavailable or denied"),
     };
     ensure!(
         intent["request"] == serde_json::to_value(request)?

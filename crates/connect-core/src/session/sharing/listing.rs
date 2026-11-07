@@ -39,6 +39,16 @@ enum Response<T> {
         page: T,
     },
     Denied,
+    /// The host cannot answer just now; the requester asks again.
+    Busy,
+}
+/// What the requester hears when a listing fails.
+fn refusal<T>(error: anyhow::Error) -> Response<T> {
+    if error.is::<Busy>() {
+        Response::Busy
+    } else {
+        Response::Denied
+    }
 }
 const MAX_RESPONSE: usize = 512 * 1024;
 async fn send_response<T: Serialize>(send: &mut SendStream, value: &Response<T>) -> Result<()> {
@@ -102,7 +112,11 @@ impl Share {
             window.1 += 1;
         }
         let mut store = self.trust.lock().await;
-        let trust = self.authority.refresh(&mut store).await?;
+        let trust = self
+            .authority
+            .refresh(&mut store)
+            .await
+            .context(UNREACHABLE)?;
         drop(store);
         trust.certificate(peer, &credentials.expected_node, Utc::now())?;
         trust.certificate(
@@ -155,7 +169,8 @@ impl Share {
         let attestation = self
             .authority
             .attestation(&credentials.identity, &trust, &attestation_id)
-            .await?["attestation"]
+            .await
+            .context(UNREACHABLE)?["attestation"]
             .clone();
         let mut parameters = json!({"collection_id":self.config.collection_id,"peer_node":credentials.expected_node,"size":0,"page_digest":intent["page_digest"]});
         if matches!(protocol, Protocol::Browse) {
@@ -171,7 +186,8 @@ impl Share {
                 parameters,
                 "connect.collection.list",
             )
-            .await?["decision"]
+            .await
+            .context(UNREACHABLE)?["decision"]
             .clone();
         trust.read_decision(
             &decision,
@@ -241,23 +257,22 @@ pub(in crate::session) async fn serve_for(
     );
     // An unknown Space is refused like any other denial.
     let result = match shares.find(request.collection_id.as_deref(), &credentials.expected_node) {
-        Some(share) => {
-            let _permit = share
-                .budget
-                .try_acquire()
-                .context("Another file operation is running")?;
-            let result = share
-                .list(credentials, &peer, &request, protocol)
-                .await
-                .unwrap_or(Response::Denied);
-            if let Response::Allowed { page, .. } = &result {
-                share.released_names.fetch_add(
-                    page["files"].as_array().map_or(0, Vec::len) as u64,
-                    Ordering::Relaxed,
-                );
+        Some(share) => match share.budget.try_acquire() {
+            Ok(_permit) => {
+                let result = share
+                    .list(credentials, &peer, &request, protocol)
+                    .await
+                    .unwrap_or_else(refusal);
+                if let Response::Allowed { page, .. } = &result {
+                    share.released_names.fetch_add(
+                        page["files"].as_array().map_or(0, Vec::len) as u64,
+                        Ordering::Relaxed,
+                    );
+                }
+                result
             }
-            result
-        }
+            Err(_) => Response::Busy,
+        },
         None => Response::Denied,
     };
     send_response(&mut send, &result).await?;
@@ -358,15 +373,19 @@ async fn receive_page<T: Serialize + serde::de::DeserializeOwned>(
     .await?;
     write_frame(&mut send, request).await?;
     send.finish()?;
-    let Response::<T>::Allowed {
-        intent,
-        decision,
-        attestation,
-        receipt,
-        page,
-    } = read_response(&mut recv).await?
-    else {
-        anyhow::bail!("This folder is unavailable or access was not allowed")
+    let (intent, decision, attestation, receipt, page) = match read_response::<T>(&mut recv).await?
+    {
+        Response::Allowed {
+            intent,
+            decision,
+            attestation,
+            receipt,
+            page,
+        } => (intent, decision, attestation, receipt, page),
+        Response::Busy => return Err(HOST_BUSY.into()),
+        Response::Denied => {
+            anyhow::bail!("This folder is unavailable or access was not allowed")
+        }
     };
     ensure!(
         intent["domain"] == page_domain(protocol)
@@ -424,4 +443,27 @@ fn validate_legacy_page(page: &FilePage, request: &ListRequest) -> Result<()> {
         "Invalid next page"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_authority_that_cannot_be_asked_is_busy_and_anything_else_a_refusal() {
+        let outage = Err::<(), _>(anyhow::anyhow!("connection lost"))
+            .context(UNREACHABLE)
+            .unwrap_err();
+        assert!(matches!(refusal::<Value>(outage), Response::Busy));
+        let denied = anyhow::anyhow!("Policy does not allow this");
+        assert!(matches!(refusal::<Value>(denied), Response::Denied));
+    }
+
+    #[test]
+    fn busy_crosses_the_wire_on_its_own() {
+        let bytes = serde_json::to_vec(&Response::<Value>::Busy).unwrap();
+        assert_eq!(bytes, br#"{"status":"busy"}"#);
+        let parsed: Response<Value> = serde_json::from_slice(&bytes).unwrap();
+        assert!(matches!(parsed, Response::Busy));
+    }
 }
