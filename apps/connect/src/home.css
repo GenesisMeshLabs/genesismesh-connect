@@ -900,10 +900,7 @@
 .pairing-card .text-button {
   margin-bottom: 4px;
 }
-/* Scrolled into view below the top bar; no second Add device while one is open. */
-.home-main > .home-card {
-  scroll-margin-top: calc(64px + env(safe-area-inset-top));
-}
+/* No second Add device while an invitation is open. */
 .home-main:has(> #pair-card:not([hidden])) .fab {
   display: none;
 }
