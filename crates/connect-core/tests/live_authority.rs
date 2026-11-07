@@ -608,7 +608,7 @@ async fn host_read_limit_is_16_a_window_says_busy_and_leaves_refusals_final() ->
     let client_key = key();
     let invitation =
         process.command(json!({"op":"invite","node_public_key":public(&client_key)}))?;
-    let mut client = authority
+    let client = authority
         .enroll(
             client_key,
             invitation["invite"].as_str().unwrap(),
