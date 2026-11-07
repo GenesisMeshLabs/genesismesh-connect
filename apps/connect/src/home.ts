@@ -204,6 +204,7 @@ function render(status: HomeStatus) {
   const hadStatus = current !== null;
   const oldPeer = current?.peer;
   const oldDevice = current?.selected_device;
+  const wasJoining = !!current?.joining;
   const arrived = status.owner ? newAsks(current?.asks, status.asks) : [];
   if (hadStatus && arrived.length)
     message(`${arrived[0].name} asks for access. See Requests in Devices.`);
@@ -309,7 +310,8 @@ function render(status: HomeStatus) {
   }
   if (!oldPeer && status.peer) {
     if (!status.owner && !status.disconnected && !status.spaces.length && !busy) setTimeout(() => void browse(false), 0);
-    if (hadStatus) message(`${status.peer} added.`);
+    // Only after pairing here, not when a known device reconnects at launch.
+    if (hadStatus && (wasJoining || !el("pair-card").hidden)) message(`${status.peer} added.`);
     visible("pair-card", false);
     selectView("files");
   }
