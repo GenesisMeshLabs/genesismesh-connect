@@ -13,6 +13,22 @@ use crate::authority::{AuthorityAccess, TrustPin, TrustStore};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use storage::{Collection, sha};
+
+/// A refusal that clears by itself: the requester asks again shortly.
+#[derive(Debug)]
+pub(in crate::session) struct Busy(pub(in crate::session) &'static str);
+impl std::fmt::Display for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for Busy {}
+/// An authority that could not be asked just now, under load or while it
+/// restarts, is not a refusal.
+const UNREACHABLE: Busy = Busy("The network computer could not be asked just now.");
+/// What a requester says when the host answered that it is busy.
+const HOST_BUSY: Busy =
+    Busy("The sharing device is busy, or its network computer did not answer. Try again shortly.");
 pub use transfer::ReadReport;
 pub(super) use transfer::{receive, serve};
 
@@ -191,7 +207,11 @@ impl Share {
             "Unknown collection"
         );
         let mut store = self.trust.lock().await;
-        let trust = self.authority.refresh(&mut store).await?;
+        let trust = self
+            .authority
+            .refresh(&mut store)
+            .await
+            .context(UNREACHABLE)?;
         drop(store);
         trust.certificate(peer, &credentials.expected_node, Utc::now())?;
         trust.certificate(
@@ -219,7 +239,8 @@ impl Share {
         let attestation = self
             .authority
             .attestation(&credentials.identity, &trust, &attestation_id)
-            .await?["attestation"]
+            .await
+            .context(UNREACHABLE)?["attestation"]
             .clone();
         let params = json!({"collection_id":request.collection_id,"file_name":request.file_name,"peer_node":credentials.expected_node,"sha256":digest,"size":bytes.len()});
         let response = self
@@ -232,7 +253,8 @@ impl Share {
                 params,
                 "connect.collection.read",
             )
-            .await?;
+            .await
+            .context(UNREACHABLE)?;
         let decision = response["decision"].clone();
         trust.read_decision(
             &decision,

@@ -373,7 +373,10 @@ async fn normal_authority_shutdown_refuses_next_resource_request_while_cached_tr
                 Some(config.collection_id.clone())
             )
             .await
-            .is_err()
+            .unwrap_err()
+            .to_string()
+            .contains("busy"),
+        "An authority that is down is not a refusal"
     );
     assert!(
         member

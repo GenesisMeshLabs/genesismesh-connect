@@ -666,3 +666,38 @@ async fn incomplete_authentication_has_a_deadline_and_never_echoes() -> Result<(
     server.close().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn a_busy_host_is_asked_again_and_a_refusal_is_final() {
+    let waits = [Duration::from_millis(1); 3];
+    let busy = || anyhow::Error::new(sharing::Busy("Not yet"));
+    let calls = std::cell::Cell::new(0);
+    let answered = asking_again(&waits, || {
+        calls.set(calls.get() + 1);
+        let reply = if calls.get() < 3 { Err(busy()) } else { Ok(7) };
+        async move { reply }
+    })
+    .await;
+    assert_eq!(answered.unwrap(), 7);
+    assert_eq!(calls.get(), 3);
+
+    calls.set(0);
+    let given_up = asking_again(&waits, || {
+        calls.set(calls.get() + 1);
+        let reply: Result<()> = Err(busy());
+        async move { reply }
+    })
+    .await;
+    assert!(given_up.unwrap_err().is::<sharing::Busy>());
+    assert_eq!(calls.get(), 4);
+
+    calls.set(0);
+    let refused = asking_again(&waits, || {
+        calls.set(calls.get() + 1);
+        let reply: Result<()> = Err(anyhow::anyhow!("Read unavailable or denied"));
+        async move { reply }
+    })
+    .await;
+    assert!(refused.is_err());
+    assert_eq!(calls.get(), 1, "A refusal is never asked again");
+}

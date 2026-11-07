@@ -37,6 +37,28 @@ pub use trust::{TrustPolicy, TrustSnapshot};
 use wire::{ALPN, Role, authenticate, read_frame, write_frame};
 
 const DEADLINE: Duration = Duration::from_secs(10);
+/// How long a read waits for a host that cannot answer yet, as just after it
+/// restarts: about 15 seconds, then the person is told.
+const BUSY_WAITS: [Duration; 4] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+];
+/// Asks again, after each wait, while the host says it is busy. A read changes
+/// nothing, and any other outcome, a refusal above all, is final.
+async fn asking_again<T, A: std::future::Future<Output = Result<T>>>(
+    waits: &[Duration],
+    mut attempt: impl FnMut() -> A,
+) -> Result<T> {
+    for wait in waits {
+        match attempt().await {
+            Err(error) if error.is::<sharing::Busy>() => tokio::time::sleep(*wait).await,
+            outcome => return outcome,
+        }
+    }
+    attempt().await
+}
 const MAX_MESSAGE: usize = 1024;
 const MAX_CONNECTIONS: usize = 8;
 
@@ -522,6 +544,18 @@ impl SessionEndpoint {
         ticket: &str,
         request: sharing::ReadRequest,
     ) -> Result<sharing::ReadReport> {
+        asking_again(&BUSY_WAITS, || {
+            self.read_file_once(node, ticket, request.clone())
+        })
+        .await
+    }
+
+    async fn read_file_once(
+        &self,
+        node: Option<&str>,
+        ticket: &str,
+        request: sharing::ReadRequest,
+    ) -> Result<sharing::ReadReport> {
         let ticket: SessionTicket = wire::decode(ticket.as_bytes())?;
         ensure!(
             ticket.version == 1
@@ -559,6 +593,18 @@ impl SessionEndpoint {
     }
 
     pub async fn list_files_from(
+        &self,
+        node: Option<&str>,
+        ticket: &str,
+        after: Option<String>,
+    ) -> Result<sharing::listing::FilePage> {
+        asking_again(&BUSY_WAITS, || {
+            self.list_files_once(node, ticket, after.clone())
+        })
+        .await
+    }
+
+    async fn list_files_once(
         &self,
         node: Option<&str>,
         ticket: &str,
@@ -602,6 +648,18 @@ impl SessionEndpoint {
         ticket: &str,
         after: Option<String>,
     ) -> Result<sharing::catalog::Page> {
+        asking_again(&BUSY_WAITS, || {
+            self.catalog_once(node, ticket, after.clone())
+        })
+        .await
+    }
+
+    async fn catalog_once(
+        &self,
+        node: &str,
+        ticket: &str,
+        after: Option<String>,
+    ) -> Result<sharing::catalog::Page> {
         let ticket: SessionTicket = wire::decode(ticket.as_bytes())?;
         ensure!(
             ticket.version == 1
@@ -640,6 +698,26 @@ impl SessionEndpoint {
     /// One page of a folder in the Space `collection_id`, or, without one,
     /// in the first Space the host shares with this device.
     pub async fn browse_from(
+        &self,
+        node: &str,
+        ticket: &str,
+        after: Option<String>,
+        directory: Vec<String>,
+        collection_id: Option<String>,
+    ) -> Result<sharing::browse::Page> {
+        asking_again(&BUSY_WAITS, || {
+            self.browse_once(
+                node,
+                ticket,
+                after.clone(),
+                directory.clone(),
+                collection_id.clone(),
+            )
+        })
+        .await
+    }
+
+    async fn browse_once(
         &self,
         node: &str,
         ticket: &str,
