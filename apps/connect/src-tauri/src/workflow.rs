@@ -434,9 +434,10 @@ async fn keep_phone_network(app: tauri::AppHandle) {
     }
 }
 
-/// Stop this phone's network while Connect is off screen. Nothing is written: the
-/// device stays listed, as at launch, and reopening uses what is saved. Anything
-/// in progress keeps it open until a later check.
+/// Stop this phone's network while Connect is off screen. Nothing is written, and
+/// nothing stays open that reopening needs, such as the trust checkpoint's lock;
+/// reopening uses what is saved. The screen keeps what it last showed. Anything in
+/// progress keeps the network open until a later check.
 #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
 async fn close_phone_network(app: &tauri::AppHandle) {
     let Some(_turn) = SetupTurn::take() else {
@@ -470,8 +471,9 @@ async fn close_phone_network(app: &tauri::AppHandle) {
     if let Some(pair) = owner.pairing.take() {
         pair.close().await;
     }
+    crate::phone_lifecycle::LIFECYCLE.set_closed(true);
     drop(owner.runtime.take());
-    if let Some(device) = slot.controller.as_mut() {
+    if let Some(mut device) = slot.controller.take() {
         device.stop().await;
     }
     drop(owner.lease.take());
@@ -499,6 +501,7 @@ async fn adopt_phone_network(
     owner.problem = None;
     slot.controller = Some(device);
     slot.problem = None;
+    crate::phone_lifecycle::LIFECYCLE.set_closed(false);
 }
 #[tauri::command]
 pub async fn network_attach(

@@ -16,6 +16,7 @@ const GRACE: Duration = Duration::from_secs(120);
 struct State {
     suspended_at: Option<Instant>,
     holds: usize,
+    closed: bool,
 }
 
 #[derive(Default)]
@@ -53,6 +54,13 @@ impl PhoneLifecycle {
             && state
                 .suspended_at
                 .is_some_and(|since| now.duration_since(since) >= GRACE)
+    }
+    /// The network is closed or reopening: the screen keeps what it last showed.
+    pub(crate) fn set_closed(&self, closed: bool) {
+        self.state().closed = closed;
+    }
+    pub(crate) fn is_closed(&self) -> bool {
+        self.state().closed
     }
     /// Keeps the network open while another screen is part of what the person
     /// is doing. The grace period starts again when the last hold ends.
@@ -131,6 +139,18 @@ mod tests {
         let ended = Instant::now();
         assert!(!phone.should_close(ended + GRACE - Duration::from_secs(1)));
         assert!(phone.should_close(ended + GRACE + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn closed_stays_until_the_network_is_open_again() {
+        let phone = lifecycle();
+        assert!(!phone.is_closed());
+        phone.set_closed(true);
+        phone.suspended(Instant::now());
+        phone.resumed();
+        assert!(phone.is_closed(), "Returning does not reopen it by itself");
+        phone.set_closed(false);
+        assert!(!phone.is_closed());
     }
 
     #[test]
