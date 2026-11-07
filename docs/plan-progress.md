@@ -33,7 +33,7 @@ policy semantics; Connect supplies the usable workflows and fixed adapters.
 
 ## State on 7 November 2026
 
-Merged from 6 to 7 November (#24 to #30):
+Merged from 6 to 7 November (#24 to #36):
 
 - **Phone-run network in the app:** the owner test build
   (`org.genesismesh.connect.ownerqualification`) offers *Start on this phone*.
@@ -48,6 +48,16 @@ Merged from 6 to 7 November (#24 to #30):
 - **Everyday UX:** administrator screens hidden until a presence check exists,
   the comparison code shown large on the joining device, plain wording, name
   wrapping, accessibility fixes (#26), and a plain Manage access (#30).
+- **Opening and picking:** items this device shares open in their app, and
+  Photos & videos uses the system photo picker (#33).
+- **Everyday screens redesigned** from a designer's proposal: one token-based
+  stylesheet, compact type, list rows, bottom sheets, a sidebar on wide windows
+  (#34).
+- **Reads across restarts and refreshes:** a host that cannot ask its network
+  computer answers busy, not refused, and devices ask again for about 15 seconds
+  on lists and reads, also when a trust refresh ends the connection (#35, #36).
+- **Recovery export** keeps the key when the share sheet fails, and a declined
+  export no longer ends the session (#32).
 
 Observed on the Samsung SM-A176B (Android 16), owner test build:
 
@@ -55,12 +65,26 @@ Observed on the Samsung SM-A176B (Android 16), owner test build:
 | --- | --- |
 | Create through the app, root key behind the system authentication prompt | Passed (build `8a4e85d`) |
 | A second device (headless, in WSL) joins with the comparison code | Passed; the phone's authority issued its certificate |
-| Share a file from the phone | First attempt exposed the async panic fixed in #25; not yet re-run |
+| Share a file from the phone; the second device reads it with a receipt | Passed |
+| Force-stop and relaunch | Passed: reopens without a prompt; the second device's read succeeded 34 seconds after launch, on its third attempt |
+| Open an item this device shares; Photos & videos | Passed: the file opened through the Android chooser; the system photo picker opened, and cancelling changed nothing (#33) |
+| 25 consecutive reads from the second device, Connect on screen | Passed: 25 of 25 over 78 seconds (#36) |
+| Process paused for 5 minutes in the background, then resumed | Passed: stayed ready |
 | Create whose prompt timed out | Rolled back and offered a retry with a plain message (builds `9c42045`, `87c6025`) |
 
-Not yet run on the phone: sharing and reading, restart and reopen, saving and
-restoring a recovery file, and removing a device. Each needs the owner at the
-phone to confirm the system prompt. Public Create in the normal app stays off.
+Known limits and open findings on the phone:
+
+- **Foreground only:** other devices reach the network only while Connect is on
+  screen. With it in the background, reads timed out and Android later ended the
+  process.
+- **Unexplained, seen once:** a process left running for about 12 hours kept
+  reporting "Authority relay did not become ready", in the foreground too, with
+  the phone online. A force-stop and relaunch cleared it at once. Pausing the
+  process for 5 minutes did not reproduce it; the cause is unknown.
+
+Not yet run on the phone: saving and restoring a recovery file, and removing a
+device. Saving and restoring need the owner at the phone to confirm the system
+prompt. Public Create in the normal app stays off.
 
 ## Independent phone hosting requirement — 5 November 2026
 
