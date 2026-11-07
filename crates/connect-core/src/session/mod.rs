@@ -45,15 +45,24 @@ const BUSY_WAITS: [Duration; 4] = [
     Duration::from_secs(4),
     Duration::from_secs(8),
 ];
-/// Asks again, after each wait, while the host says it is busy. A read changes
-/// nothing, and any other outcome, a refusal above all, is final.
+/// A read that may answer if asked again: the host is busy, or a trust refresh
+/// on either side ended the connection, as it does for every open one. The next
+/// attempt runs under the new trust, so a revoked device is then refused.
+fn clears_by_itself(error: &anyhow::Error) -> bool {
+    error.is::<sharing::Busy>() || {
+        let text = format!("{error:#}");
+        text.starts_with("Trust changed during") || text.contains("closed by peer: session ended")
+    }
+}
+/// Asks again, after each wait, while the answer may clear by itself. A read
+/// changes nothing, and any other outcome, a refusal above all, is final.
 async fn asking_again<T, A: std::future::Future<Output = Result<T>>>(
     waits: &[Duration],
     mut attempt: impl FnMut() -> A,
 ) -> Result<T> {
     for wait in waits {
         match attempt().await {
-            Err(error) if error.is::<sharing::Busy>() => tokio::time::sleep(*wait).await,
+            Err(error) if clears_by_itself(&error) => tokio::time::sleep(*wait).await,
             outcome => return outcome,
         }
     }
