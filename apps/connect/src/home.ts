@@ -241,14 +241,14 @@ function render(status: HomeStatus) {
   text(
     "this-device-detail",
     status.owner
-      ? "Runs your network"
+      ? phoneHosting ? "Runs your network while Connect is open" : "Runs your network"
       : "This device",
   );
   text("settings-network", status.network || "Your network");
   text(
     "settings-owner",
     status.owner
-      ? phoneHosting ? "Runs on this phone" : "Runs on this computer"
+      ? phoneHosting ? "Runs on this phone while Connect is open" : "Runs on this computer"
       : "Managed by your network computer",
   );
   renderConnection(status);
