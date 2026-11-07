@@ -690,10 +690,12 @@ async fn phone_recovery_create(app: &tauri::AppHandle) -> Result<Option<String>,
         .ok_or("Your network is still opening")?
         .pin
         .clone();
+    // Only this cache folder is offered to other apps (see file_paths.xml).
     let exports = app
         .path()
         .app_cache_dir()
         .map_err(|e| e.to_string())?
+        .join("connect-downloads")
         .join("local-exports");
     std::fs::create_dir_all(&exports).map_err(|e| e.to_string())?;
     let folder = tempfile::Builder::new()
@@ -715,14 +717,13 @@ async fn phone_recovery_create(app: &tauri::AppHandle) -> Result<Option<String>,
     owner.runtime = Some(runtime);
     let key = key.map_err(|e| e.to_string())?;
     drop(owner);
-    app.view()
-        .view(tauri_plugin_view::ViewRequest {
-            path: Some(path.to_string_lossy().into_owned()),
-            share: true,
-        })
-        .map_err(|e| e.to_string())?;
-    // The share target reads the file after the sheet returns.
+    // The share target reads the file after the sheet returns. The file and
+    // its key are kept even when the sheet cannot open: the key is shown once.
     let _ = folder.keep();
+    let _ = app.view().view(tauri_plugin_view::ViewRequest {
+        path: Some(path.to_string_lossy().into_owned()),
+        share: true,
+    });
     Ok(Some(key.to_string()))
 }
 

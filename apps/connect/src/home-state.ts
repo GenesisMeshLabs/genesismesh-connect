@@ -125,6 +125,7 @@ export function newAsks(before: HomeAsk[] | undefined, now: HomeAsk[] | undefine
 
 export function friendlyProblem(value: string) {
   // Creating a network on a phone: the screen lock protects its main key.
+  if (/recovery file was not created/i.test(value)) return "The recovery file was not saved, and nothing changed. Try again, and confirm your screen lock when your phone asks.";
   if (/cancelled before anything was saved/i.test(value)) return "Creating your network was cancelled before anything was saved. Try again, and confirm your screen lock when your phone asks.";
   if (/secure_screen_lock_required/i.test(value)) return "Set a screen lock (PIN, pattern or password) on this phone first. It protects your network’s main key.";
   if (/device_unlock_required/i.test(value)) return "Unlock your phone, then try again.";

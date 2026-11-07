@@ -196,7 +196,12 @@ class ConnectOwner:
                 return {"configured": self.configured(), "running": self.operations is not None,
                         "foreground_only": True, "production_create_enabled": False}
             if op == "recovery_export" and set(request) == {"op"}:
-                return self._export_recovery()
+                try:
+                    return self._export_recovery()
+                except Exception as failure:
+                    # Exporting writes nothing the network uses: a declined or
+                    # failed export leaves the session as it was.
+                    raise Unchanged("The recovery file was not created. Nothing changed.") from failure
             if op == "recovery_import" and set(request) == {"op", "staging", "keys"}:
                 try:
                     return self._import_recovery(request["staging"], request["keys"])
@@ -277,9 +282,15 @@ class ConnectOwner:
             self.operations = None
 
 
+class Unchanged(Refused):
+    """A refusal after which the network is exactly as it was."""
+
+
 def exchange(owner, text):
     """Sanitized result only; no exception, key, invite or path reflection."""
     try: return json.dumps({"ok": owner.request(text)}, allow_nan=False)
+    except Unchanged as refusal:
+        return json.dumps({"unchanged": str(refusal)[:200]})
     except (Refused, OperationRefused):
         return json.dumps({"error": "The local network operation was refused. Existing state was preserved."})
     except Exception:

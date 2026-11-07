@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import uuid
 
 from nacl.signing import SigningKey
@@ -88,6 +89,15 @@ class ConnectEmbeddedTests(unittest.TestCase):
                 replacement.request(json.dumps({"op": "recovery_import", "staging": str(staging), "keys": exported["keys"]}))
         finally:
             replacement.close()
+
+    def test_declined_recovery_export_changes_nothing_and_keeps_the_session(self):
+        self.request("create", name="Kept session")
+        with patch.object(self.vault, "open_root", side_effect=Refused("Root authentication declined")):
+            reply = json.loads(exchange(self.owner, json.dumps({"op": "recovery_export"})))
+        self.assertEqual(set(reply), {"unchanged"})
+        self.assertFalse(self.owner.uncertain)
+        self.assertEqual(self.request("space_list"), [])
+        self.assertFalse(any(p.name.startswith(".recovery-") for p in self.path.iterdir()))
 
     def test_real_core_host_invitation_enrollment_and_independent_revocation(self):
         self.request("create", name="Independent phone")

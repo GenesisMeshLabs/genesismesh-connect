@@ -38,6 +38,7 @@ test("disconnected and interrupted-leave states give a specific next action", ()
   assert.match(friendlyProblem("This device is disconnected. Tap Reconnect in Settings."), /Reconnect/);
   assert.match(friendlyProblem("Creating your network was cancelled before anything was saved. Try again."), /confirm your screen lock/);
   assert.match(friendlyProblem("secure_screen_lock_required"), /Set a screen lock/);
+  assert.match(friendlyProblem("The recovery file was not created. Nothing changed."), /not saved, and nothing changed/);
   assert.match(friendlyProblem("device_unlock_required"), /Unlock your phone/);
   assert.match(friendlyProblem("Finish or cancel the current transfer before leaving."), /Finish or cancel/);
   assert.match(friendlyProblem("Leaving is unfinished: locked"), /Unlock this device/);
