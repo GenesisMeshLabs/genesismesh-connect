@@ -102,6 +102,7 @@ test("breadcrumbs preserve Unicode names and return explicit parent paths", () =
     {name:"Été 2026",directory:["Photos","Été 2026"]},
   ]);
   assert.deepEqual(directory,["Photos","Été 2026"]);
+  assert.equal(folderCrumbs(["Photos"],"Family photos")[0].name,"Family photos","The root is named after the item");
 });
 
 test("the connection summary says what this device uses and who chose it", () => {

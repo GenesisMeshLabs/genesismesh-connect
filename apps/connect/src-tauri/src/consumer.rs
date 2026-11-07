@@ -970,6 +970,8 @@ pub async fn forget_device(
         .map_err(error)
 }
 
+/// The folder behind something this device shares or receives into: read
+/// here directly, never through the network. Services have no files.
 fn own_inbox(
     status: &connect_core::device::DeviceStatus,
     collection: &str,
@@ -977,9 +979,9 @@ fn own_inbox(
     status
         .shares
         .iter()
-        .find(|s| s.collection_id == collection && s.kind == SpaceKind::Inbox)
+        .find(|s| s.collection_id == collection && !s.kind.is_service())
         .map(|s| s.directory.clone())
-        .ok_or("Choose this device's received files".into())
+        .ok_or("Choose something this device shares".into())
 }
 #[tauri::command]
 pub async fn show_received_folder(
@@ -1046,6 +1048,7 @@ pub async fn export_received(
     directory: Vec<String>,
     name: String,
     version: String,
+    open: Option<bool>,
     app: tauri::AppHandle,
     desktop: tauri::State<'_, DesktopState>,
 ) -> Result<(), String> {
@@ -1088,11 +1091,22 @@ pub async fn export_received(
     .await
     .map_err(error)?
     .map_err(error)?;
+    // Opening shows the file in its app; otherwise it is saved or shared.
+    let open = open.unwrap_or(false);
+    #[cfg(desktop)]
+    if open {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener()
+            .open_path(path.to_string_lossy(), None::<&str>)
+            .map_err(error)?;
+        // The copy stays until the next restart, while its app reads it.
+        let _ = export.keep();
+        return Ok(());
+    }
     #[cfg(desktop)]
     {
-        let _ = app;
         let Some(chosen) = rfd::AsyncFileDialog::new()
-            .set_title("Save received file")
+            .set_title("Save a copy")
             .set_file_name(path.file_name().unwrap().to_string_lossy())
             .save_file()
             .await
@@ -1107,7 +1121,7 @@ pub async fn export_received(
         app.view()
             .view(tauri_plugin_view::ViewRequest {
                 path: Some(path.to_string_lossy().into_owned()),
-                share: true,
+                share: !open,
             })
             .map_err(error)?;
         let _ = export.keep();

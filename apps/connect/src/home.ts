@@ -198,7 +198,7 @@ function render(status: HomeStatus) {
   text(
     "settings-owner",
     status.owner
-      ? "Managed on this computer"
+      ? phoneHosting ? "Runs on this phone" : "Runs on this computer"
       : "Managed by your network computer",
   );
   renderConnection(status);
@@ -585,6 +585,10 @@ el("clear-library-filters").addEventListener("click", () => { resetLibrary(); if
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-library-filter]")) {
   button.addEventListener("click", () => { libraryFilter = button.dataset.libraryFilter as LibraryFilter; if (current) renderSpaces(current); });
 }
+/** What an item is called on screen. */
+function spaceTitle(space: HomeSpace) {
+  return space.kind === "inbox" ? (space.own ? "Received files" : `Send files to ${space.host}`) : space.name;
+}
 function renderSpaces(status: HomeStatus) {
   const list = el("space-list");
   visible("space-list", !currentSpace);
@@ -616,7 +620,7 @@ function renderSpaces(status: HomeStatus) {
     row.setAttribute("role", "listitem");
     const details = document.createElement("div");
     const name = document.createElement("h2");
-    name.textContent = space.kind === "inbox" ? (space.own ? "Received files" : `Send files to ${space.host}`) : space.name;
+    name.textContent = spaceTitle(space);
     const where = document.createElement("p");
     where.textContent = spaceSummary(space);
     details.append(name, where);
@@ -648,6 +652,12 @@ function renderSpaces(status: HomeStatus) {
       action.setAttribute("aria-label", `Send a file to ${space.host}`);
       action.addEventListener("click", () => void run(action, () => sendTo(space)));
     } else if (space.own) {
+      if (!isService(space)) {
+        const browse = document.createElement("button"); browse.textContent = "Open";
+        browse.setAttribute("aria-label", `Open ${space.name}`);
+        browse.addEventListener("click", () => void run(browse, () => openSpace(space)));
+        details.append(browse);
+      }
       action.textContent = "Stop sharing";
       action.setAttribute("aria-label", `Stop sharing ${space.name}`);
       action.addEventListener("click", () => void run(action, async () => {
@@ -765,7 +775,7 @@ function renderFiles() {
 function renderBreadcrumbs() {
   const navigation = el("folder-breadcrumbs");
   navigation.replaceChildren();
-  const crumbs = folderCrumbs(folderPath);
+  const crumbs = folderCrumbs(folderPath, currentSpace ? spaceTitle(currentSpace) : undefined);
   crumbs.forEach((crumb, index) => {
     if (index) {const separator = document.createElement("span"); separator.textContent="/"; separator.setAttribute("aria-hidden","true"); navigation.append(separator);}
     const button = document.createElement("button");
@@ -776,7 +786,7 @@ function renderBreadcrumbs() {
   });
 }
 async function loadFiles(more: boolean, directory = folderPath) {
-  const result = await invoke<FilePage>(currentSpace?.own && currentSpace.kind === "inbox" ? "browse_received" : "browse_files", {
+  const result = await invoke<FilePage>(currentSpace?.own && !isService(currentSpace) ? "browse_received" : "browse_files", {
     after: more ? page?.next : null,
     directory,
     space: currentSpace?.id ?? null,
@@ -793,8 +803,14 @@ async function loadFiles(more: boolean, directory = folderPath) {
   visible("file-preview", false);
   text(
     "remote-folder-title",
-    currentSpace ? `${currentSpace.name} · ${spaceSummary(currentSpace)}` : `From ${current?.peer || "your computer"}`,
+    currentSpace ? spaceTitle(currentSpace) : `From ${current?.peer || "your computer"}`,
   );
+  text("remote-folder-subtitle", currentSpace ? spaceSummary(currentSpace) : "");
+  // Search, sort and the path appear only where they help.
+  const many = files.length > 8 || !!page.next;
+  visible("file-search", many);
+  el("file-sort").parentElement!.hidden = !many;
+  visible("folder-breadcrumbs", folderPath.length > 0);
   visible("all-spaces", !!currentSpace);
   visible("space-list", false);
   visible("library-tools", false);
@@ -859,8 +875,8 @@ function renderUnfinished(status: HomeStatus) {
 async function open(file: FileEntry, button: HTMLButtonElement) {
   if (!page) return;
   const collectionId = page.collection_id;
-  if (currentSpace?.own && currentSpace.kind === "inbox") {
-    await run(button, () => invoke("export_received", { collectionId, directory: folderPath, name: file.name, version: file.version }));
+  if (currentSpace?.own && !isService(currentSpace)) {
+    await run(button, () => invoke("export_received", { collectionId, directory: folderPath, name: file.name, version: file.version, open: true }));
     return;
   }
   const directory = folderPath;
@@ -1051,6 +1067,7 @@ function usePhoneSetupWording() {
     "This phone's name";
   if (!localStorage.getItem("connect.friendly-name"))
     input("computer-name").value = "My phone";
+  text("owner-leave-note", "This phone runs your network. Leaving here would affect your other devices; use Disconnect to pause it.");
 }
 if (isTauri()) {
   void onOpenUrl((urls) => void acceptLink(urls));
