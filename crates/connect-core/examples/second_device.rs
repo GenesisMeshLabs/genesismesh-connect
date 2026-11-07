@@ -16,7 +16,7 @@ use connect_core::{
 };
 use std::path::Path;
 
-const USAGE: &str = "Usage: second_device <profile> (join <link> [name] | status | browse [space] [folder/...] | read <space> <name> [sha256])";
+const USAGE: &str = "Usage: second_device <profile> (join <link> [name] | status | browse [space] [folder/...] | read <space> <name> [sha256] | watch <space> <name> <reads>)";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -75,6 +75,51 @@ async fn main() -> Result<()> {
             );
             if let Some(text) = report.text {
                 println!("{text}");
+            }
+            Ok(())
+        }
+        // One running device reading again and again, as an open app does while
+        // its host restarts. Refreshes trust like the app's background task.
+        Some("watch") => {
+            let space = args.get(2).context(USAGE)?.clone();
+            let name = args.get(3).context(USAGE)?.clone();
+            let reads: u32 = args.get(4).context(USAGE)?.parse()?;
+            let mut device = connected(profile).await?;
+            let peer = host(&mut device, Some(&space))?;
+            let start = std::time::Instant::now();
+            let mut refreshed = start;
+            for read in 1..=reads {
+                let asked = start.elapsed().as_secs();
+                let outcome = device
+                    .session()?
+                    .read_file_from(
+                        Some(&peer.node),
+                        &peer.ticket,
+                        ReadRequest {
+                            request_id: uuid::Uuid::new_v4().to_string(),
+                            collection_id: space.clone(),
+                            file_name: name.clone(),
+                            expected_sha256: None,
+                        },
+                    )
+                    .await;
+                let answered = start.elapsed().as_secs();
+                match outcome {
+                    Ok(report) => println!(
+                        "read {read} asked at {asked}s answered at {answered}s: ok, receipt {}",
+                        report.receipt_id
+                    ),
+                    Err(error) => {
+                        println!("read {read} asked at {asked}s answered at {answered}s: {error:#}")
+                    }
+                }
+                if refreshed.elapsed().as_secs() >= 30 {
+                    refreshed = std::time::Instant::now();
+                    if let Err(error) = device.refresh().await {
+                        println!("refresh at {answered}s: {error:#}");
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
             Ok(())
         }

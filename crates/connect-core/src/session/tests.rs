@@ -707,6 +707,12 @@ fn only_outcomes_that_clear_by_themselves_are_asked_again() {
     let cut = anyhow::anyhow!("closed by peer: session ended (code 0)").context("connection lost");
     assert!(clears_by_itself(&cut), "A trust refresh on the host");
     assert!(clears_by_itself(&anyhow::anyhow!(
+        "Trust snapshot stale or future dated"
+    )));
+    let down = unreached(anyhow::anyhow!("no route to the device"));
+    assert!(clears_by_itself(&down), "A host that may be restarting");
+    assert!(down.to_string().contains("could not be reached"));
+    assert!(clears_by_itself(&anyhow::anyhow!(
         "Trust changed during read"
     )));
     assert!(clears_by_itself(&anyhow::Error::new(sharing::Busy(
