@@ -174,10 +174,12 @@ Known limits and open findings:
   pause or by 5 h 42 min on screen.
 - **Certificate renewal every 4 minutes.** The documented freshness policy
   ([authority spike](authority-spike.md)) renews a device certificate at 240 s.
-  Each renewal suspends the device's sessions, the likely source of some
-  "suspended" and "session ended" failures; the phone issued 196 certificates in
-  18.7 hours and its database is about 12 MB. The policy is unchanged; a gentler
-  renewal that keeps revocation timely needs a decision.
+  Each renewal suspends the device's sessions while it waits for the answer, and
+  every refresh, every 30 seconds, ends exchanges in flight; which of these
+  caused the "suspended" and "session ended" failures was not recorded. The phone
+  issued 196 certificates in 18.7 hours and its database is about 12 MB. The
+  policy is unchanged; the options are in the
+  [renewal proposal](renewal-proposal.md) and need a decision.
 - **Renewal gap, under investigation:** the phone's authority issued no
   certificate for it from 19:03 to 23:15 UTC on 7 November, although Connect was
   on screen and serving reads for part of that time (about 23:03 to 23:08 UTC).
