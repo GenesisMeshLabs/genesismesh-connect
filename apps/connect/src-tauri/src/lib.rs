@@ -122,7 +122,7 @@ pub fn run() {
             services::setup(app);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(phone_commands(tauri::generate_handler![
             start_endpoint,
             endpoint_status,
             stop_endpoint,
@@ -205,7 +205,7 @@ pub fn run() {
             desktop::device_stop,
             desktop::device_refresh,
             desktop::device_send
-        ])
+        ]))
         .build(tauri::generate_context!())
         .expect("Connect could not start")
         .run(|_app, _event| {
@@ -225,4 +225,14 @@ pub fn run() {
                 }
             }
         });
+}
+
+/// On a phone that runs the network, actions wait while it reopens after Connect
+/// returns to the screen. Elsewhere the handler is unchanged.
+fn phone_commands<R: tauri::Runtime>(
+    handler: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+    let handler = phone_lifecycle::waiting_for_reopen(handler);
+    handler
 }

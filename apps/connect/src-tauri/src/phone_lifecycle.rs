@@ -11,6 +11,44 @@ use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 
 const GRACE: Duration = Duration::from_secs(120);
+/// How long an action waits for the network to reopen. Reopening took about 25
+/// seconds on the test phone; after this the action runs anyway and says what
+/// went wrong, as before.
+pub(crate) const REOPEN_WAIT: Duration = Duration::from_secs(45);
+
+/// Commands that run at once even while the network is closed or reopening: they
+/// report state, cancel something, set up or leave a network, or work without it.
+/// Every other command waits for the network first.
+const NEVER_WAIT: &[&str] = &[
+    "home_status",
+    "network_status",
+    "endpoint_status",
+    "device_status",
+    "send_status",
+    "download_status",
+    "access_workflow_status",
+    "host_admin_status",
+    "client_admin_status",
+    "client_requests_status",
+    "operation_registry",
+    "pair_cancel",
+    "cancel_send",
+    "cancel_download",
+    "cancel_access_review",
+    "network_create",
+    "network_reopen",
+    "network_attach",
+    "recovery_create",
+    "recovery_restore",
+    "disconnect_network",
+    "reconnect_network",
+    "leave_network",
+];
+
+/// Whether an action asked for while the network reopens should wait for it.
+pub(crate) fn waits_for_network(command: &str) -> bool {
+    !NEVER_WAIT.contains(&command)
+}
 
 #[derive(Default)]
 struct State {
@@ -23,6 +61,7 @@ struct State {
 pub(crate) struct PhoneLifecycle {
     state: Mutex<State>,
     returned: Notify,
+    opened: Notify,
 }
 
 #[cfg_attr(test, allow(dead_code))]
@@ -58,6 +97,25 @@ impl PhoneLifecycle {
     /// The network is closed or reopening: the screen keeps what it last showed.
     pub(crate) fn set_closed(&self, closed: bool) {
         self.state().closed = closed;
+        if !closed {
+            self.opened.notify_waiters();
+        }
+    }
+    /// Returns once the network is open, or after `limit` at the latest.
+    pub(crate) async fn until_open(&self, limit: Duration) {
+        let _ = tokio::time::timeout(limit, async {
+            loop {
+                // Registered before checking, so an opening in between is seen.
+                let opened = self.opened.notified();
+                tokio::pin!(opened);
+                opened.as_mut().enable();
+                if !self.is_closed() {
+                    return;
+                }
+                opened.await;
+            }
+        })
+        .await;
     }
     pub(crate) fn is_closed(&self) -> bool {
         self.state().closed
@@ -67,6 +125,31 @@ impl PhoneLifecycle {
     pub(crate) fn hold(&'static self) -> Hold {
         self.state().holds += 1;
         Hold(self)
+    }
+}
+
+/// Wraps the app's command handler: while the network is reopening after Connect
+/// returned to the screen, an action waits for it, for at most [`REOPEN_WAIT`],
+/// instead of failing because nothing is open yet. Then it runs as usual.
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn waiting_for_reopen<R: tauri::Runtime>(
+    handler: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    let handler = std::sync::Arc::new(handler);
+    move |invoke| {
+        if !LIFECYCLE.is_closed() || !waits_for_network(invoke.message.command()) {
+            return handler(invoke);
+        }
+        let handler = handler.clone();
+        tauri::async_runtime::spawn(async move {
+            LIFECYCLE.until_open(REOPEN_WAIT).await;
+            let resolver = invoke.resolver.clone();
+            let command = invoke.message.command().to_owned();
+            if !handler(invoke) {
+                resolver.reject(format!("Command {command} not found"));
+            }
+        });
+        true
     }
 }
 
@@ -158,6 +241,56 @@ mod tests {
         let phone = lifecycle();
         drop(phone.hold());
         assert!(!phone.is_suspended());
+    }
+
+    #[tokio::test]
+    async fn an_action_waits_for_the_network_to_open_but_not_forever() {
+        let phone = lifecycle();
+        let limit = Duration::from_millis(800);
+        let started = tokio::time::Instant::now();
+        phone.until_open(limit).await;
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "Open: no wait"
+        );
+
+        phone.set_closed(true);
+        let started = tokio::time::Instant::now();
+        let opening = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            phone.set_closed(false);
+        });
+        phone.until_open(limit).await;
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_millis(300) && waited < limit,
+            "Waited {waited:?} for an opening after 300 ms"
+        );
+        opening.await.unwrap();
+
+        phone.set_closed(true);
+        let started = tokio::time::Instant::now();
+        phone.until_open(limit).await;
+        assert!(
+            started.elapsed() >= limit,
+            "A failed reopening ends the wait"
+        );
+        assert!(phone.is_closed());
+    }
+
+    #[test]
+    fn status_cancel_and_setup_commands_never_wait() {
+        for command in [
+            "home_status",
+            "pair_cancel",
+            "network_reopen",
+            "recovery_restore",
+        ] {
+            assert!(!waits_for_network(command), "{command}");
+        }
+        for command in ["pair_begin", "share_invitation", "open_file", "device_read"] {
+            assert!(waits_for_network(command), "{command}");
+        }
     }
 
     #[tokio::test]
