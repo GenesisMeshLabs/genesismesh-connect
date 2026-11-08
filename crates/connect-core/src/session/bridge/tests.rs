@@ -314,9 +314,23 @@ async fn public_trust_is_root_verified_and_old_valid_identity_can_only_renew() -
     let path = dir.path().join("wrong.json");
     let mut wrong_store = TrustStore::create(&path, wrong)?;
     let baseline = std::fs::read(&path)?;
-    assert!(client.refresh(&mut wrong_store).await.is_err());
+    let Err(refused) = client.refresh(&mut wrong_store).await else {
+        anyhow::bail!("A wrong root verified")
+    };
+    assert!(
+        !refused.is::<Unreached>(),
+        "An answer that fails verification is final: {refused:#}"
+    );
     assert_eq!(std::fs::read(&path)?, baseline);
     bridge.close().await;
+    // A network computer that has gone, as while its device restarts, may be
+    // asked again; the store is untouched.
+    let before = std::fs::read(dir.path().join("trust.json"))?;
+    let Err(gone) = client.refresh(&mut store).await else {
+        anyhow::bail!("A closed network computer answered")
+    };
+    assert!(gone.is::<Unreached>(), "{gone:#}");
+    assert_eq!(std::fs::read(dir.path().join("trust.json"))?, before);
     Ok(())
 }
 

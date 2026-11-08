@@ -90,9 +90,10 @@ impl Agent {
         Ok(Self { device })
     }
 
+    /// Each tool call checks trust first. While the phone that runs the network
+    /// restarts, the call waits for it for about a minute instead of failing.
     async fn refreshed(&mut self) -> Result<()> {
-        self.device.reconnect_saved().await?;
-        self.device.refresh().await
+        self.device.connect_when_reachable().await
     }
 
     /// The device sharing `space` with this agent.

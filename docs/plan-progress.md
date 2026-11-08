@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #41), and this change:
+Merged since 7 November (#37 to #43), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -103,12 +103,21 @@ Merged since 7 November (#37 to #41), and this change:
   provisional: without spawning, 0 of 600,000 lock attempts were refused; with
   process spawning, 16,613 to 17,444 of 200,000 per run. This supports a
   mechanism; it does not prove the cause of the one historical CI failure.
-- **Closing a phone's network off screen** (this change): two minutes after
+- **Closing a phone's network off screen** (#42): two minutes after
   Connect leaves the screen, the phone stops its network and reopens it from what
   is saved when Connect returns. The share sheet, file and photo pickers and the
   authentication prompt keep it open; an unexpired invitation keeps it open. The
   screen keeps showing the last devices and items, with "Reopening…" while it
   restarts.
+- **A local record of the phone's background loops** in the owner test build
+  (#43): panics, screen changes, closing and reopening, refresh outcomes and
+  renewals, in `cache/connect-diagnostics/events.log`. A maintenance pass that
+  panics no longer ends renewals silently.
+- **Starting while the network computer is down** (this change): an agent and the
+  test device wait for the network computer for about a minute when they start,
+  instead of failing at once. Only fetching trust is repeated, which changes
+  nothing; any answer, a failed verification or a refusal above all, is final. The
+  desktop and phone apps already try again every 30 seconds and are unchanged.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
@@ -128,6 +137,8 @@ release):
 | File picker, photo picker held 150 s each | `f69c055` | Network stayed open; the sheet was still open; nothing chosen, no error |
 | Authentication prompt left up | `f69c055` | The system closed it after about 128 s; plain "not saved, nothing changed" message, no key shown, no export left, owner files identical, network up, read succeeded |
 | Authentication prompt cancelled with Back | `f69c055` | Back pressed only while the prompt had focus; same plain message, no key shown, no export left, network up; strict check passed (journal unchanged, owner files identical, no new enrollment), read succeeded |
+| Start while the network computer is down | Local run in WSL (Ubuntu), real node and packaged authority | A fresh device connected 17.5 s after starting, with the node down for the first 8 s; with no node it gave up after 67 s, saying what to do. With the wait disabled the same test fails at once (`a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart`, ignored in CI because it needs the packaged authority) |
+| On screen for 5 h 42 min | `df84d82` (#43) | 67 checks five minutes apart, every one owner, ready, no problem, on screen; every read from the second device succeeded (one on its second try); descriptors 329 to 337, threads 88 to 91, about 17.5% of a core on average (debug). The phone then left the computer's connection at 07:26 (CET) and was not reachable over the network afterwards; its diagnostics record has not been read yet. Shorter than the 12-hour stall, so it neither reproduces nor rules it out |
 | CPU, debug, % of one core | `3700fbf` before / `f69c055` after | On screen: 18.9, 18.1, 19.0 before; 18.4, 18.6, 18.1 after (unchanged). Off screen, screen on: 18.6, 33.9, 38.2 over three 90 s windows before; 29.7 within the two-minute grace period, then 0.2, 0.1, 0.1 once closed (closed state confirmed for each window); a read 32 s after return |
 
 Corrections kept on record:
@@ -152,13 +163,15 @@ Known limits and open findings:
 
 - **Foreground only.** Other devices reach the network only while Connect is on
   screen or within two minutes of leaving it. Android blocks the app's network in
-  the background; this change stops the wasted work, it does not add background
+  the background; #42 stops the wasted work, it does not add background
   availability.
-- **Outages exceed the retry budget.** Devices ask again for about 15 seconds,
-  while a restarting host was unreachable for 42 to 88 seconds. Fresh-device
-  startup while the host restarts is not solved.
+- **Outages exceed the retry budget for running devices.** A running device asks
+  again for about 15 seconds, while a restarting host was unreachable for 42 to
+  88 seconds. A starting agent or test device now waits about a minute for the
+  network computer; that still does not cover the longest outage measured, and
+  the waiting is not yet measured against a phone restart.
 - **12-hour relay stall:** seen once, unexplained, not reproduced by a 5-minute
-  pause.
+  pause or by 5 h 42 min on screen.
 - **Certificate renewal every 4 minutes.** The documented freshness policy
   ([authority spike](authority-spike.md)) renews a device certificate at 240 s.
   Each renewal suspends the device's sessions, the likely source of some
