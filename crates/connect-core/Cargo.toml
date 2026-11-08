@@ -50,7 +50,7 @@ iroh = { workspace = true, features = ["portmapper"] }
 iroh-mdns-address-lookup = "=0.6.1"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["net", "io-util"] }
+tokio = { workspace = true, features = ["net", "io-util", "test-util"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 security-framework = "=3.7.0"

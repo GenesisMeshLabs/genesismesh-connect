@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #48), and this change:
+Merged since 7 November (#37 to #49), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -133,7 +133,7 @@ Merged since 7 November (#37 to #48), and this change:
   would be refused. It now stays on "Opening your network…" until its device is
   shown. Adopting the network records the device for the screen at once, because
   the reconnect that follows can hold the device for over 40 seconds.
-- **Activity and Settings from the designer's spec** (this change). Activity
+- **Activity and Settings from the designer's spec** (#49). Activity
   lists records as rows under Today, Yesterday and Earlier, each with a check or
   attention mark and "what happened · when". "Not confirmed yet" is shown in
   amber, and the attention chip shows how many need attention. A row opens its
@@ -142,7 +142,21 @@ Merged since 7 November (#37 to #48), and this change:
   Advanced. Save appears only after a change. The recovery key opens in a sheet
   that only "I've written it down" closes. It wraps between groups of four.
   Checked in the browser with the native layer stubbed (A17 viewport, owner and
-  joined). Not yet checked on the phone.
+  joined), then read-only on the phone on build `bd2e0df`: Activity showed its
+  four real records under Yesterday, a row opened its record, every Settings
+  section sat between the status bar and the tab bar, Save stayed disabled and
+  the connection Save hidden, and Advanced opened. Nothing was saved or created.
+- **Reads wait out a restart** (this change). A running device now asks again
+  for up to two minutes, not about 15 seconds, when a list, browse or read cannot
+  be answered yet: the host cannot be reached, answers busy, its trust refresh
+  ended the connection, or this device's own connection is suspended or its
+  trust stale. Waits double from 1 to 8 seconds; no attempt starts after two
+  minutes, and the last can still take its own deadline (10 s to connect, 20 s to
+  read). A refusal is final at once, also in the middle of an outage. When the
+  time runs out the person is told "No answer in time…", as busy, never as
+  refused. Only these reads ask again; nothing that changes anything does, and
+  Check status still reads back without resending. Downloads keep their own
+  waits. A starting agent or test device still waits about a minute (#44).
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
@@ -163,6 +177,7 @@ release):
 | Authentication prompt left up | `f69c055` | The system closed it after about 128 s; plain "not saved, nothing changed" message, no key shown, no export left, owner files identical, network up, read succeeded |
 | Authentication prompt cancelled with Back | `f69c055` | Back pressed only while the prompt had focus; same plain message, no key shown, no export left, network up; strict check passed (journal unchanged, owner files identical, no new enrollment), read succeeded |
 | Start while the network computer is down | Local run in WSL (Ubuntu), real node and packaged authority | A fresh device connected 17.5 s after starting, with the node down for the first 8 s; with no node it gave up after 67 s, saying what to do. With the wait disabled the same test fails at once (`a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart`, ignored in CI because it needs the packaged authority) |
+| A running device reads while the network computer restarts | Local run in WSL (Ubuntu), real node and packaged authority | The node stopped and was back 70 s later: a read asked as it stopped answered with a receipt after 98.2 s in each of two runs, waiting for the device's next trust refresh after the node returned. With no node it gave up after 113.0 s with "No answer in time…", busy, not a refusal. With the old 15-second budget the same test fails: the read asked during the outage fails with "busy … Try again shortly" (`a_running_device_reads_through_a_network_computer_restart`, ignored in CI because it needs the packaged authority) |
 | On screen for 5 h 42 min | `df84d82` (#43) | 67 checks five minutes apart, every one owner, ready, no problem, on screen; every read from the second device succeeded (one on its second try); descriptors 329 to 337, threads 88 to 91, about 17.5% of a core on average (debug). The phone then left the computer's connection at 07:26 (CET), when the record shows the screen leaving and returning several times; none of the test scripts did that. The record for those 6 h 9 min: no panic, no failed refresh, and a renewal every 181 to 300 s with no gap. Shorter than the 12-hour stall, so it neither reproduces nor rules it out |
 | Activity asked for the moment Connect returns, while the network is still reopening | `df84d82` before, `c6966f0` after | Before: refused after 31 ms, "Open this device's network to see its local activity". After, twice: it waited and returned its entries after 1.8 s and 1.6 s, by which time the network had reopened. Each run: network closed after 150 s off screen, owner files byte-identical, a second-device read succeeded, no touches from anyone else |
 | Screens after launch, sampled every 100 ms for 45 s | `7403b48` before; `47ece51`, `252d87f`, `62a8c5d`, `0b2e41d` after | Before: Welcome from 0.75 s to 4.8 s. `47ece51`: Welcome after the network opened, still showing at 20 s in all three runs (failed). `252d87f`: three runs straight to the workspace, one stuck on the opening screen past 45 s while the reconnect held the device (failed). `62a8c5d` and `0b2e41d`, eight runs each: the opening screen, then the workspace at 4.4 to 4.7 s, never Welcome; `0b2e41d` also shows no placeholder network name. One touch from someone else came after the workspace appeared |
@@ -193,11 +208,14 @@ Known limits and open findings:
   screen or within two minutes of leaving it. Android blocks the app's network in
   the background; #42 stops the wasted work, it does not add background
   availability.
-- **Outages exceed the retry budget for running devices.** A running device asks
-  again for about 15 seconds, while a restarting host was unreachable for 42 to
-  88 seconds. A starting agent or test device now waits about a minute for the
-  network computer; that still does not cover the longest outage measured, and
-  the waiting is not yet measured against a phone restart.
+- **Outages and the waits that cover them.** A restarting phone was out of reach
+  for 42 to 88 seconds. A running device's reads now ask again for up to two
+  minutes (this change), tested against a real node restart in WSL; on the phone,
+  see the restart cycles below. A read can now take up to two minutes before the
+  person hears anything, and recovery waits for the device's next 30-second
+  trust refresh. A starting agent or test device still waits only about a minute
+  for the network computer (#44), which does not cover the longest outage
+  measured.
 - **12-hour relay stall:** seen once, unexplained, not reproduced by a 5-minute
   pause or by 5 h 42 min on screen.
 - **Certificate renewal every 4 minutes.** The documented freshness policy
