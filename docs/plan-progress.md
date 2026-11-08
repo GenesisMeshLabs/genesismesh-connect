@@ -166,7 +166,7 @@ release):
 | --- | --- | --- |
 | Reads under the limit | `7b060bd` (#40) | 75 of 75 over 258 s, peak 18 successful in any 60 s, 0 denied |
 | Genuine refusals | `7b060bd` | Unknown item, missing file and an expired share refused at once, no retry, no prompt |
-| Read limit | CI, real authority | 16 reads per 60 s window per share, then busy; refusals stay final (`host_read_limit_is_16_a_window_says_busy_and_leaves_refusals_final`) |
+| Read limit | CI, real authority | 16 reads per 60 s window per share, then busy; refusals stay final (`host_read_limit_is_16_a_window_says_busy_and_leaves_refusals_final`). Since this change the 17th read waits for the next window and is served, still 16 a window |
 | Five force-stop/relaunch cycles, reads every 5 s | `7b060bd` | 188 succeeded, 8 failed (6 "Connection is suspended", 2 "session ended"), 0 denied; first read after relaunch 43, 62, 5, 1, 5 s; outages seen by the device 62, 88, 42, 42, 62 s |
 | Earlier run, restarts every 49 s | `c748955` | 111 succeeded, 29 failed; restarts overlapped, and trust refreshed only between reads. Kept for comparison, not as a pass |
 | Off screen 150 s, then return | `f69c055` | Network running at 60 s, closed by 150 s; a real read 23 to 26 s after return |
