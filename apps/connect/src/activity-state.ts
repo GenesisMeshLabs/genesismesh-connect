@@ -6,15 +6,34 @@ export interface ActivitySummary {
   policy_before:number;policy_observed:number|null;recipients_before:number;recipients_after:number;
   archived:boolean;needs_attention:boolean;recovery:RecoveryHint;
 }
+const dayStart=(d:Date)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();
+const daysBefore=(at:Date,now:Date)=>Math.round((dayStart(now)-dayStart(at))/86400000);
+const clock=(at:Date)=>at.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
 /** "Today, 14:05", "Yesterday, 09:30" or "5 Nov, 18:20", in this device's time zone. */
 export function whenText(iso:string, now=new Date()):string {
-  const at=new Date(iso), time=at.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
-  const day=(d:Date)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();
-  const days=Math.round((day(now)-day(at))/86400000);
-  if(days===0)return `Today, ${time}`;
-  if(days===1)return `Yesterday, ${time}`;
+  const at=new Date(iso), days=daysBefore(at,now);
+  if(days===0)return `Today, ${clock(at)}`;
+  if(days===1)return `Yesterday, ${clock(at)}`;
   const date=at.toLocaleDateString(undefined,{day:"numeric",month:"short",...(at.getFullYear()===now.getFullYear()?{}:{year:"numeric"})});
-  return `${date}, ${time}`;
+  return `${date}, ${clock(at)}`;
+}
+export type ActivityDay="Today"|"Yesterday"|"Earlier";
+/** A record from a clock ahead of this one still counts as today. */
+export function activityDay(iso:string, now=new Date()):ActivityDay {
+  const days=daysBefore(new Date(iso),now);
+  return days<=0?"Today":days===1?"Yesterday":"Earlier";
+}
+/** Today, Yesterday and Earlier, each keeping the order it was given; empty days are left out. */
+export function activityGroups<T extends {created_at:string}>(entries:T[], now=new Date()):{day:ActivityDay;entries:T[]}[] {
+  const days:ActivityDay[]=["Today","Yesterday","Earlier"];
+  const groups=days.map(day=>({day,entries:[] as T[]}));
+  for(const entry of entries)groups[days.indexOf(activityDay(entry.created_at,now))].entries.push(entry);
+  return groups.filter(group=>group.entries.length>0);
+}
+/** One line under the item's name: what happened, then when. The day heading already says which day. */
+export function activityRowDetail(entry:Pick<ActivitySummary,"stage"|"authorization"|"created_at">, now=new Date()):string {
+  const at=new Date(entry.created_at);
+  return `${activityLabel(entry)} · ${activityDay(entry.created_at,now)==="Earlier"?whenText(entry.created_at,now):clock(at)}`;
 }
 export interface HistoryCursor {scope_id:string;filter:"all"|"needs_attention";before_created_at:string;before_id:string}
 export interface HistoryPage {scope_id:string;entries:ActivitySummary[];next:HistoryCursor|null;attention_count:number;incomplete:boolean}
@@ -29,7 +48,7 @@ export function activityLabel(entry:Pick<ActivitySummary,"stage"|"authorization"
   if(entry.stage==="cancelled")return "Cancelled before sending";
   if(entry.stage==="state_observed")return entry.authorization==="core_accepted"?"Access update checked":"Matching settings observed";
   if(entry.stage==="conflict")return "Settings changed";
-  return "Result unconfirmed";
+  return "Not confirmed yet";
 }
 export function activityExplanation(entry:Pick<ActivitySummary,"stage"|"authorization">):string {
   if(entry.stage==="prepared")return "A review was saved on this device. Nothing was sent from that review.";
@@ -49,9 +68,6 @@ export function recoveryExplanation(hint:RecoveryHint):string {
     archived:"This is an older saved record. It cannot approve or resend a change.",
     settled:"Saved history. No action is sent from this record.",
   }[hint];
-}
-export function activityCount(count:number,incomplete:boolean):string {
-  return count ? `${count} ${incomplete?"shown ":""}${count===1?"change needs":"changes need"} attention` : incomplete ? "Some older history is unavailable" : "No access changes need attention";
 }
 export function exportRecordMessage(status:"saved"|"cancelled"|"share_sheet_opened"):string {
   return status==="saved"?"Local record saved. It contains unsigned workflow history, not a signed audit report.":status==="share_sheet_opened"?"Choose where to save or share the local record.":"Saving cancelled.";

@@ -934,64 +934,15 @@
   margin: 0;
   padding: 0;
 }
-.activity-overview {
-  margin: 8px 0 12px;
+.activity-caption {
+  margin: 4px 4px 0;
 }
-.activity-overview h2 {
-  margin: 0 0 8px;
-  font-size: 15px;
-  line-height: 22px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-.access-activity-list {
-  display: grid;
-  gap: 8px;
-  margin: 8px 0;
+.access-activity-list .list-group {
+  margin: 0;
   padding: 0;
   list-style: none;
 }
-.activity-entry.home-card {
-  margin: 0;
-  padding: 14px 16px;
-}
-.activity-entry-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-.activity-entry h2 {
-  margin: 0;
-  font-size: 16px;
-  line-height: 22px;
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-.activity-entry p {
-  margin: 4px 0 0;
-}
-.activity-entry .button-row {
-  margin-top: 10px;
-}
-.everyday .activity-entry .button-row button {
-  flex: 0 0 auto;
-  min-height: 36px;
-  border-radius: 999px;
-  font-size: 14px;
-}
-.activity-status {
-  flex: none;
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: var(--accent-container);
-  color: var(--on-accent-container);
-  font-size: 13px;
-  line-height: 20px;
-  font-weight: 600;
-}
-.activity-status.attention {
-  background: var(--warning-container);
+.row-tile.attention {
   color: var(--warning);
 }
 .activity-notice {
@@ -1004,17 +955,75 @@
   width: 100%;
 }
 
-/* Settings */
-.everyday details.home-card summary {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  margin: -8px 0;
-  font-weight: 600;
-  cursor: pointer;
+/* Settings: grouped sections of rows, fields and choices */
+.group-body {
+  padding: 12px 16px 16px;
 }
-details.home-card[open] summary {
-  margin-bottom: 8px;
+.group-body > p {
+  margin: 0 0 4px;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 22px;
+}
+.group-note {
+  margin: 8px 4px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+.row-trailing {
+  display: grid;
+  margin-right: 12px;
+  color: var(--text-muted);
+}
+#view-settings .row-text span {
+  white-space: normal;
+}
+.everyday .danger-row,
+.everyday .danger-row .row-text strong,
+.everyday .danger-row .row-tile {
+  color: var(--danger);
+}
+#save-connection,
+#save-device-connection {
+  margin-top: 4px;
+}
+.settings-advanced {
+  margin-top: 24px;
+}
+.settings-advanced > summary {
+  list-style: none;
+  cursor: pointer;
+  border-radius: 16px;
+}
+.settings-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.settings-advanced > summary > .row-text {
+  padding: 10px 12px 10px 0;
+}
+.settings-advanced > summary .row-trailing {
+  transition: transform 0.12s;
+}
+.settings-advanced[open] > summary .row-trailing {
+  transform: rotate(90deg);
+}
+.settings-advanced > summary > .row-tile:first-child {
+  margin: 12px 12px 12px 16px;
+}
+.settings-advanced .group-body {
+  border-top: 1px solid var(--line);
+}
+.settings-advanced pre:empty {
+  display: none;
+}
+.settings-advanced .group-body > * + * {
+  margin-top: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-advanced > summary .row-trailing {
+    transition: none;
+  }
 }
 .connection-choices {
   margin: 12px 0 0;
@@ -1060,7 +1069,9 @@ details.home-card[open] summary {
     "Roboto Mono",
     monospace !important;
   letter-spacing: 1px;
-  word-break: break-all;
+  /* Lines break between the groups of four, never inside one. */
+  overflow-wrap: normal;
+  word-break: normal;
   user-select: all;
 }
 

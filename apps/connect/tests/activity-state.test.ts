@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {whenText,activityLabel,activityExplanation,activityCount,recoveryExplanation,exportRecordMessage,summaryAfterCheck,type ActivitySummary} from "../src/activity-state.ts";
+import {whenText,activityDay,activityGroups,activityRowDetail,activityLabel,activityExplanation,recoveryExplanation,exportRecordMessage,summaryAfterCheck,type ActivitySummary} from "../src/activity-state.ts";
 import type {AccessOutcome} from "../src/access-state.ts";
 
 test("activity distinguishes an acknowledged change from unattributed matching state",()=>{
@@ -14,7 +14,7 @@ test("activity distinguishes an acknowledged change from unattributed matching s
 test("unconfirmed and conflicting records never claim failure, receipt verification or resource use",()=>{
   for(const stage of ["submitted","unknown"] as const){
     const entry={stage,authorization:"unknown" as const};
-    assert.equal(activityLabel(entry),"Result unconfirmed");
+    assert.equal(activityLabel(entry),"Not confirmed yet");
     assert.match(activityExplanation(entry),/will not send it again automatically/);
     assert.doesNotMatch(activityExplanation(entry),/failed|verified receipt|downloaded/);
   }
@@ -29,11 +29,7 @@ test("recovery hints preserve offline history, old host boundaries and immutable
   assert.match(recoveryExplanation("archived"),/cannot approve or resend/);
   assert.match(recoveryExplanation("check_status"),/without sending/);
 });
-test("partial history is explicit and mobile share-sheet launch is not a claimed save",()=>{
-  assert.equal(activityCount(0,false),"No access changes need attention");
-  assert.match(activityCount(0,true),/older history is unavailable/);
-  assert.equal(activityCount(2,true),"2 shown changes need attention");
-  assert.equal(activityCount(1,false),"1 change needs attention");
+test("a mobile share-sheet launch is not a claimed save",()=>{
   assert.match(exportRecordMessage("saved"),/unsigned workflow history/);
   assert.equal(exportRecordMessage("share_sheet_opened"),"Choose where to save or share the local record.");
   assert.doesNotMatch(exportRecordMessage("share_sheet_opened"),/saved|success/);
@@ -55,4 +51,25 @@ test("activity times read as today, yesterday or a short date",()=>{
   const older=whenText(new Date(2026,10,1,9,0).toISOString(),now);
   assert.doesNotMatch(older,/Today|Yesterday|2026/);assert.match(older,/1/);
   assert.match(whenText(new Date(2025,10,1,9,0).toISOString(),now),/2025/,"Another year is named");
+});
+test("activity groups into today, yesterday and earlier, keeping each day's order",()=>{
+  const now=new Date(2026,10,8,9,0);
+  const at=(d:number,h:number)=>new Date(2026,10,d,h,0).toISOString();
+  assert.equal(activityDay(at(8,0),now),"Today");
+  assert.equal(activityDay(new Date(2026,10,8,23,0).toISOString(),now),"Today","A later clock is not a future day");
+  assert.equal(activityDay(new Date(2026,10,9,1,0).toISOString(),now),"Today","A clock ahead of this one counts as today");
+  assert.equal(activityDay(at(7,23),now),"Yesterday");
+  assert.equal(activityDay(at(6,23),now),"Earlier");
+  const entries=[{id:"a",created_at:at(8,8)},{id:"b",created_at:at(5,1)},{id:"c",created_at:at(8,7)},{id:"d",created_at:at(1,1)}];
+  assert.deepEqual(activityGroups(entries,now).map(g=>[g.day,g.entries.map(e=>e.id)]),[["Today",["a","c"]],["Earlier",["b","d"]]]);
+  assert.deepEqual(activityGroups([],now),[]);
+});
+test("an activity row says what happened and when, without repeating the day",()=>{
+  const now=new Date(2026,10,8,9,0);
+  const today=activityRowDetail({stage:"unknown",authorization:"unknown",created_at:new Date(2026,10,8,8,5).toISOString()},now);
+  assert.match(today,/^Not confirmed yet · /);assert.doesNotMatch(today,/Today/);
+  const yesterday=activityRowDetail({stage:"state_observed",authorization:"core_accepted",created_at:new Date(2026,10,7,8,5).toISOString()},now);
+  assert.match(yesterday,/^Access update checked · /);assert.doesNotMatch(yesterday,/Yesterday/);
+  const earlier=activityRowDetail({stage:"conflict",authorization:"unknown",created_at:new Date(2026,10,2,8,5).toISOString()},now);
+  assert.match(earlier,/^Settings changed · .*2/);
 });
