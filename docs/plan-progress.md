@@ -172,7 +172,10 @@ Known limits and open findings:
   reproduce it: renewals continued every 241 s on screen and across the return,
   in two separate processes. Builds before this change also had gaps of 150 to
   155 minutes, with the app's state at the time unknown. The app keeps no log of
-  its own, so the cause could not be recovered; it remains open.
+  its own, so the cause could not be recovered; it remains open. The phone
+  owner build now keeps a local record of its background loops
+  (`cache/connect-diagnostics/events.log`: panics, screen changes, closing and
+  reopening, refresh outcomes and renewals), so a repeat can be explained.
 - **During reopening** (about 25 s) actions can still show errors.
 - **Background CPU:** measured lower once the network is closed (debug build);
   unchanged during the two-minute grace period, where blocked relay probes still
