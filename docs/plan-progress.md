@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #43), and this change:
+Merged since 7 November (#37 to #45), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -113,11 +113,18 @@ Merged since 7 November (#37 to #43), and this change:
   (#43): panics, screen changes, closing and reopening, refresh outcomes and
   renewals, in `cache/connect-diagnostics/events.log`. A maintenance pass that
   panics no longer ends renewals silently.
-- **Starting while the network computer is down** (this change): an agent and the
+- **Starting while the network computer is down** (#44): an agent and the
   test device wait for the network computer for about a minute when they start,
   instead of failing at once. Only fetching trust is repeated, which changes
   nothing; any answer, a failed verification or a refusal above all, is final. The
   desktop and phone apps already try again every 30 seconds and are unchanged.
+- **A proposal for gentler certificate renewal** (#45): options and the decisions
+  they need, in the [renewal proposal](renewal-proposal.md). Nothing implemented.
+- **Actions wait while a phone reopens its network** (this change): on the phone
+  owner build, an action taken while the network reopens after Connect returns to
+  the screen waits for it, for at most 45 seconds, then runs as usual. Status,
+  cancel, setup and leave actions never wait. If reopening fails, the action runs
+  after the wait and reports the error as before.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
@@ -138,7 +145,8 @@ release):
 | Authentication prompt left up | `f69c055` | The system closed it after about 128 s; plain "not saved, nothing changed" message, no key shown, no export left, owner files identical, network up, read succeeded |
 | Authentication prompt cancelled with Back | `f69c055` | Back pressed only while the prompt had focus; same plain message, no key shown, no export left, network up; strict check passed (journal unchanged, owner files identical, no new enrollment), read succeeded |
 | Start while the network computer is down | Local run in WSL (Ubuntu), real node and packaged authority | A fresh device connected 17.5 s after starting, with the node down for the first 8 s; with no node it gave up after 67 s, saying what to do. With the wait disabled the same test fails at once (`a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart`, ignored in CI because it needs the packaged authority) |
-| On screen for 5 h 42 min | `df84d82` (#43) | 67 checks five minutes apart, every one owner, ready, no problem, on screen; every read from the second device succeeded (one on its second try); descriptors 329 to 337, threads 88 to 91, about 17.5% of a core on average (debug). The phone then left the computer's connection at 07:26 (CET) and was not reachable over the network afterwards; its diagnostics record has not been read yet. Shorter than the 12-hour stall, so it neither reproduces nor rules it out |
+| On screen for 5 h 42 min | `df84d82` (#43) | 67 checks five minutes apart, every one owner, ready, no problem, on screen; every read from the second device succeeded (one on its second try); descriptors 329 to 337, threads 88 to 91, about 17.5% of a core on average (debug). The phone then left the computer's connection at 07:26 (CET), when the record shows the screen leaving and returning by hand. The record for those 6 h 9 min: no panic, no failed refresh, and a renewal every 181 to 300 s with no gap. Shorter than the 12-hour stall, so it neither reproduces nor rules it out |
+| Activity asked for the moment Connect returns, while the network is still reopening | `df84d82` before, `c6966f0` after | Before: refused after 31 ms, "Open this device's network to see its local activity". After, twice: it waited and returned its entries after 1.8 s and 1.6 s, by which time the network had reopened. Each run: network closed after 150 s off screen, owner files byte-identical, a second-device read succeeded, no touches from anyone else |
 | CPU, debug, % of one core | `3700fbf` before / `f69c055` after | On screen: 18.9, 18.1, 19.0 before; 18.4, 18.6, 18.1 after (unchanged). Off screen, screen on: 18.6, 33.9, 38.2 over three 90 s windows before; 29.7 within the two-minute grace period, then 0.2, 0.1, 0.1 once closed (closed state confirmed for each window); a read 32 s after return |
 
 Corrections kept on record:
@@ -190,8 +198,11 @@ Known limits and open findings:
   its own, so the cause could not be recovered; it remains open. The phone
   owner build now keeps a local record of its background loops
   (`cache/connect-diagnostics/events.log`: panics, screen changes, closing and
-  reopening, refresh outcomes and renewals), so a repeat can be explained.
-- **During reopening** (about 25 s) actions can still show errors.
+  reopening, refresh outcomes and renewals), so a repeat can be explained. Its
+  first 6 hours on screen showed no gap.
+- **During reopening** actions now wait for the network. Opening at launch is not
+  covered: an action taken while Connect first opens its network still fails as
+  before.
 - **Background CPU:** measured lower once the network is closed (debug build);
   unchanged during the two-minute grace period, where blocked relay probes still
   cost about 16 to 30% of a core. No release figure exists.
