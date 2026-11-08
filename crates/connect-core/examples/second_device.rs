@@ -167,8 +167,7 @@ async fn join(profile: &Path, link: &str, name: &str) -> Result<()> {
 
 async fn connected(profile: &Path) -> Result<DeviceController> {
     let mut device = DeviceController::open(profile)?;
-    device.reconnect_saved().await?;
-    device.refresh().await?;
+    device.connect_when_reachable().await?;
     Ok(device)
 }
 

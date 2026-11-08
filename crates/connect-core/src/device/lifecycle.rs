@@ -1,6 +1,48 @@
 use super::{DeviceController, vault::Vault};
+use crate::session::bridge::Unreached;
 use anyhow::{Context, Result, ensure};
-use std::{fs, path::Path};
+use std::{fs, path::Path, time::Duration};
+use tokio::time::Instant;
+
+/// How long a starting device keeps asking for its network computer. A phone
+/// that runs the network was unreachable for 42 to 88 seconds while it
+/// restarted; each attempt is itself bounded by the bridge deadline.
+const REACH_FOR: Duration = Duration::from_secs(60);
+
+/// Decides, after each failed attempt, whether to ask the network computer
+/// again: only when it could not be reached, after 1, 2, 4 and then 8 seconds,
+/// and never with a wait that would pass the budget.
+struct Reaching {
+    started: Instant,
+    wait: Duration,
+    budget: Duration,
+}
+
+impl Reaching {
+    fn new(budget: Duration, now: Instant) -> Self {
+        Self {
+            started: now,
+            wait: Duration::from_secs(1),
+            budget,
+        }
+    }
+
+    /// The wait before asking again, or the error to report.
+    fn after(&mut self, error: anyhow::Error, now: Instant) -> Result<Duration> {
+        if !error.is::<Unreached>() {
+            return Err(error);
+        }
+        if now.duration_since(self.started) + self.wait >= self.budget {
+            return Err(error.context(
+                "Your network computer could not be reached. Keep Connect open on the device \
+                 that runs your network, then try again.",
+            ));
+        }
+        let wait = self.wait;
+        self.wait = (wait * 2).min(Duration::from_secs(8));
+        Ok(wait)
+    }
+}
 
 impl DeviceController {
     pub(super) fn require_connected(&self) -> Result<()> {
@@ -42,6 +84,26 @@ impl DeviceController {
         self.restore_managed_share()?;
         self.vault.set_disconnected(false)?;
         self.reconnect_saved().await
+    }
+
+    /// Start the saved connection and check trust, for a device that has just
+    /// started, such as an agent or a command. While the network computer cannot
+    /// be reached, as when the phone that runs it restarts, it is asked again for
+    /// about a minute. Only reaching it is repeated: the failed step fetched
+    /// trust, which changes nothing. Any answer, a refusal above all, is final.
+    /// An app that refreshes on a timer does not need this.
+    pub async fn connect_when_reachable(&mut self) -> Result<()> {
+        let mut reaching = Reaching::new(REACH_FOR, Instant::now());
+        loop {
+            let outcome = match self.reconnect_saved().await {
+                Ok(()) => self.refresh().await,
+                failed => failed,
+            };
+            match outcome {
+                Ok(()) => return Ok(()),
+                Err(error) => tokio::time::sleep(reaching.after(error, Instant::now())?).await,
+            }
+        }
     }
 
     /// Persist intent before erasing anything. It cannot reopen as a member
@@ -119,6 +181,70 @@ impl DeviceController {
 mod tests {
     use super::*;
     use base64::Engine as _;
+
+    fn unreached() -> anyhow::Error {
+        anyhow::anyhow!("deadline has elapsed").context(Unreached)
+    }
+
+    #[test]
+    fn only_an_unreached_network_computer_is_asked_again_within_a_minute() {
+        let start = Instant::now();
+        let mut reaching = Reaching::new(REACH_FOR, start);
+        let mut at = start;
+        let mut waits = Vec::new();
+        // Each attempt that cannot connect takes the bridge deadline, 15 s.
+        let last = loop {
+            at += Duration::from_secs(15);
+            match reaching.after(unreached(), at) {
+                Ok(wait) => {
+                    waits.push(wait.as_secs());
+                    at += wait;
+                }
+                Err(error) => break error,
+            }
+        };
+        assert_eq!(waits, [1, 2, 4]);
+        assert!(at.duration_since(start) < REACH_FOR + Duration::from_secs(15));
+        assert!(last.is::<Unreached>());
+        assert!(last.to_string().contains("Keep Connect open"));
+        assert!(format!("{last:#}").contains("did not answer in time"));
+
+        // A quick failure, as with no route, is asked again more often.
+        let mut reaching = Reaching::new(REACH_FOR, start);
+        let mut at = start;
+        let mut waits = Vec::new();
+        while let Ok(wait) = reaching.after(unreached(), at) {
+            waits.push(wait.as_secs());
+            at += wait;
+        }
+        assert_eq!(waits, [1, 2, 4, 8, 8, 8, 8, 8, 8]);
+
+        // Any answer is final at once: a refusal, a document that fails
+        // verification, or this device being disconnected.
+        for answer in [
+            "Your network computer refused or could not answer this request",
+            "Trust history does not verify against the pinned root",
+            "This device is disconnected. Tap Reconnect in Settings.",
+        ] {
+            let mut reaching = Reaching::new(REACH_FOR, start);
+            let error = reaching
+                .after(anyhow::anyhow!(answer), start)
+                .expect_err(answer);
+            assert_eq!(error.to_string(), answer);
+        }
+        // The plain timeout text without the mark, as from a renewal that was
+        // sent, is not asked again: that request may have changed something.
+        let mut reaching = Reaching::new(REACH_FOR, start);
+        assert!(
+            reaching
+                .after(
+                    anyhow::anyhow!("deadline has elapsed")
+                        .context("Your network computer did not answer in time"),
+                    start
+                )
+                .is_err()
+        );
+    }
 
     #[test]
     fn interrupted_cleanup_keeps_exports_and_can_finish_after_profile_removal() -> Result<()> {

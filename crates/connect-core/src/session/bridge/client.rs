@@ -19,6 +19,19 @@ pub struct BridgeRoute {
     pub host_node: String,
 }
 
+/// The network computer could not be reached to fetch trust, as while the device
+/// that runs it restarts. Fetching trust only reads public signed documents and
+/// changes nothing, so it may be asked again. Any answer it does give, a
+/// document that fails verification above all, never carries this mark.
+#[derive(Debug)]
+pub struct Unreached;
+impl std::fmt::Display for Unreached {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Your network computer did not answer in time")
+    }
+}
+impl std::error::Error for Unreached {}
+
 /// The network computer cancelled the operation because its own credentials
 /// changed, and said so; a refused operation never reads this way.
 pub(super) fn interrupted(error: &anyhow::Error) -> bool {
@@ -379,7 +392,8 @@ impl BridgeAuthority {
         timeout(DEADLINE, async {
             let connection = endpoint
                 .connect(self.destination.clone(), Protocol::Authority.alpn())
-                .await?;
+                .await
+                .context(Unreached)?;
             limit_streams(&connection);
             let result = async {
                 let (mut send, mut recv) = connection.open_bi().await?;
@@ -400,7 +414,7 @@ impl BridgeAuthority {
             result
         })
         .await
-        .context("Your network computer did not answer in time")?
+        .context(Unreached)?
     }
 
     pub async fn renew(&self, device: &mut EnrolledDevice, store: &mut TrustStore) -> Result<()> {

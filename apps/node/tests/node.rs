@@ -232,8 +232,64 @@ fn a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart() -> Result
         Ok::<_, anyhow::Error>(())
     })();
     runtime.block_on(phone.stop());
+    drop(phone);
     stop(child)?;
-    outcome
+    outcome?;
+
+    // A device that starts while its network computer is down, as an agent does
+    // while the phone that runs the network restarts, waits for it instead of
+    // failing at once.
+    let profile = directory.path().join("phone");
+    let mut fresh = DeviceController::open(&profile)?;
+    let started = Instant::now();
+    let (connected, child) = std::thread::scope(|scope| {
+        let restart = scope.spawn(|| {
+            std::thread::sleep(Duration::from_secs(8));
+            server.run()
+        });
+        let connected = runtime.block_on(fresh.connect_when_reachable());
+        (connected, restart.join().expect("restart thread"))
+    });
+    let child = child?;
+    let outcome = (|| {
+        connected?;
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_secs(8),
+            "Connected before the network computer ran: {waited:?}"
+        );
+        assert!(waited < Duration::from_secs(75), "Waited {waited:?}");
+        eprintln!(
+            "A fresh device connected {waited:?} after starting, 8 s of it with the network computer down"
+        );
+        let saved = fresh
+            .paired_device()
+            .context("Missing saved server")?
+            .ticket
+            .clone();
+        runtime.block_on(fresh.send(&saved, "A fresh device reaches the server"))?;
+        Ok::<_, anyhow::Error>(())
+    })();
+    runtime.block_on(fresh.stop());
+    drop(fresh);
+    stop(child)?;
+    outcome?;
+
+    // With nothing to reach, it gives up within the minute, and says what to do.
+    let mut alone = DeviceController::open(&profile)?;
+    let started = Instant::now();
+    let Err(error) = runtime.block_on(alone.connect_when_reachable()) else {
+        anyhow::bail!("Connected with no network computer running");
+    };
+    let waited = started.elapsed();
+    assert!(
+        waited >= Duration::from_secs(45) && waited < Duration::from_secs(80),
+        "Gave up after {waited:?}"
+    );
+    assert!(error.to_string().contains("Keep Connect open"), "{error:#}");
+    eprintln!("With no network computer it gave up after {waited:?}: {error:#}");
+    runtime.block_on(alone.stop());
+    Ok(())
 }
 
 /// A random version 4 UUID for a request.
