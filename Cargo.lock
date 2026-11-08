@@ -1898,6 +1898,7 @@ name = "genesismesh-connect"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "connect-core",
  "rfd",
  "rust-ini",

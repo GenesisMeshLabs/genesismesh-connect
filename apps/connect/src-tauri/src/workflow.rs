@@ -406,6 +406,7 @@ pub(crate) async fn open_phone_network(app: tauri::AppHandle) -> Result<(), Stri
 async fn keep_phone_network(app: tauri::AppHandle) {
     use crate::phone_lifecycle::LIFECYCLE;
     let mut wait = std::time::Duration::from_secs(1);
+    let mut seen = crate::diagnostics::Changes::new("phone network");
     loop {
         tokio::select! {
             _ = tokio::time::sleep(wait) => {}
@@ -415,9 +416,30 @@ async fn keep_phone_network(app: tauri::AppHandle) {
         if !phone_network_saved(&app) {
             continue;
         }
-        if LIFECYCLE.should_close(std::time::Instant::now()) {
-            close_phone_network(&app).await;
-        }
+        let closing = if LIFECYCLE.should_close(std::time::Instant::now()) {
+            match close_phone_network(&app).await {
+                Ok(()) => "closed".to_owned(),
+                Err(waiting) => format!("kept open: {waiting}"),
+            }
+        } else {
+            "not due".to_owned()
+        };
+        seen.report(
+            &[
+                (
+                    "screen",
+                    if LIFECYCLE.is_suspended() {
+                        "off"
+                    } else {
+                        "on"
+                    }
+                    .into(),
+                ),
+                ("close", closing),
+                ("closed", LIFECYCLE.is_closed().to_string()),
+            ],
+            std::time::Instant::now(),
+        );
         // Android blocks a background app's network: reopening waits for a return.
         if LIFECYCLE.is_suspended() {
             continue;
@@ -429,6 +451,13 @@ async fn keep_phone_network(app: tauri::AppHandle) {
         };
         if stopped {
             let result = open_phone_network(app.clone()).await;
+            crate::diagnostics::note(
+                "phone network",
+                match &result {
+                    Ok(()) => "opened".to_owned(),
+                    Err(error) => format!("open failed: {error}"),
+                },
+            );
             app.state::<WorkflowState>().slot.lock().await.problem = result.err();
         }
     }
@@ -439,17 +468,17 @@ async fn keep_phone_network(app: tauri::AppHandle) {
 /// reopening uses what is saved. The screen keeps what it last showed. Anything in
 /// progress keeps the network open until a later check.
 #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
-async fn close_phone_network(app: &tauri::AppHandle) {
+async fn close_phone_network(app: &tauri::AppHandle) -> Result<(), &'static str> {
     let Some(_turn) = SetupTurn::take() else {
-        return;
+        return Err("setup in progress");
     };
     let state = app.state::<WorkflowState>();
     let desktop = app.state::<crate::desktop::DesktopState>();
     let Ok(mut owner) = state.slot.try_lock() else {
-        return;
+        return Err("network busy");
     };
     if owner.runtime.is_none() {
-        return;
+        return Ok(());
     }
     // An invitation being sent stays usable on return until it expires.
     let now = std::time::SystemTime::now()
@@ -460,13 +489,13 @@ async fn close_phone_network(app: &tauri::AppHandle) {
         .as_ref()
         .is_some_and(|pair| pair.card().expires_at > now)
     {
-        return;
+        return Err("invitation open");
     }
     let Ok(_transfers) = desktop.transfers.clone().try_write_owned() else {
-        return;
+        return Err("transfer running");
     };
     let Ok(mut slot) = desktop.slot.try_lock() else {
-        return;
+        return Err("device busy");
     };
     if let Some(pair) = owner.pairing.take() {
         pair.close().await;
@@ -477,6 +506,7 @@ async fn close_phone_network(app: &tauri::AppHandle) {
         device.stop().await;
     }
     drop(owner.lease.take());
+    Ok(())
 }
 
 #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
@@ -946,10 +976,21 @@ async fn answer_owner(
 async fn keep_spaces(app: tauri::AppHandle) {
     let mut renewed: Option<std::time::Instant> = None;
     let mut wait = std::time::Duration::from_secs(5);
+    let mut seen = crate::diagnostics::Changes::new("spaces");
     loop {
         tokio::time::sleep(wait).await;
         wait = std::time::Duration::from_secs(30);
-        if let Err(error) = spaces_once(&app, &mut renewed).await {
+        let outcome = spaces_once(&app, &mut renewed).await;
+        seen.report(
+            &[(
+                "pass",
+                outcome
+                    .as_ref()
+                    .map_or_else(|error| format!("failed: {error}"), |()| "ok".into()),
+            )],
+            std::time::Instant::now(),
+        );
+        if let Err(error) = outcome {
             app.state::<WorkflowState>().slot.lock().await.problem = Some(error.to_string());
         }
     }

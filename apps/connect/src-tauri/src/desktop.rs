@@ -139,31 +139,66 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     });
     let handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
+        let mut seen = crate::diagnostics::Changes::new("maintenance");
         loop {
-            let state = handle.state::<DesktopState>();
-            let mut slot = state.slot.lock().await;
-            if let Some(controller) = &mut slot.controller
-                && controller.needs_maintenance()
-            {
-                // Restore phone connections after launch. Owner restoration is
-                // handled after rebinding its authority, never against an old port.
-                if controller.status().is_ok_and(|s| s.authority_via_bridge) {
-                    match controller.restore_managed_share() {
-                        Ok(()) => {
-                            let _ = controller.reconnect_saved().await;
-                            let _ = controller.refresh().await;
-                        }
-                        Err(error) => slot.problem = Some(error.to_string()),
-                    }
-                } else {
-                    let _ = controller.refresh().await;
-                }
+            // Each pass runs on its own: a panic in one is recorded and the next
+            // pass still runs, instead of renewals stopping without a trace.
+            let pass = tauri::async_runtime::spawn(maintain(handle.clone()));
+            match pass.await {
+                Ok(states) => seen.report(&states, std::time::Instant::now()),
+                Err(error) => crate::diagnostics::note(
+                    "maintenance",
+                    format_args!("pass ended unexpectedly: {error}"),
+                ),
             }
-            drop(slot);
             tokio::time::sleep(Duration::from_secs(30)).await;
         }
     });
     Ok(())
+}
+
+/// One maintenance pass. Returns what it found, for the diagnostics record.
+async fn maintain(handle: tauri::AppHandle) -> Vec<(&'static str, String)> {
+    let state = handle.state::<DesktopState>();
+    let mut slot = state.slot.lock().await;
+    let Some(controller) = &mut slot.controller else {
+        return vec![("controller", "none".into())];
+    };
+    if !controller.needs_maintenance() {
+        return vec![("controller", "idle".into())];
+    }
+    // Restore phone connections after launch. Owner restoration is handled
+    // after rebinding its authority, never against an old port.
+    let refreshed = if controller.status().is_ok_and(|s| s.authority_via_bridge) {
+        match controller.restore_managed_share() {
+            Ok(()) => {
+                let _ = controller.reconnect_saved().await;
+                controller.refresh().await
+            }
+            Err(error) => {
+                slot.problem = Some(error.to_string());
+                return vec![
+                    ("controller", "running".into()),
+                    ("refresh", format!("not restored: {error}")),
+                ];
+            }
+        }
+    } else {
+        controller.refresh().await
+    };
+    let certificate = controller
+        .status()
+        .ok()
+        .and_then(|status| status.certificate_id)
+        .map_or_else(|| "none".into(), |id| id.chars().take(8).collect());
+    vec![
+        ("controller", "running".into()),
+        (
+            "refresh",
+            refreshed.map_or_else(|error| format!("failed: {error}"), |()| "ok".into()),
+        ),
+        ("certificate", certificate),
+    ]
 }
 
 /// A phone that closed its network off screen keeps showing its devices and items

@@ -11,6 +11,7 @@ mod client_admin;
 mod client_requests;
 mod consumer;
 mod desktop;
+mod diagnostics;
 mod downloads;
 mod host_admin;
 mod lifecycle;
@@ -109,6 +110,11 @@ pub fn run() {
         .manage(AppState::default())
         .manage(host_admin::HostAdminState::default())
         .setup(|app| {
+            #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+            {
+                use tauri::Manager;
+                diagnostics::start(&app.path().app_cache_dir()?.join("connect-diagnostics"));
+            }
             desktop::setup(app)?;
             workflow::setup(app)?;
             downloads::setup(app)?;
@@ -207,8 +213,14 @@ pub fn run() {
             if let tauri::RunEvent::WindowEvent { event, .. } = &_event {
                 use phone_lifecycle::LIFECYCLE;
                 match event {
-                    tauri::WindowEvent::Suspended => LIFECYCLE.suspended(std::time::Instant::now()),
-                    tauri::WindowEvent::Resumed => LIFECYCLE.resumed(),
+                    tauri::WindowEvent::Suspended => {
+                        diagnostics::note("screen", "left");
+                        LIFECYCLE.suspended(std::time::Instant::now());
+                    }
+                    tauri::WindowEvent::Resumed => {
+                        diagnostics::note("screen", "returned");
+                        LIFECYCLE.resumed();
+                    }
                     _ => {}
                 }
             }
