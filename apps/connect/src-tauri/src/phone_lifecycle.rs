@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 
 const GRACE: Duration = Duration::from_secs(120);
-/// How long an action waits for the network to reopen. Reopening took about 25
+/// How long an action waits for the network to open. Reopening took about 2
 /// seconds on the test phone; after this the action runs anyway and says what
 /// went wrong, as before.
 pub(crate) const REOPEN_WAIT: Duration = Duration::from_secs(45);
@@ -61,7 +61,8 @@ struct State {
 pub(crate) struct PhoneLifecycle {
     state: Mutex<State>,
     returned: Notify,
-    opened: Notify,
+    /// An attempt to open the network ended, opened or not.
+    settled: Notify,
 }
 
 #[cfg_attr(test, allow(dead_code))]
@@ -98,24 +99,25 @@ impl PhoneLifecycle {
     pub(crate) fn set_closed(&self, closed: bool) {
         self.state().closed = closed;
         if !closed {
-            self.opened.notify_waiters();
+            self.settled.notify_waiters();
         }
     }
-    /// Returns once the network is open, or after `limit` at the latest.
+    /// Opening failed: waiting actions run now and report it, instead of waiting
+    /// out their limit. The next attempt follows as usual.
+    pub(crate) fn open_failed(&self) {
+        self.settled.notify_waiters();
+    }
+    /// Returns once the network is open or an attempt to open it failed, or after
+    /// `limit` at the latest.
     pub(crate) async fn until_open(&self, limit: Duration) {
-        let _ = tokio::time::timeout(limit, async {
-            loop {
-                // Registered before checking, so an opening in between is seen.
-                let opened = self.opened.notified();
-                tokio::pin!(opened);
-                opened.as_mut().enable();
-                if !self.is_closed() {
-                    return;
-                }
-                opened.await;
-            }
-        })
-        .await;
+        // Registered before checking, so an opening in between is seen.
+        let settled = self.settled.notified();
+        tokio::pin!(settled);
+        settled.as_mut().enable();
+        if !self.is_closed() {
+            return;
+        }
+        let _ = tokio::time::timeout(limit, settled).await;
     }
     pub(crate) fn is_closed(&self) -> bool {
         self.state().closed
@@ -273,9 +275,23 @@ mod tests {
         phone.until_open(limit).await;
         assert!(
             started.elapsed() >= limit,
-            "A failed reopening ends the wait"
+            "No answer: the limit ends the wait"
         );
         assert!(phone.is_closed());
+
+        let started = tokio::time::Instant::now();
+        let failing = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            phone.open_failed();
+        });
+        phone.until_open(limit).await;
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_millis(200) && waited < limit,
+            "A failed opening ends the wait at once: {waited:?}"
+        );
+        assert!(phone.is_closed(), "Still closed; the next attempt follows");
+        failing.await.unwrap();
     }
 
     #[test]

@@ -110,7 +110,14 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     tauri::async_runtime::spawn(answer_owner(app.handle().clone(), requests));
     tauri::async_runtime::spawn(keep_spaces(app.handle().clone()));
     #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
-    tauri::async_runtime::spawn(keep_phone_network(app.handle().clone()));
+    {
+        // A saved network opens shortly after launch; until then actions wait for
+        // it, as after a return to the screen.
+        if phone_network_saved(app.handle()) {
+            crate::phone_lifecycle::LIFECYCLE.set_closed(true);
+        }
+        tauri::async_runtime::spawn(keep_phone_network(app.handle().clone()));
+    }
     if configured {
         let handle = app.handle().clone();
         tauri::async_runtime::spawn(async move {
@@ -226,6 +233,9 @@ pub async fn network_reopen(app: tauri::AppHandle) -> Result<(), String> {
             return Err("This phone has no network to reopen.".into());
         }
         let result = open_phone_network(app.clone()).await;
+        if result.is_err() {
+            crate::phone_lifecycle::LIFECYCLE.open_failed();
+        }
         app.state::<WorkflowState>().slot.lock().await.problem = result.clone().err();
         result
     }
@@ -451,6 +461,9 @@ async fn keep_phone_network(app: tauri::AppHandle) {
         };
         if stopped {
             let result = open_phone_network(app.clone()).await;
+            if result.is_err() {
+                LIFECYCLE.open_failed();
+            }
             crate::diagnostics::note(
                 "phone network",
                 match &result {
