@@ -34,6 +34,12 @@ const blank: HomeStatus = {
   legacy: false,
   connection: null,
 };
+test("a saved network that is still opening shows the opening screen, not Welcome", () => {
+  assert.equal(primaryScreen(blank), "welcome");
+  assert.equal(primaryScreen({ ...blank, opening: true }), "startup");
+  assert.equal(primaryScreen({ ...blank, opening: true, configured: true }), "workspace");
+  assert.equal(primaryScreen({ ...blank, opening: true, joining: "Waiting" }), "joining");
+});
 test("disconnected and interrupted-leave states give a specific next action", () => {
   assert.match(friendlyProblem("This device is disconnected. Tap Reconnect in Settings."), /Reconnect/);
   assert.match(friendlyProblem("Creating your network was cancelled before anything was saved. Try again."), /confirm your screen lock/);

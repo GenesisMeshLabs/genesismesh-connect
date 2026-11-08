@@ -4,6 +4,8 @@ export interface HomeStatus {
   leaving: boolean;
   owner: boolean;
   configured: boolean;
+  /** A phone's saved network is opening, at launch or after a return. */
+  opening?: boolean;
   network: string | null;
   /** Local history scope, derived natively from pinned network and this device. */
   activity_scope?: string | null;
@@ -102,6 +104,8 @@ export function folderCrumbs(directory: string[], root = "Shared folder") {
 export function primaryScreen(status: HomeStatus) {
   if (status.joining) return "joining";
   if (status.configured) return "workspace";
+  // A saved network that is still opening is not a first start.
+  if (status.opening) return "startup";
   return "welcome";
 }
 export function filterFiles(files: FileEntry[], query: string) {

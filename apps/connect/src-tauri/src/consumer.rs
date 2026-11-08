@@ -55,6 +55,8 @@ pub struct HomeStatus {
     leaving: bool,
     owner: bool,
     configured: bool,
+    /// A phone's saved network is opening, at launch or after a return.
+    opening: bool,
     network: Option<String>,
     activity_scope: Option<String>,
     peer: Option<String>,
@@ -117,6 +119,7 @@ pub async fn home_status(
         leaving: DeviceController::leaving(&desktop.profile),
         owner: owner.runtime.is_some(),
         configured,
+        opening: crate::desktop::phone_network_closed(),
         devices: device
             .as_ref()
             .map(|d| {

@@ -203,7 +203,7 @@ async fn maintain(handle: tauri::AppHandle) -> Vec<(&'static str, String)> {
 
 /// A phone that closed its network off screen keeps showing its devices and items
 /// until it has reopened.
-fn phone_network_closed() -> bool {
+pub(crate) fn phone_network_closed() -> bool {
     #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
     {
         crate::phone_lifecycle::LIFECYCLE.is_closed()

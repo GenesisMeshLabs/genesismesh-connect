@@ -118,9 +118,9 @@ function problem(value: string) {
   visible("home-error", !!value);
 }
 function show(next: string) {
-  visible("startup", false);
   screen = next;
   for (const name of [
+    "startup",
     "welcome",
     "create-screen",
     "join-screen",
