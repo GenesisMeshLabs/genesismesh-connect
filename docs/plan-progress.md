@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #46), and this change:
+Merged since 7 November (#37 to #47), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -125,9 +125,14 @@ Merged since 7 November (#37 to #46), and this change:
   the screen waits for it, for at most 45 seconds, then runs as usual. Status,
   cancel, setup and leave actions never wait. If reopening fails, the action runs
   after the wait and reports the error as before.
-- **And while it opens at launch** (this change): a saved network starts as
+- **And while it opens at launch** (#47): a saved network starts as
   closed, so the same wait applies until it first opens. A failed attempt to
   open, automatic or from Reopen, releases waiting actions at once.
+- **No Welcome screen at launch** (this change): a phone with a saved network
+  showed Welcome for about 4 seconds at every launch, inviting a Create that
+  would be refused. It now stays on "Opening your network…" until its device is
+  shown. Adopting the network records the device for the screen at once, because
+  the reconnect that follows can hold the device for over 40 seconds.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
@@ -150,6 +155,7 @@ release):
 | Start while the network computer is down | Local run in WSL (Ubuntu), real node and packaged authority | A fresh device connected 17.5 s after starting, with the node down for the first 8 s; with no node it gave up after 67 s, saying what to do. With the wait disabled the same test fails at once (`a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart`, ignored in CI because it needs the packaged authority) |
 | On screen for 5 h 42 min | `df84d82` (#43) | 67 checks five minutes apart, every one owner, ready, no problem, on screen; every read from the second device succeeded (one on its second try); descriptors 329 to 337, threads 88 to 91, about 17.5% of a core on average (debug). The phone then left the computer's connection at 07:26 (CET), when the record shows the screen leaving and returning several times; none of the test scripts did that. The record for those 6 h 9 min: no panic, no failed refresh, and a renewal every 181 to 300 s with no gap. Shorter than the 12-hour stall, so it neither reproduces nor rules it out |
 | Activity asked for the moment Connect returns, while the network is still reopening | `df84d82` before, `c6966f0` after | Before: refused after 31 ms, "Open this device's network to see its local activity". After, twice: it waited and returned its entries after 1.8 s and 1.6 s, by which time the network had reopened. Each run: network closed after 150 s off screen, owner files byte-identical, a second-device read succeeded, no touches from anyone else |
+| Screens after launch, sampled every 100 ms for 45 s | `7403b48` before; `47ece51`, `252d87f`, `62a8c5d`, `0b2e41d` after | Before: Welcome from 0.75 s to 4.8 s. `47ece51`: Welcome after the network opened, still showing at 20 s in all three runs (failed). `252d87f`: three runs straight to the workspace, one stuck on the opening screen past 45 s while the reconnect held the device (failed). `62a8c5d` and `0b2e41d`, eight runs each: the opening screen, then the workspace at 4.4 to 4.7 s, never Welcome; `0b2e41d` also shows no placeholder network name. One touch from someone else came after the workspace appeared |
 | Activity asked for as soon as the screen answers after launch, while the network is still opening | `c6966f0` before, `687a427` after | Before: asked 3.2 s after launch, refused after 30 ms. After, twice: asked 5.7 s and 5.4 s after launch, still opening; it waited and returned its entries after 3.4 s and 3.2 s. Each run: owner files byte-identical, a second-device read succeeded, no touches from anyone else |
 | CPU, debug, % of one core | `3700fbf` before / `f69c055` after | On screen: 18.9, 18.1, 19.0 before; 18.4, 18.6, 18.1 after (unchanged). Off screen, screen on: 18.6, 33.9, 38.2 over three 90 s windows before; 29.7 within the two-minute grace period, then 0.2, 0.1, 0.1 once closed (closed state confirmed for each window); a read 32 s after return |
 
