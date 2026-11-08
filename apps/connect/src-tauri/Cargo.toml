@@ -26,6 +26,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tauri = { version = "=2.12.4", features = [] }
 connect-core = { path = "../../../crates/connect-core" }
 tokio.workspace = true
