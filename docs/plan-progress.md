@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #45), and this change:
+Merged since 7 November (#37 to #46), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -120,11 +120,14 @@ Merged since 7 November (#37 to #45), and this change:
   desktop and phone apps already try again every 30 seconds and are unchanged.
 - **A proposal for gentler certificate renewal** (#45): options and the decisions
   they need, in the [renewal proposal](renewal-proposal.md). Nothing implemented.
-- **Actions wait while a phone reopens its network** (this change): on the phone
+- **Actions wait while a phone reopens its network** (#46): on the phone
   owner build, an action taken while the network reopens after Connect returns to
   the screen waits for it, for at most 45 seconds, then runs as usual. Status,
   cancel, setup and leave actions never wait. If reopening fails, the action runs
   after the wait and reports the error as before.
+- **And while it opens at launch** (this change): a saved network starts as
+  closed, so the same wait applies until it first opens. A failed attempt to
+  open, automatic or from Reopen, releases waiting actions at once.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
@@ -147,6 +150,7 @@ release):
 | Start while the network computer is down | Local run in WSL (Ubuntu), real node and packaged authority | A fresh device connected 17.5 s after starting, with the node down for the first 8 s; with no node it gave up after 67 s, saying what to do. With the wait disabled the same test fails at once (`a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart`, ignored in CI because it needs the packaged authority) |
 | On screen for 5 h 42 min | `df84d82` (#43) | 67 checks five minutes apart, every one owner, ready, no problem, on screen; every read from the second device succeeded (one on its second try); descriptors 329 to 337, threads 88 to 91, about 17.5% of a core on average (debug). The phone then left the computer's connection at 07:26 (CET), when the record shows the screen leaving and returning several times; none of the test scripts did that. The record for those 6 h 9 min: no panic, no failed refresh, and a renewal every 181 to 300 s with no gap. Shorter than the 12-hour stall, so it neither reproduces nor rules it out |
 | Activity asked for the moment Connect returns, while the network is still reopening | `df84d82` before, `c6966f0` after | Before: refused after 31 ms, "Open this device's network to see its local activity". After, twice: it waited and returned its entries after 1.8 s and 1.6 s, by which time the network had reopened. Each run: network closed after 150 s off screen, owner files byte-identical, a second-device read succeeded, no touches from anyone else |
+| Activity asked for as soon as the screen answers after launch, while the network is still opening | `c6966f0` before, `687a427` after | Before: asked 3.2 s after launch, refused after 30 ms. After, twice: asked 5.7 s and 5.4 s after launch, still opening; it waited and returned its entries after 3.4 s and 3.2 s. Each run: owner files byte-identical, a second-device read succeeded, no touches from anyone else |
 | CPU, debug, % of one core | `3700fbf` before / `f69c055` after | On screen: 18.9, 18.1, 19.0 before; 18.4, 18.6, 18.1 after (unchanged). Off screen, screen on: 18.6, 33.9, 38.2 over three 90 s windows before; 29.7 within the two-minute grace period, then 0.2, 0.1, 0.1 once closed (closed state confirmed for each window); a read 32 s after return |
 
 Corrections kept on record:
@@ -200,9 +204,9 @@ Known limits and open findings:
   (`cache/connect-diagnostics/events.log`: panics, screen changes, closing and
   reopening, refresh outcomes and renewals), so a repeat can be explained. Its
   first 6 hours on screen showed no gap.
-- **During reopening** actions now wait for the network. Opening at launch is not
-  covered: an action taken while Connect first opens its network still fails as
-  before.
+- **While the network opens** after a return or at launch, actions now wait for
+  it, for at most 45 seconds. Waiting after a failed open was checked by unit
+  tests only, not on the phone.
 - **Background CPU:** measured lower once the network is closed (debug build);
   unchanged during the two-minute grace period, where blocked relay probes still
   cost about 16 to 30% of a core. No release figure exists.
