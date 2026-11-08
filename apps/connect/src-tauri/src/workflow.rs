@@ -544,6 +544,7 @@ async fn adopt_phone_network(
     owner.problem = None;
     slot.controller = Some(device);
     slot.problem = None;
+    desktop.show_held(&slot);
     crate::phone_lifecycle::LIFECYCLE.set_closed(false);
 }
 #[tauri::command]
