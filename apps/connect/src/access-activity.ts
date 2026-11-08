@@ -2,7 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { el } from "./ui";
 import { friendlyProblem, isService, type HomeSpace, type HomeStatus } from "./home-state";
 import { accessOutcomeText, accessReviewLines, type AccessOutcome } from "./access-state";
-import { whenText, activityLabel, activityExplanation, activityCount, recoveryExplanation, exportRecordMessage, summaryAfterCheck, type ActivitySummary, type HistoryCursor, type HistoryPage, type LocalAccessRecord } from "./activity-state";
+import { icon } from "./icons";
+import { activityGroups, activityRowDetail, activityLabel, activityExplanation, recoveryExplanation, exportRecordMessage, summaryAfterCheck, type ActivitySummary, type HistoryCursor, type HistoryPage, type LocalAccessRecord } from "./activity-state";
 
 export function setupActivity(getStatus:()=>HomeStatus|null,isActive:()=>boolean,refreshHome:()=>Promise<void>,message:(s:string)=>void,manage:(space:HomeSpace)=>Promise<void>) {
   const detail=el<HTMLDialogElement>("activity-detail");
@@ -11,11 +12,8 @@ export function setupActivity(getStatus:()=>HomeStatus|null,isActive:()=>boolean
   let selected:ActivitySummary|null=null,local:LocalAccessRecord|null=null;
   function problem(value:string){failed=!!value;el("activity-problem").textContent=value;el("activity-problem").hidden=!value;}
   function detailProblem(value:string){el("activity-detail-problem").textContent=value;el("activity-detail-problem").hidden=!value;}
-  function reset(){epoch++;loading=false;loaded=false;entries=[];next=null;selected=null;local=null;detail.close();el("activity-list-main").replaceChildren();el("activity-more").hidden=true;el("activity-incomplete").hidden=true;el("activity-review-attention").hidden=true;el("activity-attention-text").textContent="Saved access history on this device";problem("");render();}
-  function button(label:string,action:(button:HTMLButtonElement)=>Promise<void>){
-    const b=document.createElement("button");b.className="secondary";b.textContent=label;
-    b.addEventListener("click",()=>void action(b));return b;
-  }
+  function reset(){epoch++;loading=false;loaded=false;entries=[];next=null;selected=null;local=null;detail.close();el("activity-list-main").replaceChildren();el("activity-more").hidden=true;el("activity-incomplete").hidden=true;attention(0);problem("");render();}
+  function attention(count:number){el("activity-attention-chip").textContent=count?`Needs attention · ${count}`:"Needs attention";}
   function canCheck(entry:ActivitySummary){return entry.recovery==="check_status"&&!getStatus()?.disconnected;}
   async function checked(entry:ActivitySummary,b:HTMLButtonElement){
     if(working)return;working=true;b.disabled=true;detailProblem("");problem("");
@@ -58,23 +56,32 @@ export function setupActivity(getStatus:()=>HomeStatus|null,isActive:()=>boolean
     el<HTMLButtonElement>("activity-detail-check").hidden=!canCheck(selected);
     el<HTMLButtonElement>("activity-detail-manage").hidden=!space||!!getStatus()?.disconnected;
   }
+  // A row opens its record; checking a result happens there, never from the list.
+  function row(entry:ActivitySummary,now:Date){
+    const item=document.createElement("li");item.className="list-row";
+    const main=document.createElement("button");main.className="row-main";
+    const marker=document.createElement("span");marker.className=entry.needs_attention?"row-tile attention":"row-tile";
+    marker.append(icon(entry.needs_attention?"circle-alert":"circle-check"));
+    const words=document.createElement("span");words.className="row-text";
+    const name=document.createElement("strong");name.textContent=entry.name;
+    const detail=document.createElement("span");detail.textContent=activityRowDetail(entry,now);
+    if(entry.needs_attention)detail.className="row-warning";
+    words.append(name,detail);main.append(marker,words);
+    main.addEventListener("click",()=>void showDetail(entry,main));
+    item.append(main,icon("chevron-right",20));
+    return item;
+  }
   function render(){
     const list=el("activity-list-main");list.replaceChildren();
     el("activity-empty").hidden=entries.length>0||loading||!loaded||failed;
     el("activity-empty-title").textContent=filter==="needs_attention"?"No matching changes need attention":"No access changes yet";
     el("activity-empty-text").textContent=filter==="needs_attention"?"This view shows unconfirmed or conflicting access changes saved on this device.":"When you review or change access to a shared item, Connect keeps a local record here.";
-    for(const entry of entries){
-      const card=document.createElement("li");card.className="home-card activity-entry";
-      const heading=document.createElement("div");heading.className="activity-entry-heading";
-      const title=document.createElement("h2");title.textContent=entry.name;
-      const badge=document.createElement("span");badge.className=entry.needs_attention?"activity-status attention":"activity-status";badge.textContent=activityLabel(entry);heading.append(title,badge);
-      const when=document.createElement("p");when.className="home-muted";when.textContent=`${whenText(entry.created_at)}${entry.archived?" · Older saved record":""}`;
-      const description=document.createElement("p");description.textContent=activityExplanation(entry);
-      const actions=document.createElement("div");actions.className="button-row";
-      if(canCheck(entry))actions.append(button("Check status",b=>checked(entry,b)));
-      else if(entry.needs_attention){const hint=document.createElement("p");hint.className="home-muted";hint.textContent=recoveryExplanation(entry.recovery);card.append(hint);}
-      actions.append(button("View record",b=>showDetail(entry,b)));
-      card.prepend(heading,when,description);card.append(actions);list.append(card);
+    const now=new Date();
+    for(const group of activityGroups(entries,now)){
+      const label=document.createElement("h2");label.className="section-label";label.textContent=group.day;
+      const rows=document.createElement("ol");rows.className="list-group";
+      for(const entry of group.entries)rows.append(row(entry,now));
+      list.append(label,rows);
     }
     el<HTMLButtonElement>("activity-refresh").disabled=loading;
     el("activity-refresh").setAttribute("aria-busy",String(loading));
@@ -93,8 +100,7 @@ export function setupActivity(getStatus:()=>HomeStatus|null,isActive:()=>boolean
       const seen=new Set(append?entries.map(e=>e.id):[]);
       const fresh=page.entries.filter(entry=>{if(seen.has(entry.id))return false;seen.add(entry.id);return true;});
       entries=append?[...entries,...fresh]:fresh;next=page.next;loaded=true;
-      el("activity-attention-text").textContent=activityCount(page.attention_count,page.incomplete);
-      el("activity-review-attention").hidden=page.attention_count===0||filter==="needs_attention";
+      attention(page.attention_count);
       el("activity-incomplete").hidden=!page.incomplete;
     }catch(e){if(token===epoch)problem(friendlyProblem(String(e)));}
     finally{if(token===epoch){loading=false;render();}}
@@ -109,7 +115,6 @@ export function setupActivity(getStatus:()=>HomeStatus|null,isActive:()=>boolean
   el("activity-more").addEventListener("click",()=>{if(next)void load(true);});
   function choose(value:"all"|"needs_attention"){if(loading)return;filter=value;entries=[];next=null;void load(false);}
   for(const b of document.querySelectorAll<HTMLElement>("[data-activity-filter]"))b.addEventListener("click",()=>choose(b.dataset.activityFilter==="needs_attention"?"needs_attention":"all"));
-  el("activity-review-attention").addEventListener("click",()=>choose("needs_attention"));
   el("activity-detail-close").addEventListener("click",()=>{if(!working)detail.close();});
   detail.addEventListener("cancel",e=>{if(working)e.preventDefault();});
   el<HTMLButtonElement>("activity-detail-check").addEventListener("click",e=>{if(selected&&canCheck(selected))void checked(selected,e.currentTarget as HTMLButtonElement);});

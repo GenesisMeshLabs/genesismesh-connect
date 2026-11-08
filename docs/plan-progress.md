@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #47), and this change:
+Merged since 7 November (#37 to #48), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -128,11 +128,21 @@ Merged since 7 November (#37 to #47), and this change:
 - **And while it opens at launch** (#47): a saved network starts as
   closed, so the same wait applies until it first opens. A failed attempt to
   open, automatic or from Reopen, releases waiting actions at once.
-- **No Welcome screen at launch** (this change): a phone with a saved network
+- **No Welcome screen at launch** (#48): a phone with a saved network
   showed Welcome for about 4 seconds at every launch, inviting a Create that
   would be refused. It now stays on "Opening your network…" until its device is
   shown. Adopting the network records the device for the screen at once, because
   the reconnect that follows can hold the device for over 40 seconds.
+- **Activity and Settings from the designer's spec** (this change). Activity
+  lists records as rows under Today, Yesterday and Earlier, each with a check or
+  attention mark and "what happened · when". "Not confirmed yet" is shown in
+  amber, and the attention chip shows how many need attention. A row opens its
+  record, and Check status is only offered there. Settings is grouped into Your
+  network, This device, Recovery, Connection, This device's connection and
+  Advanced. Save appears only after a change. The recovery key opens in a sheet
+  that only "I've written it down" closes. It wraps between groups of four.
+  Checked in the browser with the native layer stubbed (A17 viewport, owner and
+  joined). Not yet checked on the phone.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in

@@ -368,18 +368,14 @@
           <div id="view-activity" hidden>
             <div class="home-page-heading"><h1 class="sr-only">Activity</h1></div>
             <div class="activity-tools">
-              <div class="library-filters" aria-label="Activity filters"><button data-activity-filter="all" aria-pressed="true">All</button><button data-activity-filter="needs_attention" aria-pressed="false">Needs attention</button></div>
+              <div class="library-filters" aria-label="Activity filters"><button data-activity-filter="all" aria-pressed="true">All</button><button data-activity-filter="needs_attention" aria-pressed="false" id="activity-attention-chip">Needs attention</button></div>
               <button id="activity-refresh" class="icon-button" aria-label="Refresh activity"><span data-icon="refresh-cw"></span></button>
             </div>
-            <p class="home-muted">Changes to who can use what, kept on this device. Not signed proof that something was used.</p>
-            <section class="activity-overview" aria-label="Access change status">
-              <h2 id="activity-attention-text">Saved access history on this device</h2>
-              <button id="activity-review-attention" class="secondary" hidden>Review changes needing attention</button>
-            </section>
+            <p class="home-muted activity-caption">Changes to who can use what, kept on this device. Not signed proof that something was used.</p>
             <p id="activity-incomplete" class="activity-notice" role="status" hidden>Some older history could not be loaded or exceeded the reading limits. These results may be incomplete. Your existing records have been preserved.</p>
             <p id="activity-problem" role="alert" hidden></p><p id="activity-loading" role="status" hidden>Loading saved activity…</p>
             <div id="activity-empty" class="home-empty" hidden><span class="empty-icon" data-icon="history"></span><h2 id="activity-empty-title">No access changes yet</h2><p id="activity-empty-text">When you review or change access to a shared item, Connect keeps a local record here.</p></div>
-            <ol id="activity-list-main" class="access-activity-list"></ol><button id="activity-more" class="secondary" hidden>Load older changes</button>
+            <div id="activity-list-main" class="access-activity-list"></div><button id="activity-more" class="secondary" hidden>Load older changes</button>
             <dialog id="activity-detail" class="share-dialog" aria-labelledby="activity-detail-title">
               <div class="share-heading"><h2 id="activity-detail-title">Access record</h2><button id="activity-detail-close" class="text-button" type="button">Close</button></div>
               <h3 id="activity-detail-status"></h3><p id="activity-detail-explanation"></p>
@@ -394,90 +390,100 @@
           </div>
           <div id="view-settings" hidden>
             <div class="home-page-heading"><h1 class="sr-only">Settings</h1></div>
-            <section class="home-card">
-              <h2>Your network</h2>
-              <p id="settings-network"></p>
-              <p id="settings-owner" class="home-muted"></p>
-              <label for="friendly-name">This device’s name</label
-              ><div class="inline-field"><input id="friendly-name" maxlength="64" /><button id="save-name" class="secondary">Save</button></div>
+            <h2 class="section-label">Your network</h2>
+            <div class="list-group">
+              <div class="list-row">
+                <span class="row-tile" data-icon="house"></span>
+                <div class="row-text"><h3 id="settings-network"></h3><p id="settings-owner"></p></div>
+              </div>
+            </div>
+            <h2 class="section-label">This device</h2>
+            <div class="list-group group-body">
+              <label for="friendly-name">Name</label
+              ><div class="inline-field"><input id="friendly-name" maxlength="64" /><button id="save-name" disabled>Save</button></div>
+            </div>
+            <section id="recovery-card" aria-labelledby="recovery-label" hidden>
+              <h2 id="recovery-label" class="section-label">Recovery</h2>
+              <div class="list-group">
+                <div class="list-row">
+                  <button id="create-recovery" class="row-main"><span class="row-tile" data-icon="key-round"></span><span class="row-text"><strong>Create recovery file</strong><span>Brings this network back on another device</span></span></button
+                  ><span class="row-trailing" data-icon="chevron-right" data-size="20"></span>
+                </div>
+              </div>
+              <p class="group-note">Every device stays paired. Keep the file somewhere other than this device.</p>
             </section>
-            <section id="recovery-card" class="home-card" hidden>
-              <h2>Recovery</h2>
-              <p>
-                A recovery file and its key bring this network back on another
-                device, with every device still paired. Keep the file somewhere
-                other than this device.
-              </p>
-              <button id="create-recovery" class="secondary">Create recovery file</button>
-              <div id="recovery-key-panel" hidden>
-                <p><strong>Write this recovery key down now.</strong> Connect cannot show it again.</p>
-                <p id="recovery-key" class="recovery-key"></p>
-                <p class="home-muted">
-                  Keep the key apart from the file, for example on paper. Anyone with both can restore your network.
+            <dialog id="recovery-dialog" class="share-dialog" aria-labelledby="recovery-title">
+              <div class="share-heading"><h2 id="recovery-title">Write this recovery key down now</h2></div>
+              <p>Connect cannot show it again. Keep the key apart from the file, for example on paper. Anyone with both can restore your network.</p>
+              <p id="recovery-key" class="recovery-key"></p>
+              <button id="recovery-done">I’ve written it down</button>
+            </dialog>
+            <section id="connection-card" aria-labelledby="connection-label" hidden>
+              <h2 id="connection-label" class="section-label">Connection</h2>
+              <div class="list-group group-body">
+                <p id="connection-summary"></p>
+                <fieldset id="connection-owner" class="connection-choices" hidden>
+                  <legend>How your devices reach each other</legend>
+                  <label class="connection-choice"
+                    ><input type="radio" name="connection" id="connection-public" value="public_relays" /><span
+                      ><strong>Public relays</strong
+                      ><span class="home-muted"
+                        >Works from anywhere. Relays see addresses and timing, never your files.</span
+                      ></span
+                    ></label
+                  >
+                  <label class="connection-choice"
+                    ><input type="radio" name="connection" id="connection-local" value="local_network" /><span
+                      ><strong>Private: this local network only</strong
+                      ><span class="home-muted"
+                        >No outside services. Devices connect only on the same local network as the device that runs your network.</span
+                      ></span
+                    ></label
+                  >
+                  <button id="save-connection" hidden>Save</button>
+                </fieldset>
+                <div id="connection-device" hidden>
+                  <label class="connection-choice"
+                    ><input type="checkbox" id="connection-local-only" /><span
+                      ><strong>Only connect on the local network from this device</strong
+                      ><span class="home-muted"
+                        >Your network computer chooses for every device. This device can only be stricter.</span
+                      ></span
+                    ></label
+                  >
+                  <button id="save-device-connection" hidden>Save</button>
+                </div>
+              </div>
+            </section>
+            <section id="network-actions" aria-labelledby="network-actions-label">
+              <h2 id="network-actions-label" class="section-label">This device’s connection</h2>
+              <div class="list-group">
+                <div class="list-row">
+                  <button id="toggle-network" class="row-main"><span class="row-tile" data-icon="power"></span><span class="row-text"><strong id="toggle-network-label">Disconnect</strong><span id="network-action-description">Pause connections. Your network and shared items stay saved.</span></span></button>
+                </div>
+                <div id="leave-network-option" class="list-row" hidden>
+                  <button id="leave-network" class="row-main danger-row"><span class="row-tile" data-icon="log-out"></span><span class="row-text"><strong>Leave network</strong><span>Removes this device’s setup and in-app downloads</span></span></button>
+                </div>
+              </div>
+              <p id="owner-leave-note" class="group-note" hidden>This computer runs your network. Leaving here would affect your other devices; use Disconnect to pause it.</p>
+            </section>
+            <details id="settings-advanced" class="list-group settings-advanced">
+              <summary class="list-row"><span class="row-tile" data-icon="wrench"></span><span class="row-text"><strong>Advanced</strong><span>Connection help and technical details</span></span><span class="row-trailing" data-icon="chevron-right" data-size="20"></span></summary>
+              <div class="group-body">
+                <p>
+                  Get help with a connection or permissions, then inspect technical details if needed.
                 </p>
-                <button id="recovery-done" class="secondary">I’ve written it down</button>
+                <pre id="last-error-detail"></pre>
+                <button id="open-advanced" class="secondary">
+                  Open advanced tools
+                </button>
+                <section id="paired-device" hidden>
+                  <h3 id="peer-name"></h3>
+                  <p id="peer-state"></p>
+                  <button id="check-connection-button" class="secondary">Check connection</button>
+                </section>
+                <p class="home-muted">Manage sharing access on each item in Shared. The network computer also offers a recovery file in Settings.</p>
               </div>
-            </section>
-            <section id="connection-card" class="home-card" hidden>
-              <h2>Connection</h2>
-              <p id="connection-summary"></p>
-              <fieldset id="connection-owner" class="connection-choices" hidden>
-                <legend>How your devices reach each other</legend>
-                <label class="connection-choice"
-                  ><input type="radio" name="connection" id="connection-public" value="public_relays" /><span
-                    ><strong>Public relays</strong
-                    ><span class="home-muted"
-                      >Works from anywhere. Relays see addresses and timing, never your files.</span
-                    ></span
-                  ></label
-                >
-                <label class="connection-choice"
-                  ><input type="radio" name="connection" id="connection-local" value="local_network" /><span
-                    ><strong>Private: this local network only</strong
-                    ><span class="home-muted"
-                      >No outside services. Devices connect only on the same local network as the device that runs your network.</span
-                    ></span
-                  ></label
-                >
-                <button id="save-connection" class="secondary">Save connection</button>
-              </fieldset>
-              <div id="connection-device" hidden>
-                <label class="connection-choice"
-                  ><input type="checkbox" id="connection-local-only" /><span
-                    ><strong>Only connect on the local network from this device</strong
-                    ><span class="home-muted"
-                      >Your network computer chooses for every device. This device can only be stricter.</span
-                    ></span
-                  ></label
-                >
-                <button id="save-device-connection" class="secondary">Save</button>
-              </div>
-            </section>
-            <section id="network-actions" class="home-card">
-              <h2>This device’s connection</h2>
-              <p id="network-action-description">Disconnect to pause connections. Your network and shared folders stay saved.</p>
-              <button id="toggle-network" class="secondary">Disconnect</button>
-              <div id="leave-network-option" hidden>
-                <p>Leave to remove this device’s setup and in-app downloads. You’ll need a new invitation to join again.</p>
-                <button id="leave-network" class="secondary">Leave network</button>
-              </div>
-              <p id="owner-leave-note" class="home-muted" hidden>This computer runs your network. Leaving here would affect your other devices; use Disconnect to pause it.</p>
-            </section>
-            <details class="home-card">
-              <summary>Advanced</summary>
-              <p>
-                Get help with a connection or permissions, then inspect technical details if needed.
-              </p>
-              <pre id="last-error-detail"></pre>
-              <button id="open-advanced" class="secondary">
-                Open advanced tools
-              </button>
-              <section id="paired-device" hidden>
-                <h3 id="peer-name"></h3>
-                <p id="peer-state"></p>
-                <button id="check-connection-button" class="secondary">Check connection</button>
-              </section>
-              <p class="home-muted">Manage sharing access on each item in Shared. The network computer also offers a recovery file in Settings.</p>
             </details>
           </div>
         </div>

@@ -135,7 +135,7 @@ const titles: Record<string, string> = { files: "Shared", devices: "Devices", ac
 function selectView(next: string) {
   if(next!=="devices"){hostAdministration.close();clientAdministration.close();clientRequests.close();}
   // An unsaved connection choice is dropped when leaving Settings.
-  if (next !== "settings") connectionDirty = false;
+  if (next !== "settings") connectionChanged(false);
   currentView=next;
   text("home-title", titles[next]);
   for (const name of ["files", "devices", "activity", "settings"])
@@ -216,11 +216,11 @@ function render(status: HomeStatus) {
   visible("leave-retry", status.leaving);
   visible("leave-network-option", status.can_leave);
   visible("owner-leave-note", !status.can_leave && status.owner);
-  if (!busy) text("toggle-network", status.disconnected ? "Reconnect" : "Disconnect");
+  text("toggle-network-label", status.disconnected ? "Reconnect" : "Disconnect");
   text("network-action-description", status.disconnected
-    ? "Disconnected until you tap Reconnect, even after reopening the app."
-    : status.owner ? `Disconnecting this ${phoneHosting ? "phone" : "computer"} pauses access for your other devices. Your setup stays saved.`
-      : "Disconnect to pause connections. Your network and shared folders stay saved.");
+    ? "Off until you reconnect, even after reopening the app"
+    : status.owner ? "Pauses access for your other devices. Your setup stays saved."
+      : "Pauses connections. Your network and shared items stay saved.");
   const next = primaryScreen(status);
   if (status.leaving) {
     show("leaving");
@@ -418,8 +418,6 @@ async function changeConnection(button: HTMLButtonElement) {
     await invoke(reconnect ? "reconnect_network" : "disconnect_network");
     message(reconnect ? "Reconnection enabled. Checking your network…" : "Disconnected. Tap Reconnect whenever you’re ready.");
   });
-  // run restores a temporary button label; reflect the final state afterward.
-  if (current) text("toggle-network", current.disconnected ? "Reconnect" : "Disconnect");
 }
 el("toggle-network").addEventListener("click", () => void changeConnection(el("toggle-network")));
 el("reconnect-banner").addEventListener("click", () => void changeConnection(el("reconnect-banner")));
@@ -468,12 +466,14 @@ el("create-recovery").addEventListener(
       const key = await invoke<string | null>("recovery_create");
       if (!key) return;
       text("recovery-key", key);
-      visible("recovery-key-panel", true);
+      el<HTMLDialogElement>("recovery-dialog").showModal();
     }),
 );
+// The key is shown once, so only this button closes it.
+el("recovery-dialog").addEventListener("cancel", (event) => event.preventDefault());
 el("recovery-done").addEventListener("click", () => {
   text("recovery-key", "");
-  visible("recovery-key-panel", false);
+  el<HTMLDialogElement>("recovery-dialog").close();
   message("Keep the recovery file and its key in separate places.");
 });
 el("choose-existing").addEventListener(
@@ -1018,10 +1018,14 @@ el("check-connection-button").addEventListener(
       message("Secure connection succeeded.");
     }),
 );
+// Save appears once a choice changes, and goes when it is saved or dropped.
+function connectionChanged(dirty: boolean) {
+  connectionDirty = dirty;
+  visible("save-connection", dirty);
+  visible("save-device-connection", dirty);
+}
 for (const id of ["connection-public", "connection-local", "connection-local-only"])
-  el(id).addEventListener("change", () => {
-    connectionDirty = true;
-  });
+  el(id).addEventListener("change", () => connectionChanged(true));
 el("save-connection").addEventListener(
   "click",
   () =>
@@ -1032,7 +1036,7 @@ el("save-connection").addEventListener(
       try {
         await invoke("set_network_connection", { setting });
       } finally {
-        connectionDirty = false;
+        connectionChanged(false);
       }
       message(
         setting === "local_network"
@@ -1049,7 +1053,7 @@ el("save-device-connection").addEventListener(
       try {
         await invoke("set_device_local_only", { enabled });
       } finally {
-        connectionDirty = false;
+        connectionChanged(false);
       }
       message(
         enabled
@@ -1058,11 +1062,18 @@ el("save-device-connection").addEventListener(
       );
     }),
 );
+// Save is offered only for a new, valid name.
+function nameChanged() {
+  const name = input("friendly-name").value.trim();
+  el<HTMLButtonElement>("save-name").disabled = !name || name.length > 64 || name === localName();
+}
+input("friendly-name").addEventListener("input", nameChanged);
 el("save-name").addEventListener("click", () => {
   const name = input("friendly-name").value.trim();
   if (!name || name.length > 64) return;
   localStorage.setItem("connect.friendly-name", name);
   text("this-device-name", name);
+  nameChanged();
   message("Name saved on this device.");
 });
 // The advanced tools are one step from the everyday screens: the back bar,
