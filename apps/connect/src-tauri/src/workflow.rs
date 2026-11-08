@@ -404,11 +404,22 @@ pub(crate) async fn open_phone_network(app: tauri::AppHandle) -> Result<(), Stri
 /// whenever its native session stopped. Opening never repeats a write.
 #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
 async fn keep_phone_network(app: tauri::AppHandle) {
+    use crate::phone_lifecycle::LIFECYCLE;
     let mut wait = std::time::Duration::from_secs(1);
     loop {
-        tokio::time::sleep(wait).await;
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {}
+            _ = LIFECYCLE.returned() => {}
+        }
         wait = std::time::Duration::from_secs(15);
         if !phone_network_saved(&app) {
+            continue;
+        }
+        if LIFECYCLE.should_close(std::time::Instant::now()) {
+            close_phone_network(&app).await;
+        }
+        // Android blocks a background app's network: reopening waits for a return.
+        if LIFECYCLE.is_suspended() {
             continue;
         }
         let stopped = {
@@ -421,6 +432,51 @@ async fn keep_phone_network(app: tauri::AppHandle) {
             app.state::<WorkflowState>().slot.lock().await.problem = result.err();
         }
     }
+}
+
+/// Stop this phone's network while Connect is off screen. Nothing is written, and
+/// nothing stays open that reopening needs, such as the trust checkpoint's lock;
+/// reopening uses what is saved. The screen keeps what it last showed. Anything in
+/// progress keeps the network open until a later check.
+#[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+async fn close_phone_network(app: &tauri::AppHandle) {
+    let Some(_turn) = SetupTurn::take() else {
+        return;
+    };
+    let state = app.state::<WorkflowState>();
+    let desktop = app.state::<crate::desktop::DesktopState>();
+    let Ok(mut owner) = state.slot.try_lock() else {
+        return;
+    };
+    if owner.runtime.is_none() {
+        return;
+    }
+    // An invitation being sent stays usable on return until it expires.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() as i64);
+    if owner
+        .pairing
+        .as_ref()
+        .is_some_and(|pair| pair.card().expires_at > now)
+    {
+        return;
+    }
+    let Ok(_transfers) = desktop.transfers.clone().try_write_owned() else {
+        return;
+    };
+    let Ok(mut slot) = desktop.slot.try_lock() else {
+        return;
+    };
+    if let Some(pair) = owner.pairing.take() {
+        pair.close().await;
+    }
+    crate::phone_lifecycle::LIFECYCLE.set_closed(true);
+    drop(owner.runtime.take());
+    if let Some(mut device) = slot.controller.take() {
+        device.stop().await;
+    }
+    drop(owner.lease.take());
 }
 
 #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
@@ -445,6 +501,7 @@ async fn adopt_phone_network(
     owner.problem = None;
     slot.controller = Some(device);
     slot.problem = None;
+    crate::phone_lifecycle::LIFECYCLE.set_closed(false);
 }
 #[tauri::command]
 pub async fn network_attach(
@@ -673,6 +730,7 @@ pub async fn recovery_restore(
 #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
 async fn phone_recovery_create(app: &tauri::AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_view::ViewExt;
+    let _prompt = crate::phone_lifecycle::LIFECYCLE.hold();
     let state = app.state::<WorkflowState>();
     let desktop = app.state::<crate::desktop::DesktopState>();
     let mut owner = state.slot.lock().await;

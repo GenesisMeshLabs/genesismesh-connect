@@ -14,6 +14,11 @@ mod desktop;
 mod downloads;
 mod host_admin;
 mod lifecycle;
+#[cfg(any(
+    test,
+    all(target_os = "android", feature = "android-owner-qualification")
+))]
+mod phone_lifecycle;
 mod picking;
 mod resources;
 mod sends;
@@ -195,6 +200,17 @@ pub fn run() {
             desktop::device_refresh,
             desktop::device_send
         ])
-        .run(tauri::generate_context!())
-        .expect("Connect could not start");
+        .build(tauri::generate_context!())
+        .expect("Connect could not start")
+        .run(|_app, _event| {
+            #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+            if let tauri::RunEvent::WindowEvent { event, .. } = &_event {
+                use phone_lifecycle::LIFECYCLE;
+                match event {
+                    tauri::WindowEvent::Suspended => LIFECYCLE.suspended(std::time::Instant::now()),
+                    tauri::WindowEvent::Resumed => LIFECYCLE.resumed(),
+                    _ => {}
+                }
+            }
+        });
 }

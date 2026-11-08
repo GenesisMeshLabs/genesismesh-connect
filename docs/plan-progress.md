@@ -86,6 +86,102 @@ Not yet run on the phone: saving and restoring a recovery file, and removing a
 device. Saving and restoring need the owner at the phone to confirm the system
 prompt. Public Create in the normal app stays off.
 
+## State on 8 November 2026
+
+Merged since 7 November (#37 to #41), and this change:
+
+- **Phone results recorded** and "while Connect is open" wording (#37).
+- **Share invitation** through the Android share sheet (#38); the invitation
+  card scrolls fully below the top bar, and the add button hides while it is
+  open (#39). Measured on the phone on the exact #39 build: card top at 116 px,
+  below the 92 px bar (it was 70 px before).
+- **Bounded asking again** when a device cannot reach its host yet, the host's
+  trust is stale or its connection is suspended (#40). A host over its read limit
+  now answers busy. Permanent answers (unknown item, missing file, real expiry,
+  "support any known protocol") stay final and are not retried.
+- **Setup-lock fixtures run one at a time** in CI (#41). The diagnosis is
+  provisional: without spawning, 0 of 600,000 lock attempts were refused; with
+  process spawning, 16,613 to 17,444 of 200,000 per run. This supports a
+  mechanism; it does not prove the cause of the one historical CI failure.
+- **Closing a phone's network off screen** (this change): two minutes after
+  Connect leaves the screen, the phone stops its network and reopens it from what
+  is saved when Connect returns. The share sheet, file and photo pickers and the
+  authentication prompt keep it open; an unexpired invitation keeps it open. The
+  screen keeps showing the last devices and items, with "Reopening…" while it
+  restarts.
+
+Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
+is from a **debug** build, because the owner test feature refuses to compile in
+release):
+
+| Step | Build | Result |
+| --- | --- | --- |
+| Reads under the limit | `7b060bd` (#40) | 75 of 75 over 258 s, peak 18 successful in any 60 s, 0 denied |
+| Genuine refusals | `7b060bd` | Unknown item, missing file and an expired share refused at once, no retry, no prompt |
+| Read limit | CI, real authority | 16 reads per 60 s window per share, then busy; refusals stay final (`host_read_limit_is_16_a_window_says_busy_and_leaves_refusals_final`) |
+| Five force-stop/relaunch cycles, reads every 5 s | `7b060bd` | 188 succeeded, 8 failed (6 "Connection is suspended", 2 "session ended"), 0 denied; first read after relaunch 43, 62, 5, 1, 5 s; outages seen by the device 62, 88, 42, 42, 62 s |
+| Earlier run, restarts every 49 s | `c748955` | 111 succeeded, 29 failed; restarts overlapped, and trust refreshed only between reads. Kept for comparison, not as a pass |
+| Off screen 150 s, then return | `f69c055` | Network running at 60 s, closed by 150 s; a real read 23 to 26 s after return |
+| Same identity, no repeated writes | `f69c055` | Strict check passed: same operation, stage, name, node and pin in the setup journal; `certificate_id` moved one renewal of the same node and matches the device; no new enrollment; invitations, edge nodes and attestations unchanged; the six owner files, including the sealed keys, byte-identical |
+| Invitation share sheet held 150 s | `f69c055` | Network stayed open; invitation still valid on return |
+| Open-with sheet held 150 s | `f69c055` | Network closed as designed; on return the item stayed open and a real read succeeded (second try, 41 s) |
+| File picker, photo picker held 150 s each | `f69c055` | Network stayed open; the sheet was still open; nothing chosen, no error |
+| Authentication prompt left up | `f69c055` | The system closed it after about 128 s; plain "not saved, nothing changed" message, no key shown, no export left, owner files identical, network up, read succeeded |
+| Authentication prompt cancelled with Back | `f69c055` | Back pressed only while the prompt had focus; same plain message, no key shown, no export left, network up; strict check passed (journal unchanged, owner files identical, no new enrollment), read succeeded |
+| CPU, debug, % of one core | `3700fbf` before / `f69c055` after | On screen: 18.9, 18.1, 19.0 before; 18.4, 18.6, 18.1 after (unchanged). Off screen, screen on: 18.6, 33.9, 38.2 over three 90 s windows before; 29.7 within the two-minute grace period, then 0.2, 0.1, 0.1 once closed (closed state confirmed for each window); a read 32 s after return |
+
+Corrections kept on record:
+
+- An early line reporting "identity and journal unchanged" on `4471932` was not
+  verified: it searched the wrong folder and compared no journal. The strict
+  check replaced it.
+- The first strict run failed because it assumed the journal's certificate was
+  the device's current one; a renewal right after reopening had moved it. The
+  rule now verifies the renewal chain; the failed run is kept.
+- The first prompt run pressed Back after the prompt had already closed and left
+  the app, so its cancel, identity and read lines are void. Back is now pressed
+  only while the prompt has focus.
+- `4471932` could not reopen ("Trust checkpoint already in use"): the stopped
+  controller kept its lock. `f69c055` releases it and keeps the last status on
+  screen.
+- CPU was first attributed to the embedded authority; its threads were idle (two
+  requests per 30 s). In the background most time went to relay probes that
+  Android's background restriction blocks (`blocked=APP_BACKGROUND`).
+
+Known limits and open findings:
+
+- **Foreground only.** Other devices reach the network only while Connect is on
+  screen or within two minutes of leaving it. Android blocks the app's network in
+  the background; this change stops the wasted work, it does not add background
+  availability.
+- **Outages exceed the retry budget.** Devices ask again for about 15 seconds,
+  while a restarting host was unreachable for 42 to 88 seconds. Fresh-device
+  startup while the host restarts is not solved.
+- **12-hour relay stall:** seen once, unexplained, not reproduced by a 5-minute
+  pause.
+- **Certificate renewal every 4 minutes.** The documented freshness policy
+  ([authority spike](authority-spike.md)) renews a device certificate at 240 s.
+  Each renewal suspends the device's sessions, the likely source of some
+  "suspended" and "session ended" failures; the phone issued 196 certificates in
+  18.7 hours and its database is about 12 MB. The policy is unchanged; a gentler
+  renewal that keeps revocation timely needs a decision.
+- **Renewal gap, under investigation:** the phone's authority issued no
+  certificate for it from 19:03 to 23:15 UTC on 7 November, although Connect was
+  on screen and serving reads for part of that time (about 23:03 to 23:08 UTC).
+  Before and after, renewals came every 4 minutes. A close and return did not
+  reproduce it: renewals continued every 241 s on screen and across the return,
+  in two separate processes. Builds before this change also had gaps of 150 to
+  155 minutes, with the app's state at the time unknown. The app keeps no log of
+  its own, so the cause could not be recovered; it remains open.
+- **During reopening** (about 25 s) actions can still show errors.
+- **Background CPU:** measured lower once the network is closed (debug build);
+  unchanged during the two-minute grace period, where blocked relay probes still
+  cost about 16 to 30% of a core. No release figure exists.
+
+Not yet run on the phone: saving and restoring a recovery file, and removing a
+device; both wait for the owner to start them. Public Create in the normal app
+stays off.
+
 ## Independent phone hosting requirement — 5 November 2026
 
 The user requires **both** a genuine authority hosted by the Android phone and

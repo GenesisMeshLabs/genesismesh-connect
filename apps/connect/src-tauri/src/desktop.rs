@@ -35,12 +35,15 @@ impl DesktopState {
             .lock()
             .map_err(|_| "Device display unavailable")?;
         if let Ok(slot) = self.slot.try_lock() {
-            display.device = slot
+            let device = slot
                 .controller
                 .as_ref()
                 .map(|c| c.status().map(Arc::new))
                 .transpose()
                 .map_err(message)?;
+            if device.is_some() || !phone_network_closed() {
+                display.device = device;
+            }
             display.problem = slot.problem.clone();
             display.updating = false;
         } else {
@@ -161,6 +164,19 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     Ok(())
+}
+
+/// A phone that closed its network off screen keeps showing its devices and items
+/// until it has reopened.
+fn phone_network_closed() -> bool {
+    #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
+    {
+        crate::phone_lifecycle::LIFECYCLE.is_closed()
+    }
+    #[cfg(not(all(target_os = "android", feature = "android-owner-qualification")))]
+    {
+        false
+    }
 }
 
 fn message(error: impl std::fmt::Display) -> String {
