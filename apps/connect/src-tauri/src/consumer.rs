@@ -119,7 +119,14 @@ pub async fn home_status(
         leaving: DeviceController::leaving(&desktop.profile),
         owner: owner.runtime.is_some(),
         configured,
-        opening: crate::desktop::phone_network_closed(),
+        // Opening, or open but its device not shown yet: either way not a first
+        // start, so the screen must not offer Welcome.
+        opening: crate::desktop::phone_network_closed()
+            || (cfg!(all(
+                target_os = "android",
+                feature = "android-owner-qualification"
+            )) && owner.runtime.is_some()
+                && device.is_none()),
         devices: device
             .as_ref()
             .map(|d| {
