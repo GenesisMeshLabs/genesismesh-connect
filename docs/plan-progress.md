@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #54), and this change:
+Merged since 7 November (#37 to #55), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -195,7 +195,7 @@ Merged since 7 November (#37 to #54), and this change:
   keeps the tab and shows the list. A known device reconnecting at launch no
   longer jumps to Shared. Checked in the browser with the native layer stubbed;
   not yet on the phone.
-- **Restore says what the file cannot bring back** (this change). Restoring
+- **Restore says what the file cannot bring back** (#55). Restoring
   returns when the recovery file was saved; the restore screen and the result
   say the network is back as it was then, that devices which joined later must
   join again, that devices removed later may have access again, and that the old
@@ -204,7 +204,7 @@ Merged since 7 November (#37 to #54), and this change:
   as a rollback ("CRL rollback"), safely but with no way forward. A device that
   refuses now says why. Fixing it, and fencing an old copy from a restored one,
   need decisions: see the [restore proposal](restore-proposal.md).
-- **Several files at once** (this change). Sharing files lets the person choose
+- **Several files at once** (#55). Sharing files lets the person choose
   several plain files, up to 100, not only several photos and videos. Both
   devices see the batch named after its first file, as "report.pdf and 2 more".
 
