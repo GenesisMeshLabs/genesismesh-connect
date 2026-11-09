@@ -212,6 +212,11 @@ Merged since 7 November (#37 to #55), and this change:
   the screen names what the other device saved them as; if one fails or the
   person cancels, it says which arrived and that the rest were not sent, and
   shows the cause on its own. Each file is sent exactly as before.
+- **A removed device is told so** (this change). A device removed from the
+  network hears "Certificate revoked" from the network computer within a
+  second, when it checks in and when it starts again, and the app now says it
+  was removed and needs a new invitation instead of an error. A new real-node
+  test checks this and that the devices that stay are unaffected.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
@@ -275,6 +280,10 @@ Known limits and open findings:
   the file was saved refuse the restored network; nothing fences an old copy
   from a restored one. Options in the [restore proposal](restore-proposal.md)
   wait for a decision.
+- **Removing the last device.** When the device removed was the only one, the
+  network computer stops listening until another device pairs, so the removed
+  device cannot hear that it was removed; it waits two minutes and is told to
+  keep Connect open on the network computer. Removal itself is unaffected.
 - **12-hour relay stall:** seen once, unexplained, not reproduced by a 5-minute
   pause or by 5 h 42 min on screen.
 - **Certificate renewal every 4 minutes.** The documented freshness policy

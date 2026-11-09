@@ -156,6 +156,8 @@ export function friendlyProblem(value: string) {
   if (/device_unlock_required/i.test(value)) return "Unlock your phone, then try again.";
   // A network restored from an older recovery file is behind what this device saw.
   if (/CRL rollback|Key history rollback/i.test(value)) return "Your network was restored from a recovery file older than what this device has seen, so this device does not trust it. Ask the network owner; this device may need to leave and join again with a new invitation.";
+  // The network computer removed this device: nothing to wait for or retry.
+  if (/Certificate revoked/i.test(value)) return "This device was removed from your network. To use it again, ask the network owner for a new invitation, then leave and join again.";
   if (/owner declined/i.test(value)) return "The network owner didn’t allow this device. Ask them, then scan a new invitation.";
   if (/join link has expired/i.test(value)) return "This invitation has expired. Ask the network owner for a new invitation.";
   if (/Choose a Genesis Mesh join link|Invalid join link|Join link is too long/i.test(value)) return "This invitation isn’t valid. Scan the QR code again or ask the network owner for a new invitation.";
