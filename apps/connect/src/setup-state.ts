@@ -43,3 +43,15 @@ export function recoveryStatus(savedAt: string | null, now = new Date()): string
   const when = days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
   return `Last saved ${when}. Save a new one after big changes`;
 }
+
+/**
+ * After a restore: the network is back as it was when the file was saved.
+ * Later changes are not in it, and the old device must not run it again.
+ */
+export function restoredMessage(savedAt: string, locale?: string): string {
+  const saved = new Date(savedAt);
+  const when = Number.isNaN(saved.getTime())
+    ? "when its recovery file was saved"
+    : `as it was on ${saved.toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" })}`;
+  return `Your network is back, ${when}. Changes after that are not in the file: devices that joined later must join again, and devices you removed later may have access again, so check Devices now. Don't run this network on the old device again.`;
+}

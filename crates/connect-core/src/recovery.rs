@@ -261,6 +261,9 @@ pub struct Restored {
     pub owner: OwnerRuntime,
     pub info: OwnerInfo,
     pub device: DeviceController,
+    /// When the recovery file was saved. Nothing after it is in the file: the
+    /// network is back as it was then.
+    pub saved_at: String,
 }
 
 /// A temporary sibling of `path`, removed by the caller.
@@ -363,6 +366,7 @@ pub fn restore(
             owner: owner.take().context("Missing restored network")?,
             info,
             device,
+            saved_at: contents.created_at.clone(),
         })
     })();
     match outcome {

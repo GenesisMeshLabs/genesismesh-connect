@@ -319,10 +319,12 @@ fn restore(paths: &Paths, file: &str) -> Result<()> {
         paths.start(dir)
     })?;
     println!(
-        "Network \"{}\" is back on this server. Devices reconnect when they next reach it. \
-         Retire the computer the recovery file came from, and delete the copy of the file \
-         you placed on this server.",
-        restored.info.pin.network_name
+        "Network \"{}\" is back on this server, as it was when its recovery file was saved \
+         ({}). Changes after that are not in it: devices that joined later must join again, \
+         and devices removed after it may have access again until you remove them again. \
+         Devices reconnect when they next reach it. Retire the computer the recovery file \
+         came from, and delete the copy of the file you placed on this server.",
+        restored.info.pin.network_name, restored.saved_at
     );
     Ok(())
 }

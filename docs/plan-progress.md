@@ -189,6 +189,15 @@ Merged since 7 November (#37 to #53), and this change:
   keeps the tab and shows the list. A known device reconnecting at launch no
   longer jumps to Shared. Checked in the browser with the native layer stubbed;
   not yet on the phone.
+- **Restore says what the file cannot bring back** (this change). Restoring
+  returns when the recovery file was saved; the restore screen and the result
+  say the network is back as it was then, that devices which joined later must
+  join again, that devices removed later may have access again, and that the old
+  device must not run the network again. Testing this found a defect: devices
+  that saw a removal made after the file was saved refuse the restored network
+  as a rollback ("CRL rollback"), safely but with no way forward. A device that
+  refuses now says why. Fixing it, and fencing an old copy from a restored one,
+  need decisions: see the [restore proposal](restore-proposal.md).
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
@@ -248,6 +257,10 @@ Known limits and open findings:
   a folder, not yet every action. Recovery waits for the device's next
   30-second trust refresh. A starting agent or test device waits the same two
   minutes; an MCP client whose own request timeout is shorter gives up first.
+- **Restore from an older recovery file.** Devices that saw a removal made after
+  the file was saved refuse the restored network; nothing fences an old copy
+  from a restored one. Options in the [restore proposal](restore-proposal.md)
+  wait for a decision.
 - **12-hour relay stall:** seen once, unexplained, not reproduced by a 5-minute
   pause or by 5 h 42 min on screen.
 - **Certificate renewal every 4 minutes.** The documented freshness policy
