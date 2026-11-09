@@ -8,6 +8,11 @@ and `Connect qualification`. The latter can also be started manually. It checks:
 - Released pinned Python authority tests; disposable Linux native-key lifecycle;
   real core/QUIC, access and owner-control checks; standalone authority/recovery;
   Linux desktop and headless-host compilation.
+- Journeys on a real node, in their own job: the app's own command tests (waits,
+  downloads, sends, sharing, lifecycle), then the headless node with the
+  packaged authority while devices pair, share a folder, send into an inbox,
+  resume transfers, restart, and read through a network computer restart. They
+  run one at a time, about 13 minutes.
 - An arm64 Android debug APK built with the existing initialization/branding/
   permission patches, followed by signature verification, 16 KiB ELF/RELRO/ZIP
   alignment refusal checks and SHA-256 inventory.
