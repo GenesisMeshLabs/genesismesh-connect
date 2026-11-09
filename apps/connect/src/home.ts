@@ -633,15 +633,30 @@ el("approve-device").addEventListener(
   "click",
   () =>
     void run(el<HTMLButtonElement>("approve-device"), async () => {
-      const done = explainWait(null, finishingTitle(el("approval-name").textContent), finishingDetail);
+      const name = el("approval-name").textContent ?? "";
+      const done = explainWait(null, finishingTitle(name), finishingDetail);
       try {
         await invoke("pair_approve", { id: approval });
       } finally {
         done();
       }
       message("Device approved and securely paired.");
+      // The first useful action: share something with the new device.
+      await refresh();
+      const joined = current?.devices.filter((device) => device.name === name).slice(-1)[0];
+      if (joined && current?.can_share) offerFirstShare(joined.id, name);
     }),
 );
+/** After a device joins, offer to share something with it right away. */
+function offerFirstShare(node: string, name: string) {
+  text("next-step-title", `${name} joined. Share something with it now?`);
+  visible("next-step", true);
+  el("next-step-share").onclick = () => {
+    visible("next-step", false);
+    sharing.shareWith(node, () => message(`Shared with ${name}.`));
+  };
+}
+el("next-step-later").addEventListener("click", () => visible("next-step", false));
 el("reject-device").addEventListener(
   "click",
   () =>

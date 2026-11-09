@@ -167,6 +167,11 @@ Merged since 7 November (#37 to #56), and this change:
   stops the read at once; the read waits for its host instead. A starting agent
   or test device now waits as long as a running one, two minutes, so a restart
   like those measured no longer fails it.
+- **A first useful action after joining** (this change). Once the owner
+  approves a device, a card says it joined and that nothing is shared with it
+  yet, and offers Share with it, which opens the share sheet with that device
+  chosen, or Later. The Devices list now keeps its last row and menu clear of
+  the floating Add device button.
 - **Requests survive a restart** (this change). Requests from devices and agents
   waiting for the owner were kept only in the app's memory, so Android ending
   Connect in the background lost them. They are now kept in a file in the
