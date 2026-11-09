@@ -648,46 +648,45 @@ async fn host_read_limit_is_16_a_window_says_busy_and_leaves_refusals_final() ->
         expected_sha256: digest,
     };
     let ticket = host_endpoint.ticket()?;
-    // A fresh share's window: 16 reads release their bytes, the next does not.
-    let mut read = 0;
-    let refused = loop {
-        match client_endpoint
+    // A fresh share's window: 16 reads release their bytes.
+    let window = std::time::Instant::now();
+    for _ in 0..16 {
+        let report = client_endpoint
             .read_file(&ticket, request("allowed", "sample.txt", None))
-            .await
-        {
-            Ok(report) => {
-                assert_eq!(report.bytes, 30);
-                read += 1;
-                assert!(read <= 16, "The host released more than its limit");
-            }
-            Err(error) => break error,
+            .await?;
+        assert_eq!(report.bytes, 30);
+    }
+    assert_eq!(share.released_bytes(), 16 * 30);
+    // The next is told busy, not refused, and asks again until the next window
+    // serves it. Both sides renew their trust meanwhile, as a running device does.
+    let asked = std::time::Instant::now();
+    let (waited, renewed) = tokio::join!(
+        client_endpoint.read_file(&ticket, request("allowed", "sample.txt", None)),
+        async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            host_endpoint.refresh(
+                host.session_identity()?,
+                authority.refresh(&mut host_store).await?,
+            )?;
+            client_endpoint.refresh(
+                client.session_identity()?,
+                authority.refresh(&mut client_store).await?,
+            )?;
+            Ok::<_, anyhow::Error>(())
         }
-    };
-    assert_eq!(read, 16, "Every read within the limit is served");
+    );
+    renewed?;
+    assert_eq!(waited?.bytes, 30);
     assert!(
-        refused.to_string().contains("busy"),
-        "Over the limit is busy, not a refusal: {refused:#}"
+        window.elapsed() >= Duration::from_secs(60),
+        "Served within the full window: {:?}",
+        window.elapsed()
     );
-    let released = share.released_bytes();
-    assert_eq!(released, 16 * 30);
-    // The next window serves again.
-    tokio::time::sleep(Duration::from_secs(61)).await;
-    // Both sides renew their trust meanwhile, as a running device does.
-    host_endpoint.refresh(
-        host.session_identity()?,
-        authority.refresh(&mut host_store).await?,
-    )?;
-    client_endpoint.refresh(
-        client.session_identity()?,
-        authority.refresh(&mut client_store).await?,
-    )?;
-    assert_eq!(
-        client_endpoint
-            .read_file(&ticket, request("allowed", "sample.txt", None))
-            .await?
-            .bytes,
-        30
+    eprintln!(
+        "The 17th read waited {:?} for the next window",
+        asked.elapsed()
     );
+    assert_eq!(share.released_bytes(), 17 * 30, "16 a window, never more");
     // A policy refusal stays final: answered at once, never asked again.
     let released = share.released_bytes();
     process.command(json!({"op":"deny_reads","peer_node":client.public_key()}))?;
@@ -834,24 +833,31 @@ async fn protected_read_binds_snapshot_and_peer_and_refuses_policy_revocation_an
             }) => result.context("Read did not reach authorization")?,
         }
         host_endpoint.suspend();
-        // The retry budget: 15 seconds of waits and 5 attempts of at most 10
-        // seconds to connect. The read must fail within it, and nothing is
-        // released (checked below).
+        // The retry budget: no attempt starts after two minutes, and the last
+        // takes at most 10 seconds to connect and 20 to read. The read must
+        // fail within it, and nothing is released (checked below).
         assert!(
-            tokio::time::timeout(Duration::from_secs(65), &mut reading)
+            tokio::time::timeout(Duration::from_secs(150), &mut reading)
                 .await?
                 .is_err()
         );
     }
     process.command(json!({"op":"resume_reads"}))?;
     assert_eq!(share.released_bytes(), before);
+    // Both sides renew after the interruption, as running devices do: the
+    // client's snapshot can age out while its read waits.
     host_endpoint.refresh(
         host.session_identity()?,
         authority.refresh(&mut host_store).await?,
     )?;
+    client_endpoint.refresh(
+        client.session_identity()?,
+        authority.refresh(&mut client_store).await?,
+    )?;
     let recovered = client_endpoint
         .read_file(&ticket, request("allowed", "sample.txt", None))
-        .await?;
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:#}"))?;
     assert_eq!(recovered.bytes, 30);
     let before = share.released_bytes();
     std::fs::write(root.join("sample.txt"), b"changed file")?;

@@ -667,39 +667,153 @@ async fn incomplete_authentication_has_a_deadline_and_never_echoes() -> Result<(
     Ok(())
 }
 
-#[tokio::test]
-async fn a_busy_host_is_asked_again_and_a_refusal_is_final() {
-    let waits = [Duration::from_millis(1); 3];
-    let busy = || anyhow::Error::new(sharing::Busy("Not yet"));
-    let calls = std::cell::Cell::new(0);
-    let answered = asking_again(&waits, || {
-        calls.set(calls.get() + 1);
-        let reply = if calls.get() < 3 { Err(busy()) } else { Ok(7) };
+/// Seconds since `start` at which each attempt began, on tokio's paused clock.
+fn attempts_at(start: tokio::time::Instant, calls: &std::cell::RefCell<Vec<u64>>) -> u64 {
+    let at = start.elapsed().as_secs();
+    calls.borrow_mut().push(at);
+    at
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_running_device_waits_out_a_restart_as_long_as_those_measured() {
+    // The phone that runs the network was out of reach for 42 to 88 s after a
+    // restart. A host that cannot be reached until then is asked again, with
+    // waits of 1, 2, 4 and then 8 s, and the read answers once it is back.
+    for outage in [42, 62, 88] {
+        let start = tokio::time::Instant::now();
+        let calls = std::cell::RefCell::new(Vec::new());
+        let answered = asking_again(ASK_AGAIN_FOR, || {
+            let at = attempts_at(start, &calls);
+            let reply = if at < outage {
+                Err(unreached(anyhow::anyhow!("no route to the device")))
+            } else {
+                Ok(at)
+            };
+            async move { reply }
+        })
+        .await;
+        let at = answered.unwrap();
+        assert!(
+            at >= outage && at < outage + 8,
+            "{outage} s outage answered at {at} s"
+        );
+        assert_eq!(calls.borrow()[..5], [0, 1, 3, 7, 15]);
+    }
+
+    // The same when each attempt takes the 10 s connection deadline to fail.
+    let start = tokio::time::Instant::now();
+    let calls = std::cell::RefCell::new(Vec::new());
+    let answered = asking_again(ASK_AGAIN_FOR, || {
+        let at = attempts_at(start, &calls);
+        async move {
+            if at < 88 {
+                tokio::time::sleep(DEADLINE).await;
+                Err(unreached(anyhow::anyhow!("Read connection timed out")))
+            } else {
+                Ok(at)
+            }
+        }
+    })
+    .await;
+    assert_eq!(answered.unwrap(), 91);
+    assert_eq!(*calls.borrow(), [0, 11, 23, 37, 55, 73, 91]);
+
+    // A host that answers busy while it cannot ask its network computer.
+    let start = tokio::time::Instant::now();
+    let answered = asking_again(ASK_AGAIN_FOR, || {
+        let reply = if start.elapsed() < Duration::from_secs(70) {
+            Err(anyhow::Error::new(sharing::Busy("Not yet")))
+        } else {
+            Ok(())
+        };
         async move { reply }
     })
     .await;
-    assert_eq!(answered.unwrap(), 7);
-    assert_eq!(calls.get(), 3);
+    assert!(answered.is_ok());
+}
 
-    calls.set(0);
-    let given_up = asking_again(&waits, || {
-        calls.set(calls.get() + 1);
-        let reply: Result<()> = Err(busy());
+#[tokio::test(start_paused = true)]
+async fn asking_again_stops_after_two_minutes_with_the_last_answer() {
+    // Fast failures: attempts at 0, 1, 3, 7 and every 8 s after, the last
+    // starting before the two minutes are up.
+    let start = tokio::time::Instant::now();
+    let calls = std::cell::RefCell::new(Vec::new());
+    let given_up: Result<()> = asking_again(ASK_AGAIN_FOR, || {
+        attempts_at(start, &calls);
+        let reply = Err(unreached(anyhow::anyhow!("no route to the device")));
         async move { reply }
+    })
+    .await;
+    let error = given_up.unwrap_err();
+    assert!(error.is::<sharing::Busy>());
+    assert!(error.to_string().contains("Keep Connect open"), "{error:#}");
+    let mut expected = vec![0, 1, 3];
+    expected.extend((7..120).step_by(8));
+    assert_eq!(*calls.borrow(), expected);
+    assert_eq!(start.elapsed(), Duration::from_secs(119));
+
+    // Slow failures stop within the budget too, attempt time included.
+    let start = tokio::time::Instant::now();
+    let calls = std::cell::RefCell::new(Vec::new());
+    let given_up: Result<()> = asking_again(ASK_AGAIN_FOR, || {
+        attempts_at(start, &calls);
+        async move {
+            tokio::time::sleep(DEADLINE).await;
+            Err(unreached(anyhow::anyhow!("Read connection timed out")))
+        }
     })
     .await;
     assert!(given_up.unwrap_err().is::<sharing::Busy>());
-    assert_eq!(calls.get(), 4);
+    assert_eq!(*calls.borrow(), [0, 11, 23, 37, 55, 73, 91, 109]);
+    assert!(start.elapsed() <= ASK_AGAIN_FOR);
 
-    calls.set(0);
-    let refused = asking_again(&waits, || {
-        calls.set(calls.get() + 1);
-        let reply: Result<()> = Err(anyhow::anyhow!("Read unavailable or denied"));
+    // This device's own connection still suspended when time runs out: said
+    // plainly as busy, with the last answer kept underneath.
+    let given_up: Result<()> = asking_again(ASK_AGAIN_FOR, || async {
+        Err(anyhow::anyhow!("Connection is suspended"))
+    })
+    .await;
+    let error = given_up.unwrap_err();
+    assert!(error.is::<sharing::Busy>());
+    assert!(
+        error.to_string().starts_with("No answer in time"),
+        "{error:#}"
+    );
+    assert!(format!("{error:#}").ends_with("Connection is suspended"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refusal_is_final_even_during_an_outage() {
+    let start = tokio::time::Instant::now();
+    let calls = std::cell::RefCell::new(Vec::new());
+    let refused: Result<()> = asking_again(ASK_AGAIN_FOR, || {
+        let at = attempts_at(start, &calls);
+        let reply = if at < 3 {
+            Err(unreached(anyhow::anyhow!("no route to the device")))
+        } else {
+            Err(anyhow::anyhow!("Read unavailable or denied"))
+        };
+        async move { reply }
+    })
+    .await;
+    assert_eq!(
+        refused.unwrap_err().to_string(),
+        "Read unavailable or denied"
+    );
+    assert_eq!(*calls.borrow(), [0, 1, 3], "A refusal is never asked again");
+
+    let calls = std::cell::RefCell::new(Vec::new());
+    let start = tokio::time::Instant::now();
+    let refused: Result<()> = asking_again(ASK_AGAIN_FOR, || {
+        attempts_at(start, &calls);
+        let reply = Err(anyhow::anyhow!(
+            "This folder is unavailable or access was not allowed"
+        ));
         async move { reply }
     })
     .await;
     assert!(refused.is_err());
-    assert_eq!(calls.get(), 1, "A refusal is never asked again");
+    assert_eq!(*calls.borrow(), [0]);
 }
 
 #[test]

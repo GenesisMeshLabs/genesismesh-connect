@@ -37,14 +37,20 @@ pub use trust::{TrustPolicy, TrustSnapshot};
 use wire::{ALPN, Role, authenticate, read_frame, write_frame};
 
 const DEADLINE: Duration = Duration::from_secs(10);
-/// How long a read waits for a host that cannot answer yet, as just after it
-/// restarts: about 15 seconds, then the person is told.
-const BUSY_WAITS: [Duration; 4] = [
-    Duration::from_secs(1),
-    Duration::from_secs(2),
-    Duration::from_secs(4),
-    Duration::from_secs(8),
-];
+/// How long a running device keeps asking a host that cannot answer yet, as
+/// while the phone that runs the network restarts. Restarts measured on the
+/// phone kept it out of reach for 42 to 88 seconds, so two minutes, then the
+/// person is told. No attempt starts after that; the last one can still take its
+/// own deadline, 10 s to connect and 20 s to read.
+const ASK_AGAIN_FOR: Duration = Duration::from_secs(120);
+/// The first wait between attempts; it doubles up to `LONGEST_WAIT`.
+const FIRST_WAIT: Duration = Duration::from_secs(1);
+const LONGEST_WAIT: Duration = Duration::from_secs(8);
+/// Said when asking again ran out of time on an answer that was not yet busy,
+/// such as this device's own connection still suspended after an outage.
+const NO_ANSWER_IN_TIME: sharing::Busy = sharing::Busy(
+    "No answer in time. Keep Connect open on the other device and on the one that runs your network, then try again.",
+);
 /// A host that cannot be reached may be coming back, as after a restart. One
 /// that answered without the protocol asked for shares nothing here: final.
 fn unreached(error: anyhow::Error) -> anyhow::Error {
@@ -69,19 +75,32 @@ fn clears_by_itself(error: &anyhow::Error) -> bool {
             || text.contains("closed by peer: session ended")
     }
 }
-/// Asks again, after each wait, while the answer may clear by itself. A read
-/// changes nothing, and any other outcome, a refusal above all, is final.
+/// Asks again while the answer may clear by itself, waiting 1, 2, 4 and then 8
+/// seconds between attempts, until `budget` has passed. A read changes nothing,
+/// and any other outcome, a refusal above all, is final at once. When the budget
+/// runs out, the last answer is reported, as busy when it was not already.
 async fn asking_again<T, A: std::future::Future<Output = Result<T>>>(
-    waits: &[Duration],
+    budget: Duration,
     mut attempt: impl FnMut() -> A,
 ) -> Result<T> {
-    for wait in waits {
+    let started = tokio::time::Instant::now();
+    let mut wait = FIRST_WAIT;
+    loop {
         match attempt().await {
-            Err(error) if clears_by_itself(&error) => tokio::time::sleep(*wait).await,
+            Err(error) if clears_by_itself(&error) => {
+                if started.elapsed() + wait >= budget {
+                    return Err(if error.is::<sharing::Busy>() {
+                        error
+                    } else {
+                        error.context(NO_ANSWER_IN_TIME)
+                    });
+                }
+                tokio::time::sleep(wait).await;
+                wait = (wait * 2).min(LONGEST_WAIT);
+            }
             outcome => return outcome,
         }
     }
-    attempt().await
 }
 const MAX_MESSAGE: usize = 1024;
 const MAX_CONNECTIONS: usize = 8;
@@ -568,7 +587,7 @@ impl SessionEndpoint {
         ticket: &str,
         request: sharing::ReadRequest,
     ) -> Result<sharing::ReadReport> {
-        asking_again(&BUSY_WAITS, || {
+        asking_again(ASK_AGAIN_FOR, || {
             self.read_file_once(node, ticket, request.clone())
         })
         .await
@@ -624,7 +643,7 @@ impl SessionEndpoint {
         ticket: &str,
         after: Option<String>,
     ) -> Result<sharing::listing::FilePage> {
-        asking_again(&BUSY_WAITS, || {
+        asking_again(ASK_AGAIN_FOR, || {
             self.list_files_once(node, ticket, after.clone())
         })
         .await
@@ -676,7 +695,7 @@ impl SessionEndpoint {
         ticket: &str,
         after: Option<String>,
     ) -> Result<sharing::catalog::Page> {
-        asking_again(&BUSY_WAITS, || {
+        asking_again(ASK_AGAIN_FOR, || {
             self.catalog_once(node, ticket, after.clone())
         })
         .await
@@ -735,7 +754,7 @@ impl SessionEndpoint {
         directory: Vec<String>,
         collection_id: Option<String>,
     ) -> Result<sharing::browse::Page> {
-        asking_again(&BUSY_WAITS, || {
+        asking_again(ASK_AGAIN_FOR, || {
             self.browse_once(
                 node,
                 ticket,

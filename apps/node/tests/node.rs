@@ -684,6 +684,168 @@ fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
     outcome
 }
 
+/// One read from `host` by a running device, as the app makes it: the read runs
+/// on its own while both devices refresh trust every 30 seconds in the
+/// background. Returns the outcome and how long it took.
+fn read_while_refreshing(
+    runtime: &tokio::runtime::Runtime,
+    reader: &mut DeviceController,
+    host: &mut DeviceController,
+    (node, ticket): (&str, &str),
+    collection_id: &str,
+    file_name: &str,
+) -> Result<(Result<connect_core::session::sharing::ReadReport>, Duration)> {
+    use connect_core::session::sharing::ReadRequest;
+    let session = reader.session()?;
+    let request = ReadRequest {
+        request_id: request_id()?,
+        collection_id: collection_id.into(),
+        file_name: file_name.into(),
+        expected_sha256: None,
+    };
+    let (node, ticket) = (node.to_owned(), ticket.to_owned());
+    // Timed inside its own task: a refresh blocked on a down network computer
+    // must not add to it.
+    let mut reading = runtime.spawn(async move {
+        let started = Instant::now();
+        let outcome = session.read_file_from(Some(&node), &ticket, request).await;
+        (outcome, started.elapsed())
+    });
+    let outcome = runtime.block_on(async {
+        let mut refresh = tokio::time::interval(Duration::from_secs(30));
+        refresh.tick().await;
+        loop {
+            tokio::select! {
+                outcome = &mut reading => break outcome,
+                _ = refresh.tick() => {
+                    // Fails while the network computer is down, as in the app.
+                    let _ = reader.refresh().await;
+                    let _ = host.refresh().await;
+                }
+            }
+        }
+    })?;
+    Ok(outcome)
+}
+
+#[test]
+#[ignore = "Requires the packaged, standalone owner runtime"]
+fn a_running_device_reads_through_a_network_computer_restart() -> Result<()> {
+    let _one = one_at_a_time();
+    let directory = tempfile::tempdir()?;
+    devices_sealed();
+    let (store, credentials) = sealed(directory.path(), "server")?;
+    let server = Server {
+        state: directory.path().join("server"),
+        store,
+        credentials,
+    };
+    let init = server.command(&["init", "--name", "Home"])?.output()?;
+    ensure!(
+        init.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let runtime = tokio::runtime::Runtime::new()?;
+    let child = server.run()?;
+    let joined = (|| {
+        server.control(json!({"op":"connection","setting":"local_network"}))?;
+        let mut pc = join(&server, &runtime, &directory.path().join("pc"), "Home PC")?;
+        let mut phone = join(&server, &runtime, &directory.path().join("phone"), "Phone")?;
+        runtime.block_on(pc.check_network())?;
+        runtime.block_on(phone.check_network())?;
+        let phone_node = phone.status()?.node_public_key;
+        let photos = directory.path().join("photos");
+        std::fs::create_dir(&photos)?;
+        std::fs::write(photos.join("beach.txt"), b"Sand and sea")?;
+        let shared = runtime.block_on(pc.share_space(
+            None,
+            photos,
+            "Family photos".into(),
+            vec![phone_node],
+            SpaceKind::Folder,
+        ))?;
+        runtime.block_on(phone.check_network())?;
+        Ok::<_, anyhow::Error>((pc, phone, shared.collection_id))
+    })();
+    let (mut pc, mut phone, space) = match joined {
+        Ok(joined) => joined,
+        Err(error) => {
+            stop(child)?;
+            return Err(error);
+        }
+    };
+    let pc_node = pc.status()?.node_public_key;
+    let pc_ticket = phone
+        .status()?
+        .members
+        .into_iter()
+        .find(|m| m.node == pc_node)
+        .context("The phone does not know the PC")?
+        .ticket;
+    let host = (pc_node.as_str(), pc_ticket.as_str());
+    let (first, _) =
+        read_while_refreshing(&runtime, &mut phone, &mut pc, host, &space, "beach.txt")?;
+    assert_eq!(first?.text.as_deref(), Some("Sand and sea"));
+
+    // The network computer stops and is back 70 s later, inside the 42 to 88 s
+    // the phone that runs the network was measured out of reach. A read asked
+    // just after it stopped waits for it and answers.
+    stop(child)?;
+    const DOWN: Duration = Duration::from_secs(70);
+    let (read, child) = std::thread::scope(|scope| {
+        let restart = scope.spawn(|| {
+            std::thread::sleep(DOWN);
+            server.run()
+        });
+        let read = read_while_refreshing(&runtime, &mut phone, &mut pc, host, &space, "beach.txt");
+        (read, restart.join().expect("restart thread"))
+    });
+    let child = child?;
+    let outcome = (|| {
+        let (read, took) = read?;
+        let report = read?;
+        assert_eq!(report.text.as_deref(), Some("Sand and sea"));
+        assert!(
+            took >= DOWN,
+            "Answered before the network computer ran: {took:?}"
+        );
+        assert!(took < Duration::from_secs(120), "Took {took:?}");
+        eprintln!(
+            "A read asked as the network computer stopped answered after {took:?}, {DOWN:?} of it with the network computer down, receipt {}",
+            report.receipt_id
+        );
+        Ok::<_, anyhow::Error>(())
+    })();
+    stop(child)?;
+    outcome?;
+
+    // With the network computer gone for good, the read stops asking after
+    // about two minutes and says busy, not refused.
+    let (read, took) =
+        read_while_refreshing(&runtime, &mut phone, &mut pc, host, &space, "beach.txt")?;
+    let Err(error) = read else {
+        anyhow::bail!("Read with no network computer running");
+    };
+    let text = format!("{error:#}");
+    assert!(
+        took >= Duration::from_secs(100) && took <= Duration::from_secs(150),
+        "Gave up after {took:?}: {text}"
+    );
+    assert!(
+        !text.contains("not allowed") && !text.contains("denied"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Try again shortly") || text.contains("Keep Connect open"),
+        "{text}"
+    );
+    eprintln!("With no network computer the read gave up after {took:?}: {text}");
+    runtime.block_on(pc.stop());
+    runtime.block_on(phone.stop());
+    Ok(())
+}
+
 /// Send `bytes` as `name` into `host`'s inbox, window by window, declaring
 /// `declared` as the whole file's SHA-256. Returns the name it was saved as.
 fn send_file(
