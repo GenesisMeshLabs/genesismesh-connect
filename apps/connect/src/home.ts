@@ -12,6 +12,7 @@ import QRCode from "qrcode";
 import { el, input, showPage } from "./ui";
 import { fillIcons, icon, type IconName } from "./icons";
 import { setupAdvanced } from "./advanced";
+import { availability, recoveryReminder, recoveryStatus, RECOVERY_SAVED_KEY } from "./setup-state";
 import { EXPLAIN_AFTER_MS, STOPPED, stoppedWaiting, waitDetail, waitTitle } from "./waiting";
 import {
   primaryScreen,
@@ -256,6 +257,9 @@ function render(status: HomeStatus) {
   );
   renderConnection(status);
   visible("recovery-card", status.owner && status.configured);
+  const saved = recoverySavedAt();
+  visible("recovery-reminder", recoveryReminder(status.owner, status.configured, saved));
+  text("recovery-detail", recoveryStatus(saved));
   visible("add-device-button", status.owner && status.devices.length < 32);
   // Hidden until this build can confirm administrator changes on the device.
   visible("host-admin-card",status.owner&&status.administration===true);
@@ -460,20 +464,43 @@ el("restore-form").addEventListener("submit", (event) => {
     },
   );
 });
-el("create-recovery").addEventListener(
-  "click",
-  () =>
-    void run(el<HTMLButtonElement>("create-recovery"), async () => {
-      const key = await invoke<string | null>("recovery_create");
-      if (!key) return;
-      text("recovery-key", key);
-      el<HTMLDialogElement>("recovery-dialog").showModal();
-    }),
-);
+/** When this device last saved a recovery file, if it remembers. */
+function recoverySavedAt(): string | null {
+  try {
+    return localStorage.getItem(RECOVERY_SAVED_KEY);
+  } catch {
+    return null;
+  }
+}
+function saveRecovery(button: HTMLButtonElement) {
+  void run(button, async () => {
+    const key = await invoke<string | null>("recovery_create");
+    if (!key) return;
+    text("recovery-key", key);
+    el<HTMLDialogElement>("recovery-dialog").showModal();
+  });
+}
+el("create-recovery").addEventListener("click", () => saveRecovery(el<HTMLButtonElement>("create-recovery")));
+el("recovery-reminder-save").addEventListener("click", () => saveRecovery(el<HTMLButtonElement>("recovery-reminder-save")));
+el("recovery-offer-save").addEventListener("click", () => {
+  el<HTMLDialogElement>("recovery-offer").close();
+  saveRecovery(el<HTMLButtonElement>("recovery-reminder-save"));
+});
+el("recovery-offer-later").addEventListener("click", () => {
+  el<HTMLDialogElement>("recovery-offer").close();
+  message("You can save a recovery file any time from Devices or Settings.");
+});
 // The key is shown once, so only this button closes it.
 el("recovery-dialog").addEventListener("cancel", (event) => event.preventDefault());
 el("recovery-done").addEventListener("click", () => {
   text("recovery-key", "");
+  try {
+    localStorage.setItem(RECOVERY_SAVED_KEY, new Date().toISOString());
+  } catch {
+    // Without storage the reminder stays; the file itself was saved.
+  }
+  visible("recovery-reminder", false);
+  text("recovery-detail", recoveryStatus(recoverySavedAt()));
   el<HTMLDialogElement>("recovery-dialog").close();
   message("Keep the recovery file and its key in separate places.");
 });
@@ -524,6 +551,8 @@ el("create-form").addEventListener("submit", (event) => {
           : "Your network is ready. Add your phone to connect your devices.",
       );
       selectView("devices");
+      // Recovery is offered while it is fresh in mind; Later keeps a reminder.
+      el<HTMLDialogElement>("recovery-offer").showModal();
     },
   );
 });
@@ -1178,8 +1207,13 @@ function usePhoneSetupWording() {
     "Start on this phone";
   el("choose-create").querySelector("span:not(.choice-symbol)")!.textContent =
     "Your phone runs your network while Connect is open.";
-  el("create-screen").querySelector("p")!.textContent =
-    "Your phone runs the network while Connect is open on it. It asks for your screen lock once, to protect the network's main key.";
+  const where = availability("phone");
+  text("create-where", where.where);
+  text("create-always-on", where.alwaysOn);
+  text("create-protect", "It asks for your screen lock once, to protect the network's main key.");
+  visible("create-protect", true);
+  for (const id of ["recovery-reminder-text", "recovery-offer-text"])
+    text(id, el(id).textContent!.replace(/this device/g, "this phone"));
   document.querySelector('label[for="computer-name"]')!.textContent =
     "This phone's name";
   if (!localStorage.getItem("connect.friendly-name"))

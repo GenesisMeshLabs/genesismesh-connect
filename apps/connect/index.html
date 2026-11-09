@@ -32,6 +32,18 @@
           <span class="wait-text"><strong id="wait-title"></strong><span id="wait-detail"></span></span>
           <button id="wait-cancel" type="button" class="text-button">Cancel</button>
         </div>
+        <dialog id="recovery-offer" class="share-dialog" aria-labelledby="recovery-offer-title">
+          <div class="share-heading"><h2 id="recovery-offer-title">Your network is ready. Save a recovery file now?</h2></div>
+          <p id="recovery-offer-text">If this device is lost or reset, a recovery file and its key bring your network back on another device, with your devices still paired. Keep the file somewhere other than this device.</p>
+          <button id="recovery-offer-save">Save recovery file</button>
+          <button id="recovery-offer-later" class="secondary">Later</button>
+        </dialog>
+        <dialog id="recovery-dialog" class="share-dialog" aria-labelledby="recovery-title">
+          <div class="share-heading"><h2 id="recovery-title">Write this recovery key down now</h2></div>
+          <p>Connect cannot show it again. Keep the key apart from the file, for example on paper. Anyone with both can restore your network.</p>
+          <p id="recovery-key" class="recovery-key"></p>
+          <button id="recovery-done">I’ve written it down</button>
+        </dialog>
         <div id="disconnected-banner" class="home-message home-warning" role="status" hidden>
           <span data-icon="wifi-off"></span><span>Disconnected. Your network is saved.</span>
           <button id="reconnect-banner" class="text-button">Reconnect</button>
@@ -102,8 +114,14 @@
         <section id="create-screen" class="home-card setup-card" hidden>
           <button class="text-button" data-back>← Back</button>
           <h1>Create your network</h1>
-          <p>
-            Keep this computer on when you want to access your files.
+          <p id="create-where">
+            This computer runs the network. Your other devices reach it while
+            this computer is on and Connect is open on it.
+          </p>
+          <p id="create-protect" hidden></p>
+          <p id="create-always-on" class="home-muted">
+            Need it at any time, even with this computer off? A home server can
+            run it instead.
           </p>
           <form id="create-form">
             <label for="create-name">Network name</label
@@ -308,6 +326,11 @@
               <p class="home-muted">A request gives nothing by itself. Share something with the device, or decline.</p>
               <div id="asks-list"></div>
             </section>
+            <section id="recovery-reminder" class="home-card" hidden aria-labelledby="recovery-reminder-title">
+              <h2 id="recovery-reminder-title">Save a recovery file</h2>
+              <p id="recovery-reminder-text">If this device is lost or reset, a recovery file and its key bring your network back on another device, with your devices still paired.</p>
+              <button id="recovery-reminder-save">Save recovery file</button>
+            </section>
             <h2 class="section-label">This device</h2>
             <div class="list-group">
               <div class="list-row">
@@ -411,18 +434,12 @@
               <h2 id="recovery-label" class="section-label">Recovery</h2>
               <div class="list-group">
                 <div class="list-row">
-                  <button id="create-recovery" class="row-main"><span class="row-tile" data-icon="key-round"></span><span class="row-text"><strong>Create recovery file</strong><span>Brings this network back on another device</span></span></button
+                  <button id="create-recovery" class="row-main"><span class="row-tile" data-icon="key-round"></span><span class="row-text"><strong>Create recovery file</strong><span id="recovery-detail">Brings this network back on another device</span></span></button
                   ><span class="row-trailing" data-icon="chevron-right" data-size="20"></span>
                 </div>
               </div>
               <p class="group-note">Every device stays paired. Keep the file somewhere other than this device.</p>
             </section>
-            <dialog id="recovery-dialog" class="share-dialog" aria-labelledby="recovery-title">
-              <div class="share-heading"><h2 id="recovery-title">Write this recovery key down now</h2></div>
-              <p>Connect cannot show it again. Keep the key apart from the file, for example on paper. Anyone with both can restore your network.</p>
-              <p id="recovery-key" class="recovery-key"></p>
-              <button id="recovery-done">I’ve written it down</button>
-            </dialog>
             <section id="connection-card" aria-labelledby="connection-label" hidden>
               <h2 id="connection-label" class="section-label">Connection</h2>
               <div class="list-group group-body">
