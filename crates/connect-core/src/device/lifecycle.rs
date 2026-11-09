@@ -4,10 +4,11 @@ use anyhow::{Context, Result, ensure};
 use std::{fs, path::Path, time::Duration};
 use tokio::time::Instant;
 
-/// How long a starting device keeps asking for its network computer. A phone
-/// that runs the network was unreachable for 42 to 88 seconds while it
-/// restarted; each attempt is itself bounded by the bridge deadline.
-const REACH_FOR: Duration = Duration::from_secs(60);
+/// How long a starting device keeps asking for its network computer: as long as
+/// a running device waits for its host, two minutes, since a phone that runs the
+/// network was unreachable for 42 to 88 seconds while it restarted. Each attempt
+/// is itself bounded by the bridge deadline.
+const REACH_FOR: Duration = crate::session::ASK_AGAIN_FOR;
 
 /// Decides, after each failed attempt, whether to ask the network computer
 /// again: only when it could not be reached, after 1, 2, 4 and then 8 seconds,
@@ -89,7 +90,7 @@ impl DeviceController {
     /// Start the saved connection and check trust, for a device that has just
     /// started, such as an agent or a command. While the network computer cannot
     /// be reached, as when the phone that runs it restarts, it is asked again for
-    /// about a minute. Only reaching it is repeated: the failed step fetched
+    /// up to two minutes. Only reaching it is repeated: the failed step fetched
     /// trust, which changes nothing. Any answer, a refusal above all, is final.
     /// An app that refreshes on a timer does not need this.
     pub async fn connect_when_reachable(&mut self) -> Result<()> {
@@ -187,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn only_an_unreached_network_computer_is_asked_again_within_a_minute() {
+    fn only_an_unreached_network_computer_is_asked_again_within_two_minutes() {
         let start = Instant::now();
         let mut reaching = Reaching::new(REACH_FOR, start);
         let mut at = start;
@@ -203,7 +204,7 @@ mod tests {
                 Err(error) => break error,
             }
         };
-        assert_eq!(waits, [1, 2, 4]);
+        assert_eq!(waits, [1, 2, 4, 8, 8]);
         assert!(at.duration_since(start) < REACH_FOR + Duration::from_secs(15));
         assert!(last.is::<Unreached>());
         assert!(last.to_string().contains("Keep Connect open"));
@@ -217,7 +218,9 @@ mod tests {
             waits.push(wait.as_secs());
             at += wait;
         }
-        assert_eq!(waits, [1, 2, 4, 8, 8, 8, 8, 8, 8]);
+        let mut expected = vec![1, 2, 4];
+        expected.extend([8; 14]);
+        assert_eq!(waits, expected);
 
         // Any answer is final at once: a refusal, a document that fails
         // verification, or this device being disconnected.

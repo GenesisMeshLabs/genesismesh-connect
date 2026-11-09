@@ -258,7 +258,7 @@ fn a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart() -> Result
             waited >= Duration::from_secs(8),
             "Connected before the network computer ran: {waited:?}"
         );
-        assert!(waited < Duration::from_secs(75), "Waited {waited:?}");
+        assert!(waited < Duration::from_secs(135), "Waited {waited:?}");
         eprintln!(
             "A fresh device connected {waited:?} after starting, 8 s of it with the network computer down"
         );
@@ -275,7 +275,7 @@ fn a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart() -> Result
     stop(child)?;
     outcome?;
 
-    // With nothing to reach, it gives up within the minute, and says what to do.
+    // With nothing to reach, it gives up within two minutes, and says what to do.
     let mut alone = DeviceController::open(&profile)?;
     let started = Instant::now();
     let Err(error) = runtime.block_on(alone.connect_when_reachable()) else {
@@ -283,7 +283,7 @@ fn a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart() -> Result
     };
     let waited = started.elapsed();
     assert!(
-        waited >= Duration::from_secs(45) && waited < Duration::from_secs(80),
+        waited >= Duration::from_secs(100) && waited < Duration::from_secs(140),
         "Gave up after {waited:?}"
     );
     assert!(error.to_string().contains("Keep Connect open"), "{error:#}");

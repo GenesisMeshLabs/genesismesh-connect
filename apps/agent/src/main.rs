@@ -91,7 +91,9 @@ impl Agent {
     }
 
     /// Each tool call checks trust first. While the phone that runs the network
-    /// restarts, the call waits for it for about a minute instead of failing.
+    /// restarts, the call waits for it for up to two minutes, as long as a
+    /// running device waits for its host, instead of failing. An MCP client
+    /// whose own request timeout is shorter gives up first.
     async fn refreshed(&mut self) -> Result<()> {
         self.device.connect_when_reachable().await
     }

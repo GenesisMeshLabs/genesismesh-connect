@@ -24,6 +24,7 @@ mod picking;
 mod resources;
 mod sends;
 mod services;
+mod waits;
 mod workflow;
 
 #[derive(Default)]
@@ -178,6 +179,7 @@ pub fn run() {
             sends::cancel_send,
             consumer::stop_sharing,
             consumer::browse_files,
+            waits::cancel_wait,
             consumer::open_file,
             downloads::download_file,
             downloads::resume_download,

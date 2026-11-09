@@ -42,7 +42,7 @@ const DEADLINE: Duration = Duration::from_secs(10);
 /// phone kept it out of reach for 42 to 88 seconds, so two minutes, then the
 /// person is told. No attempt starts after that; the last one can still take its
 /// own deadline, 10 s to connect and 20 s to read.
-const ASK_AGAIN_FOR: Duration = Duration::from_secs(120);
+pub(crate) const ASK_AGAIN_FOR: Duration = Duration::from_secs(120);
 /// The first wait between attempts; it doubles up to `LONGEST_WAIT`.
 const FIRST_WAIT: Duration = Duration::from_secs(1);
 const LONGEST_WAIT: Duration = Duration::from_secs(8);

@@ -34,6 +34,7 @@ const NEVER_WAIT: &[&str] = &[
     "pair_cancel",
     "cancel_send",
     "cancel_download",
+    "cancel_wait",
     "cancel_access_review",
     "network_create",
     "network_reopen",
