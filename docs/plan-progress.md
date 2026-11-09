@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #55), and this change:
+Merged since 7 November (#37 to #56), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -167,12 +167,18 @@ Merged since 7 November (#37 to #55), and this change:
   stops the read at once; the read waits for its host instead. A starting agent
   or test device now waits as long as a running one, two minutes, so a restart
   like those measured no longer fails it.
-- **The desktop journey through the app, in CI** (this change). The Linux app,
+- **Requests survive a restart** (this change). Requests from devices and agents
+  waiting for the owner were kept only in the app's memory, so Android ending
+  Connect in the background lost them. They are now kept in a file in the
+  app's own directory until answered, declined or a day old.
+- **The desktop journey through the app, in CI** (#56). The Linux app,
   built as installed, is driven through its own screens: Welcome, create a
   network, invite, the joining device and the owner show the same code,
   approve, the device is listed and ready, remove it, restart and reopen
   without Welcome. Locally in WSL it takes about 19 seconds end to end (create
   4.4 s, join request 3 s after the invitation, joined 6.6 s after approval).
+  First hosted run (#56, Linux runner, Xvfb): created at 4.9 s, joined and
+  ready at 12.4 s, removed at 14.5 s, reopened at 15.8 s.
 - **Whole journeys in CI** (#53): the app's own command tests and the five
   real-node journeys (pair and restart, share a folder, send into an inbox,
   resume transfers, read through an outage) now run on every pull request.
