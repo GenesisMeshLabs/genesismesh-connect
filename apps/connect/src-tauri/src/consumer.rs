@@ -599,17 +599,15 @@ pub async fn share_file(
         .try_read_owned()
         .map_err(|_| "This device is changing networks")?;
     let media = media.unwrap_or(false);
-    let picked = crate::picking::files(&app, media, media)
+    // Several files at once, plain files as well as photos and videos.
+    let picked = crate::picking::files(&app, media, true)
         .await
         .map_err(error)?;
     if picked.is_empty() {
         return Ok(false);
     }
-    let name = if picked.len() == 1 {
-        picked[0].name.chars().take(64).collect::<String>()
-    } else {
-        format!("Photos & videos ({})", picked.len())
-    };
+    let names: Vec<&str> = picked.iter().map(|file| file.name.as_str()).collect();
+    let name = shared_name(&names, media);
     let root = desktop.profile.join("shared-files");
     std::fs::create_dir_all(&root).map_err(error)?;
     let folder = tempfile::Builder::new()
@@ -634,6 +632,28 @@ pub async fn share_file(
     // Keep this app-owned snapshot for the lifetime of the share/profile.
     let _ = folder.keep();
     Ok(result)
+}
+/// What a shared batch is called on both devices: its file's name, or the
+/// first name and how many more, within the 64-character Space name limit.
+fn shared_name(names: &[&str], media: bool) -> String {
+    let short = |name: &str, room: usize| -> String {
+        if name.chars().count() <= room {
+            name.to_owned()
+        } else {
+            let mut cut: String = name.chars().take(room.saturating_sub(1)).collect();
+            cut.push('…');
+            cut
+        }
+    };
+    match names {
+        [] => String::new(),
+        [one] => short(one, 64),
+        [first, rest @ ..] if !media => {
+            let more = format!(" and {} more", rest.len());
+            format!("{}{more}", short(first, 64 - more.chars().count()))
+        }
+        all => format!("Photos & videos ({})", all.len()),
+    }
 }
 pub(crate) fn recipients_for(status: &connect_core::device::DeviceStatus) -> Vec<String> {
     let mut available = Vec::new();
@@ -1174,6 +1194,27 @@ pub async fn export_received(
         let _ = export.keep();
     }
     Ok(())
+}
+#[cfg(test)]
+mod shared_name_tests {
+    use super::shared_name;
+    #[test]
+    fn a_batch_is_named_after_its_files() {
+        assert_eq!(shared_name(&["report.pdf"], false), "report.pdf");
+        assert_eq!(
+            shared_name(&["report.pdf", "notes.txt", "a.png"], false),
+            "report.pdf and 2 more"
+        );
+        assert_eq!(
+            shared_name(&["a.jpg", "b.mp4"], true),
+            "Photos & videos (2)"
+        );
+        let long = "x".repeat(80);
+        let named = shared_name(&[&long, "b"], false);
+        assert_eq!(named.chars().count(), 64);
+        assert!(named.ends_with("… and 1 more"));
+        assert_eq!(shared_name(&[&long], false).chars().count(), 64);
+    }
 }
 #[cfg(test)]
 mod refresh_tests {

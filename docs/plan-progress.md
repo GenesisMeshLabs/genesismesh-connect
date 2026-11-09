@@ -198,6 +198,9 @@ Merged since 7 November (#37 to #53), and this change:
   as a rollback ("CRL rollback"), safely but with no way forward. A device that
   refuses now says why. Fixing it, and fencing an old copy from a restored one,
   need decisions: see the [restore proposal](restore-proposal.md).
+- **Several files at once** (this change). Sharing files lets the person choose
+  several plain files, up to 100, not only several photos and videos. Both
+  devices see the batch named after its first file, as "report.pdf and 2 more".
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
