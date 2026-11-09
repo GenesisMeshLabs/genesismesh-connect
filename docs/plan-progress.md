@@ -167,6 +167,12 @@ Merged since 7 November (#37 to #54), and this change:
   stops the read at once; the read waits for its host instead. A starting agent
   or test device now waits as long as a running one, two minutes, so a restart
   like those measured no longer fails it.
+- **The desktop journey through the app, in CI** (this change). The Linux app,
+  built as installed, is driven through its own screens: Welcome, create a
+  network, invite, the joining device and the owner show the same code,
+  approve, the device is listed and ready, remove it, restart and reopen
+  without Welcome. Locally in WSL it takes about 19 seconds end to end (create
+  4.4 s, join request 3 s after the invitation, joined 6.6 s after approval).
 - **Whole journeys in CI** (#53): the app's own command tests and the five
   real-node journeys (pair and restart, share a folder, send into an inbox,
   resume transfers, read through an outage) now run on every pull request.
