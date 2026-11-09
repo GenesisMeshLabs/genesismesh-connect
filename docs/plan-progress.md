@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #49), and this change:
+Merged since 7 November (#37 to #50), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -146,7 +146,7 @@ Merged since 7 November (#37 to #49), and this change:
   four real records under Yesterday, a row opened its record, every Settings
   section sat between the status bar and the tab bar, Save stayed disabled and
   the connection Save hidden, and Advanced opened. Nothing was saved or created.
-- **Reads wait out a restart** (this change). A running device now asks again
+- **Reads wait out a restart** (#50). A running device now asks again
   for up to two minutes, not about 15 seconds, when a list, browse or read cannot
   be answered yet: the host cannot be reached, answers busy, its trust refresh
   ended the connection, or this device's own connection is suspended or its
@@ -156,7 +156,17 @@ Merged since 7 November (#37 to #49), and this change:
   time runs out the person is told "No answer in time…", as busy, never as
   refused. Only these reads ask again; nothing that changes anything does, and
   Check status still reads back without resending. Downloads keep their own
-  waits. A starting agent or test device still waits about a minute (#44).
+  waits. A starting agent or test device still waited about a minute (#44).
+- **Waiting explained, and waits that match** (this change). When a folder
+  takes longer than 2.5 seconds to open, the screen says "Waiting for <device>",
+  how long it has waited, why ("It may be restarting, or Connect may be closed
+  on it"), and offers Cancel. Cancel stops this device's wait and says "Stopped
+  waiting. Nothing was changed."; it takes effect at the read, never in the
+  middle of a trust refresh that may be saving a renewed certificate. A network
+  computer that cannot be reached during the refresh before a read no longer
+  stops the read at once; the read waits for its host instead. A starting agent
+  or test device now waits as long as a running one, two minutes, so a restart
+  like those measured no longer fails it.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
@@ -166,7 +176,7 @@ release):
 | --- | --- | --- |
 | Reads under the limit | `7b060bd` (#40) | 75 of 75 over 258 s, peak 18 successful in any 60 s, 0 denied |
 | Genuine refusals | `7b060bd` | Unknown item, missing file and an expired share refused at once, no retry, no prompt |
-| Read limit | CI, real authority | 16 reads per 60 s window per share, then busy; refusals stay final (`host_read_limit_is_16_a_window_says_busy_and_leaves_refusals_final`). Since this change the 17th read waits for the next window and is served, still 16 a window |
+| Read limit | CI, real authority | 16 reads per 60 s window per share, then busy; refusals stay final (`host_read_limit_is_16_a_window_says_busy_and_leaves_refusals_final`). Since #50 the 17th read waits for the next window and is served, still 16 a window |
 | Five force-stop/relaunch cycles, reads every 5 s | `7b060bd` | 188 succeeded, 8 failed (6 "Connection is suspended", 2 "session ended"), 0 denied; first read after relaunch 43, 62, 5, 1, 5 s; outages seen by the device 62, 88, 42, 42, 62 s |
 | Earlier run, restarts every 49 s | `c748955` | 111 succeeded, 29 failed; restarts overlapped, and trust refreshed only between reads. Kept for comparison, not as a pass |
 | Off screen 150 s, then return | `f69c055` | Network running at 60 s, closed by 150 s; a real read 23 to 26 s after return |
@@ -176,7 +186,7 @@ release):
 | File picker, photo picker held 150 s each | `f69c055` | Network stayed open; the sheet was still open; nothing chosen, no error |
 | Authentication prompt left up | `f69c055` | The system closed it after about 128 s; plain "not saved, nothing changed" message, no key shown, no export left, owner files identical, network up, read succeeded |
 | Authentication prompt cancelled with Back | `f69c055` | Back pressed only while the prompt had focus; same plain message, no key shown, no export left, network up; strict check passed (journal unchanged, owner files identical, no new enrollment), read succeeded |
-| Start while the network computer is down | Local run in WSL (Ubuntu), real node and packaged authority | A fresh device connected 17.5 s after starting, with the node down for the first 8 s; with no node it gave up after 67 s, saying what to do. With the wait disabled the same test fails at once (`a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart`, ignored in CI because it needs the packaged authority) |
+| Start while the network computer is down | Local run in WSL (Ubuntu), real node and packaged authority | A fresh device connected 17.5 s after starting, with the node down for the first 8 s; with no node it gave up after 67 s, saying what to do; with the two-minute wait (this change), 17.9 s and 113.1 s. With the wait disabled the same test fails at once (`a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart`, ignored in CI because it needs the packaged authority) |
 | A running device reads while the network computer restarts | Local run in WSL (Ubuntu), real node and packaged authority | The node stopped and was back 70 s later: a read asked as it stopped answered with a receipt after 98.2 s in each of two runs, waiting for the device's next trust refresh after the node returned. With no node it gave up after 113.0 s with "No answer in time…", busy, not a refusal. With the old 15-second budget the same test fails: the read asked during the outage fails with "busy … Try again shortly" (`a_running_device_reads_through_a_network_computer_restart`, ignored in CI because it needs the packaged authority) |
 | On screen for 5 h 42 min | `df84d82` (#43) | 67 checks five minutes apart, every one owner, ready, no problem, on screen; every read from the second device succeeded (one on its second try); descriptors 329 to 337, threads 88 to 91, about 17.5% of a core on average (debug). The phone then left the computer's connection at 07:26 (CET), when the record shows the screen leaving and returning several times; none of the test scripts did that. The record for those 6 h 9 min: no panic, no failed refresh, and a renewal every 181 to 300 s with no gap. Shorter than the 12-hour stall, so it neither reproduces nor rules it out |
 | Activity asked for the moment Connect returns, while the network is still reopening | `df84d82` before, `c6966f0` after | Before: refused after 31 ms, "Open this device's network to see its local activity". After, twice: it waited and returned its entries after 1.8 s and 1.6 s, by which time the network had reopened. Each run: network closed after 150 s off screen, owner files byte-identical, a second-device read succeeded, no touches from anyone else |
@@ -210,12 +220,12 @@ Known limits and open findings:
   availability.
 - **Outages and the waits that cover them.** A restarting phone was out of reach
   for 42 to 88 seconds. A running device's reads now ask again for up to two
-  minutes (this change), tested against a real node restart in WSL; the phone's
-  force-stop/relaunch cycles have not been rerun on it yet. A read can now take up to two minutes before the
-  person hears anything, and recovery waits for the device's next 30-second
-  trust refresh. A starting agent or test device still waits only about a minute
-  for the network computer (#44), which does not cover the longest outage
-  measured.
+  minutes (#50), tested against a real node restart in WSL; the phone's
+  force-stop/relaunch cycles have not been rerun on it yet. After 2.5 seconds the
+  screen explains the wait and offers Cancel (this change); that covers opening
+  a folder, not yet every action. Recovery waits for the device's next
+  30-second trust refresh. A starting agent or test device waits the same two
+  minutes; an MCP client whose own request timeout is shorter gives up first.
 - **12-hour relay stall:** seen once, unexplained, not reproduced by a 5-minute
   pause or by 5 h 42 min on screen.
 - **Certificate renewal every 4 minutes.** The documented freshness policy
@@ -248,6 +258,50 @@ Known limits and open findings:
 Not yet run on the phone: saving and restoring a recovery file, and removing a
 device; both wait for the owner to start them. Public Create in the normal app
 stays off.
+
+## Plan from 9 November 2026
+
+The supported journeys come first, complete across platforms; then mobile
+responsiveness, availability and efficiency, with usability improved throughout.
+
+1. **Start my network:** create it on a supported host, explain where it runs
+   and when it is available, protect ownership, guide the recovery file.
+2. **Add another device:** invitation, comparison, approval, first useful
+   action; no terminal, copied keys or unexplained waiting.
+3. **Share something useful:** files, nested folders, several photos and
+   videos, receiving files, supported services; both sides see what was shared
+   and where received items went.
+4. **Change or remove access:** recipients and limits, the consequences,
+   revoking, and checking that the next protected request is refused.
+5. **Survive interruption:** close, lock, restart, lose connectivity and
+   return, keeping identities and progress, explaining uncertainty without
+   asking anyone to repeat something that may already have happened.
+6. **Recover or move my network:** restore onto another device, explain missing
+   history, and stop an old and a restored host from running as competing
+   copies.
+7. **Add an agent safely:** its own identity, limited access, an understandable
+   request flow and removal on its own.
+
+Testing covers roles and boundaries, not every pairing: Android hosting, desktop
+hosting, mobile joining, desktop joining, and each platform's pickers, storage
+and lifecycle. Cross-platform means a familiar experience with clearly stated
+capabilities, not continuous hosting on every system.
+
+First stage, alongside the journeys: explain long waits with elapsed time and
+Cancel (started with opening a folder); keep startup and running waits the same
+(done: two minutes each); make returning to the app feel like resuming; and make
+foreground-only hosting clear during setup, with an always-on host offered where
+it fits. Trust windows and the renewal policy remain decisions for the
+Maintainer.
+
+Mobile measures afterwards: time from opening Connect to a successful action;
+reliability across lock, background, restart and network change; battery, CPU,
+memory, and renewal and database growth; fewer interruptions from prompts and
+pickers; clearer recovery when an action cannot finish.
+
+**Next milestone:** create a network on Android, join a computer and another
+phone, share in both directions, change access, survive interruption, remove a
+device, and restore safely.
 
 ## Independent phone hosting requirement — 5 November 2026
 

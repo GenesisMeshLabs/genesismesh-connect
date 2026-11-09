@@ -12,6 +12,7 @@ import QRCode from "qrcode";
 import { el, input, showPage } from "./ui";
 import { fillIcons, icon, type IconName } from "./icons";
 import { setupAdvanced } from "./advanced";
+import { EXPLAIN_AFTER_MS, STOPPED, stoppedWaiting, waitDetail, waitTitle } from "./waiting";
 import {
   primaryScreen,
   isService,
@@ -844,12 +845,56 @@ function renderBreadcrumbs() {
     navigation.append(button);
   });
 }
+/**
+ * Explains a read that waits for another device, as while it restarts: who it
+ * waits for, for how long, and a Cancel that stops waiting. Returns the cleanup.
+ */
+function explainWait(id: string, device: string | null | undefined): () => void {
+  const started = Date.now();
+  const banner = el("wait-banner");
+  const update = () => {
+    text("wait-title", waitTitle(device));
+    text("wait-detail", waitDetail(Date.now() - started));
+  };
+  let ticking: ReturnType<typeof setInterval> | undefined;
+  const showing = setTimeout(() => {
+    update();
+    banner.hidden = false;
+    ticking = setInterval(update, 1000);
+  }, EXPLAIN_AFTER_MS);
+  const cancel = el<HTMLButtonElement>("wait-cancel");
+  cancel.disabled = false;
+  cancel.onclick = () => {
+    cancel.disabled = true;
+    text("wait-detail", "Stopping…");
+    void invoke("cancel_wait", { id });
+  };
+  return () => {
+    clearTimeout(showing);
+    clearInterval(ticking);
+    banner.hidden = true;
+    cancel.onclick = null;
+  };
+}
 async function loadFiles(more: boolean, directory = folderPath) {
-  const result = await invoke<FilePage>(currentSpace?.own && !isService(currentSpace) ? "browse_received" : "browse_files", {
-    after: more ? page?.next : null,
-    directory,
-    space: currentSpace?.id ?? null,
-  });
+  const remote = !(currentSpace?.own && !isService(currentSpace));
+  const wait = remote ? crypto.randomUUID() : null;
+  const done = wait ? explainWait(wait, currentSpace?.host ?? current?.peer) : () => {};
+  let result: FilePage;
+  try {
+    result = await invoke<FilePage>(remote ? "browse_files" : "browse_received", {
+      after: more ? page?.next : null,
+      directory,
+      space: currentSpace?.id ?? null,
+      ...(wait ? { wait } : {}),
+    });
+  } catch (error) {
+    if (!stoppedWaiting(error)) throw error;
+    message(STOPPED);
+    return;
+  } finally {
+    done();
+  }
   if (JSON.stringify(result.directory) !== JSON.stringify(folderPath)) input("file-search").value = "";
   folderPath = result.directory;
   page = result;

@@ -769,6 +769,13 @@ pub async fn stop_sharing(
     drop(owner);
     Ok(confirmed)
 }
+/// A network computer that cannot be reached just now, as while the phone that
+/// runs it restarts, does not stop a read: the read asks its host again for up
+/// to two minutes, and the background refresh renews trust meanwhile. Any
+/// answer it gives, a refusal or a failed verification above all, still stops.
+fn continues_without_refresh(error: &anyhow::Error) -> bool {
+    error.is::<connect_core::session::bridge::Unreached>()
+}
 /// A running session and the device to reach: the one sharing `space` when
 /// this device knows that Space, otherwise the selected device.
 pub(crate) async fn session(
@@ -784,7 +791,11 @@ pub(crate) async fn session(
     let mut slot = desktop.slot.lock().await;
     let device = slot.controller.as_mut().ok_or("Join your network first")?;
     device.reconnect_saved().await.map_err(error)?;
-    device.refresh().await.map_err(error)?;
+    if let Err(refresh) = device.refresh().await
+        && !continues_without_refresh(&refresh)
+    {
+        return Err(error(refresh));
+    }
     let status = device.status().map_err(error)?;
     let host = space
         .and_then(|id| status.spaces.iter().find(|s| s.collection == id))
@@ -809,19 +820,25 @@ pub async fn browse_files(
     after: Option<String>,
     directory: Option<Vec<String>>,
     space: Option<String>,
+    wait: Option<String>,
     desktop: tauri::State<'_, DesktopState>,
 ) -> Result<Page, String> {
+    // The screen shows how long this waits and offers to stop it.
+    let wait = crate::waits::Wait::new(wait);
     let (session, peer) = session(&desktop, space.as_deref()).await?;
-    session
-        .browse_from(
-            &peer.node,
-            &peer.ticket,
-            after,
-            directory.unwrap_or_default(),
-            space,
-        )
-        .await
-        .map_err(error)
+    wait.until_stopped(async {
+        session
+            .browse_from(
+                &peer.node,
+                &peer.ticket,
+                after,
+                directory.unwrap_or_default(),
+                space,
+            )
+            .await
+            .map_err(error)
+    })
+    .await
 }
 #[tauri::command]
 pub async fn open_file(
@@ -1157,6 +1174,23 @@ pub async fn export_received(
         let _ = export.keep();
     }
     Ok(())
+}
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+    #[test]
+    fn only_an_unreached_network_computer_lets_a_read_go_ahead() {
+        let unreached = anyhow::anyhow!("deadline has elapsed")
+            .context(connect_core::session::bridge::Unreached);
+        assert!(continues_without_refresh(&unreached));
+        for answer in [
+            "Your network computer refused or could not answer this request",
+            "Trust history does not verify against the pinned root",
+            "This device is disconnected. Tap Reconnect in Settings.",
+        ] {
+            assert!(!continues_without_refresh(&anyhow::anyhow!(answer)));
+        }
+    }
 }
 #[cfg(test)]
 mod sharing_selection_tests {

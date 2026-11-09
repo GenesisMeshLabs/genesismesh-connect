@@ -27,6 +27,11 @@
           <button id="startup-retry" type="button" hidden>Try again</button>
         </section>
         <div id="home-message" class="home-message" role="status" hidden></div>
+        <div id="wait-banner" class="home-message wait-banner" role="status" hidden>
+          <span data-icon="clock"></span>
+          <span class="wait-text"><strong id="wait-title"></strong><span id="wait-detail"></span></span>
+          <button id="wait-cancel" type="button" class="text-button">Cancel</button>
+        </div>
         <div id="disconnected-banner" class="home-message home-warning" role="status" hidden>
           <span data-icon="wifi-off"></span><span>Disconnected. Your network is saved.</span>
           <button id="reconnect-banner" class="text-button">Reconnect</button>

@@ -139,6 +139,16 @@
 .home-main > .home-message {
   order: -2;
 }
+.wait-banner .wait-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.wait-banner #wait-detail {
+  font-variant-numeric: tabular-nums;
+}
 .home-main > #approval-card,
 .home-main > #pair-card {
   order: -1;
