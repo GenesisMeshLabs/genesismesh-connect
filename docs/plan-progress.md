@@ -210,8 +210,8 @@ Known limits and open findings:
   availability.
 - **Outages and the waits that cover them.** A restarting phone was out of reach
   for 42 to 88 seconds. A running device's reads now ask again for up to two
-  minutes (this change), tested against a real node restart in WSL; on the phone,
-  see the restart cycles below. A read can now take up to two minutes before the
+  minutes (this change), tested against a real node restart in WSL; the phone's
+  force-stop/relaunch cycles have not been rerun on it yet. A read can now take up to two minutes before the
   person hears anything, and recovery waits for the device's next 30-second
   trust refresh. A starting agent or test device still waits only about a minute
   for the network computer (#44), which does not cover the longest outage
