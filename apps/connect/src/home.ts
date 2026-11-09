@@ -12,7 +12,9 @@ import QRCode from "qrcode";
 import { el, input, showPage } from "./ui";
 import { fillIcons, icon, type IconName } from "./icons";
 import { setupAdvanced } from "./advanced";
-import { EXPLAIN_AFTER_MS, STOPPED, stoppedWaiting, waitDetail, waitTitle } from "./waiting";
+import { PLACE_KEY, place, readPlace, resumeTo, type View } from "./resume-state";
+import { availability, recoveryReminder, recoveryStatus, RECOVERY_SAVED_KEY } from "./setup-state";
+import { EXPLAIN_AFTER_MS, STOPPED, finishingDetail, finishingTitle, stoppedWaiting, waitDetail, waitTitle } from "./waiting";
 import {
   primaryScreen,
   isService,
@@ -138,6 +140,7 @@ function selectView(next: string) {
   // An unsaved connection choice is dropped when leaving Settings.
   if (next !== "settings") connectionChanged(false);
   currentView=next;
+  remember();
   text("home-title", titles[next]);
   for (const name of ["files", "devices", "activity", "settings"])
     visible(`view-${name}`, name === next);
@@ -223,6 +226,7 @@ function render(status: HomeStatus) {
     : status.owner ? "Pauses access for your other devices. Your setup stays saved."
       : "Pauses connections. Your network and shared items stay saved.");
   const next = primaryScreen(status);
+  if (next === "workspace" && !status.leaving) resume(status);
   if (status.leaving) {
     show("leaving");
   } else if (next !== "welcome" || !["create-screen", "join-screen", "restore-screen"].includes(screen))
@@ -256,6 +260,9 @@ function render(status: HomeStatus) {
   );
   renderConnection(status);
   visible("recovery-card", status.owner && status.configured);
+  const saved = recoverySavedAt();
+  visible("recovery-reminder", recoveryReminder(status.owner, status.configured, saved));
+  text("recovery-detail", recoveryStatus(saved));
   visible("add-device-button", status.owner && status.devices.length < 32);
   // Hidden until this build can confirm administrator changes on the device.
   visible("host-admin-card",status.owner&&status.administration===true);
@@ -316,7 +323,8 @@ function render(status: HomeStatus) {
     // Only after pairing here, not when a known device reconnects at launch.
     if (hadStatus && (wasJoining || !el("pair-card").hidden)) message(`${status.peer} added.`);
     visible("pair-card", false);
-    selectView("files");
+    // A known device reconnecting at launch stays where the person left off.
+    if (hadStatus) selectView("files");
   }
 }
 function renderConnection(status: HomeStatus) {
@@ -460,20 +468,43 @@ el("restore-form").addEventListener("submit", (event) => {
     },
   );
 });
-el("create-recovery").addEventListener(
-  "click",
-  () =>
-    void run(el<HTMLButtonElement>("create-recovery"), async () => {
-      const key = await invoke<string | null>("recovery_create");
-      if (!key) return;
-      text("recovery-key", key);
-      el<HTMLDialogElement>("recovery-dialog").showModal();
-    }),
-);
+/** When this device last saved a recovery file, if it remembers. */
+function recoverySavedAt(): string | null {
+  try {
+    return localStorage.getItem(RECOVERY_SAVED_KEY);
+  } catch {
+    return null;
+  }
+}
+function saveRecovery(button: HTMLButtonElement) {
+  void run(button, async () => {
+    const key = await invoke<string | null>("recovery_create");
+    if (!key) return;
+    text("recovery-key", key);
+    el<HTMLDialogElement>("recovery-dialog").showModal();
+  });
+}
+el("create-recovery").addEventListener("click", () => saveRecovery(el<HTMLButtonElement>("create-recovery")));
+el("recovery-reminder-save").addEventListener("click", () => saveRecovery(el<HTMLButtonElement>("recovery-reminder-save")));
+el("recovery-offer-save").addEventListener("click", () => {
+  el<HTMLDialogElement>("recovery-offer").close();
+  saveRecovery(el<HTMLButtonElement>("recovery-reminder-save"));
+});
+el("recovery-offer-later").addEventListener("click", () => {
+  el<HTMLDialogElement>("recovery-offer").close();
+  message("You can save a recovery file any time from Devices or Settings.");
+});
 // The key is shown once, so only this button closes it.
 el("recovery-dialog").addEventListener("cancel", (event) => event.preventDefault());
 el("recovery-done").addEventListener("click", () => {
   text("recovery-key", "");
+  try {
+    localStorage.setItem(RECOVERY_SAVED_KEY, new Date().toISOString());
+  } catch {
+    // Without storage the reminder stays; the file itself was saved.
+  }
+  visible("recovery-reminder", false);
+  text("recovery-detail", recoveryStatus(recoverySavedAt()));
   el<HTMLDialogElement>("recovery-dialog").close();
   message("Keep the recovery file and its key in separate places.");
 });
@@ -524,6 +555,8 @@ el("create-form").addEventListener("submit", (event) => {
           : "Your network is ready. Add your phone to connect your devices.",
       );
       selectView("devices");
+      // Recovery is offered while it is fresh in mind; Later keeps a reminder.
+      el<HTMLDialogElement>("recovery-offer").showModal();
     },
   );
 });
@@ -599,7 +632,12 @@ el("approve-device").addEventListener(
   "click",
   () =>
     void run(el<HTMLButtonElement>("approve-device"), async () => {
-      await invoke("pair_approve", { id: approval });
+      const done = explainWait(null, finishingTitle(el("approval-name").textContent), finishingDetail);
+      try {
+        await invoke("pair_approve", { id: approval });
+      } finally {
+        done();
+      }
       message("Device approved and securely paired.");
     }),
 );
@@ -779,6 +817,36 @@ async function sendTo(space: HomeSpace) {
 el("cancel-send").addEventListener("click", () => {
   if (sendId) void invoke("cancel_send", { id: sendId }).catch((error) => problem(String(error)));
 });
+/** Remembers where the person is, so a relaunch returns there. */
+function remember() {
+  try {
+    localStorage.setItem(PLACE_KEY, JSON.stringify(place(currentView as View, currentSpace?.id ?? null, folderPath)));
+  } catch {
+    // Without storage Connect simply starts at Shared.
+  }
+}
+let resumed = false;
+/** Once per launch, back to the view, Space and folder the person left. */
+function resume(status: HomeStatus) {
+  if (resumed) return;
+  resumed = true;
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(PLACE_KEY);
+  } catch {
+    return;
+  }
+  const to = resumeTo(readPlace(saved), status.spaces);
+  if (!to) return;
+  if (to.view !== currentView) selectView(to.view);
+  const space = to.space ? status.spaces.find((s) => s.id === to.space) : undefined;
+  if (!space || to.view !== "files" || space.kind === "inbox" && !space.own || isService(space)) return;
+  // After this render; a failure keeps the Spaces list and says why.
+  setTimeout(() => void run(el<HTMLButtonElement>("browse-button"), async () => {
+    await openSpace(space);
+    if (to.path.length) await loadFiles(false, to.path);
+  }), 0);
+}
 async function openSpace(space: HomeSpace) {
   const previous = { currentSpace, folderPath, page, files };
   currentSpace = space;
@@ -796,6 +864,8 @@ el("all-spaces").addEventListener("click", () => {
   currentSpace = null;
   page = null;
   files = [];
+  folderPath = [];
+  remember();
   visible("remote-folder", false);
   visible("file-preview", false);
   if (current) render(current);
@@ -846,15 +916,15 @@ function renderBreadcrumbs() {
   });
 }
 /**
- * Explains a read that waits for another device, as while it restarts: who it
- * waits for, for how long, and a Cancel that stops waiting. Returns the cleanup.
+ * Explains a wait for another device after 2.5 seconds: who it waits for, for
+ * how long, and, with an id, a Cancel that stops waiting. Returns the cleanup.
  */
-function explainWait(id: string, device: string | null | undefined): () => void {
+function explainWait(id: string | null, title: string, detail: (ms: number) => string): () => void {
   const started = Date.now();
   const banner = el("wait-banner");
   const update = () => {
-    text("wait-title", waitTitle(device));
-    text("wait-detail", waitDetail(Date.now() - started));
+    text("wait-title", title);
+    text("wait-detail", detail(Date.now() - started));
   };
   let ticking: ReturnType<typeof setInterval> | undefined;
   const showing = setTimeout(() => {
@@ -864,6 +934,7 @@ function explainWait(id: string, device: string | null | undefined): () => void 
   }, EXPLAIN_AFTER_MS);
   const cancel = el<HTMLButtonElement>("wait-cancel");
   cancel.disabled = false;
+  cancel.hidden = !id;
   cancel.onclick = () => {
     cancel.disabled = true;
     text("wait-detail", "Stopping…");
@@ -879,7 +950,7 @@ function explainWait(id: string, device: string | null | undefined): () => void 
 async function loadFiles(more: boolean, directory = folderPath) {
   const remote = !(currentSpace?.own && !isService(currentSpace));
   const wait = remote ? crypto.randomUUID() : null;
-  const done = wait ? explainWait(wait, currentSpace?.host ?? current?.peer) : () => {};
+  const done = wait ? explainWait(wait, waitTitle(currentSpace?.host ?? current?.peer), waitDetail) : () => {};
   let result: FilePage;
   try {
     result = await invoke<FilePage>(remote ? "browse_files" : "browse_received", {
@@ -898,6 +969,7 @@ async function loadFiles(more: boolean, directory = folderPath) {
   if (JSON.stringify(result.directory) !== JSON.stringify(folderPath)) input("file-search").value = "";
   folderPath = result.directory;
   page = result;
+  remember();
   renderBreadcrumbs();
   files = more ? [...files, ...result.files] : result.files;
   renderFiles();
@@ -1178,8 +1250,13 @@ function usePhoneSetupWording() {
     "Start on this phone";
   el("choose-create").querySelector("span:not(.choice-symbol)")!.textContent =
     "Your phone runs your network while Connect is open.";
-  el("create-screen").querySelector("p")!.textContent =
-    "Your phone runs the network while Connect is open on it. It asks for your screen lock once, to protect the network's main key.";
+  const where = availability("phone");
+  text("create-where", where.where);
+  text("create-always-on", where.alwaysOn);
+  text("create-protect", "It asks for your screen lock once, to protect the network's main key.");
+  visible("create-protect", true);
+  for (const id of ["recovery-reminder-text", "recovery-offer-text"])
+    text(id, el(id).textContent!.replace(/this device/g, "this phone"));
   document.querySelector('label[for="computer-name"]')!.textContent =
     "This phone's name";
   if (!localStorage.getItem("connect.friendly-name"))

@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #50), and this change:
+Merged since 7 November (#37 to #53), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -157,7 +157,7 @@ Merged since 7 November (#37 to #50), and this change:
   refused. Only these reads ask again; nothing that changes anything does, and
   Check status still reads back without resending. Downloads keep their own
   waits. A starting agent or test device still waited about a minute (#44).
-- **Waiting explained, and waits that match** (this change). When a folder
+- **Waiting explained, and waits that match** (#52). When a folder
   takes longer than 2.5 seconds to open, the screen says "Waiting for <device>",
   how long it has waited, why ("It may be restarting, or Connect may be closed
   on it"), and offers Cancel. Cancel stops this device's wait and says "Stopped
@@ -167,6 +167,28 @@ Merged since 7 November (#37 to #50), and this change:
   stops the read at once; the read waits for its host instead. A starting agent
   or test device now waits as long as a running one, two minutes, so a restart
   like those measured no longer fails it.
+- **Whole journeys in CI** (#53): the app's own command tests and the five
+  real-node journeys (pair and restart, share a folder, send into an inbox,
+  resume transfers, read through an outage) now run on every pull request.
+- **Start my network** (this change). The Create screen says where the network
+  runs and when other devices reach it: on a phone, while Connect is open there
+  and for two minutes after leaving it; on a computer, while it is on and
+  Connect is open. It suggests a computer you keep on, or a home server, when
+  devices must reach it at any time, and on a phone that the screen lock
+  protects the network's main key. Right after Create, a sheet offers to save a
+  recovery file; Later leaves a reminder in Devices until one is saved, and
+  Settings says when the last one was saved. After the owner approves a new
+  device, which can take up to 80 seconds to finish joining, the screen says
+  "Finishing with <device>" and how long it has taken, with no Cancel, because
+  the approval may already be recorded. Checked in the browser with the native
+  layer stubbed (A17 viewport); not yet on the phone.
+- **Returning resumes** (this change). Connect remembers the tab, the open
+  Space and the folder inside it on the device. When it starts again within a
+  day, as after Android ended it in the background, it returns there and opens
+  that folder again, while that Space is still shared with it; otherwise it
+  keeps the tab and shows the list. A known device reconnecting at launch no
+  longer jumps to Shared. Checked in the browser with the native layer stubbed;
+  not yet on the phone.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
@@ -186,7 +208,7 @@ release):
 | File picker, photo picker held 150 s each | `f69c055` | Network stayed open; the sheet was still open; nothing chosen, no error |
 | Authentication prompt left up | `f69c055` | The system closed it after about 128 s; plain "not saved, nothing changed" message, no key shown, no export left, owner files identical, network up, read succeeded |
 | Authentication prompt cancelled with Back | `f69c055` | Back pressed only while the prompt had focus; same plain message, no key shown, no export left, network up; strict check passed (journal unchanged, owner files identical, no new enrollment), read succeeded |
-| Start while the network computer is down | Local run in WSL (Ubuntu), real node and packaged authority | A fresh device connected 17.5 s after starting, with the node down for the first 8 s; with no node it gave up after 67 s, saying what to do; with the two-minute wait (this change), 17.9 s and 113.1 s. With the wait disabled the same test fails at once (`a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart`, ignored in CI because it needs the packaged authority) |
+| Start while the network computer is down | Local run in WSL (Ubuntu), real node and packaged authority | A fresh device connected 17.5 s after starting, with the node down for the first 8 s; with no node it gave up after 67 s, saying what to do; with the two-minute wait (#52), 17.9 s and 113.1 s. With the wait disabled the same test fails at once (`a_server_node_pairs_a_device_and_keeps_serving_it_after_a_restart`, ignored in CI because it needs the packaged authority) |
 | A running device reads while the network computer restarts | Local run in WSL (Ubuntu), real node and packaged authority | The node stopped and was back 70 s later: a read asked as it stopped answered with a receipt after 98.2 s in each of two runs, waiting for the device's next trust refresh after the node returned. With no node it gave up after 113.0 s with "No answer in time…", busy, not a refusal. With the old 15-second budget the same test fails: the read asked during the outage fails with "busy … Try again shortly" (`a_running_device_reads_through_a_network_computer_restart`, ignored in CI because it needs the packaged authority) |
 | On screen for 5 h 42 min | `df84d82` (#43) | 67 checks five minutes apart, every one owner, ready, no problem, on screen; every read from the second device succeeded (one on its second try); descriptors 329 to 337, threads 88 to 91, about 17.5% of a core on average (debug). The phone then left the computer's connection at 07:26 (CET), when the record shows the screen leaving and returning several times; none of the test scripts did that. The record for those 6 h 9 min: no panic, no failed refresh, and a renewal every 181 to 300 s with no gap. Shorter than the 12-hour stall, so it neither reproduces nor rules it out |
 | Activity asked for the moment Connect returns, while the network is still reopening | `df84d82` before, `c6966f0` after | Before: refused after 31 ms, "Open this device's network to see its local activity". After, twice: it waited and returned its entries after 1.8 s and 1.6 s, by which time the network had reopened. Each run: network closed after 150 s off screen, owner files byte-identical, a second-device read succeeded, no touches from anyone else |
@@ -222,7 +244,7 @@ Known limits and open findings:
   for 42 to 88 seconds. A running device's reads now ask again for up to two
   minutes (#50), tested against a real node restart in WSL; the phone's
   force-stop/relaunch cycles have not been rerun on it yet. After 2.5 seconds the
-  screen explains the wait and offers Cancel (this change); that covers opening
+  screen explains the wait and offers Cancel (#52); that covers opening
   a folder, not yet every action. Recovery waits for the device's next
   30-second trust refresh. A starting agent or test device waits the same two
   minutes; an MCP client whose own request timeout is shorter gives up first.
