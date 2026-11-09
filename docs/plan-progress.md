@@ -182,6 +182,13 @@ Merged since 7 November (#37 to #53), and this change:
   "Finishing with <device>" and how long it has taken, with no Cancel, because
   the approval may already be recorded. Checked in the browser with the native
   layer stubbed (A17 viewport); not yet on the phone.
+- **Returning resumes** (this change). Connect remembers the tab, the open
+  Space and the folder inside it on the device. When it starts again within a
+  day, as after Android ended it in the background, it returns there and opens
+  that folder again, while that Space is still shared with it; otherwise it
+  keeps the tab and shows the list. A known device reconnecting at launch no
+  longer jumps to Shared. Checked in the browser with the native layer stubbed;
+  not yet on the phone.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in

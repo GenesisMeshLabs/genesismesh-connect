@@ -12,6 +12,7 @@ import QRCode from "qrcode";
 import { el, input, showPage } from "./ui";
 import { fillIcons, icon, type IconName } from "./icons";
 import { setupAdvanced } from "./advanced";
+import { PLACE_KEY, place, readPlace, resumeTo, type View } from "./resume-state";
 import { availability, recoveryReminder, recoveryStatus, RECOVERY_SAVED_KEY } from "./setup-state";
 import { EXPLAIN_AFTER_MS, STOPPED, finishingDetail, finishingTitle, stoppedWaiting, waitDetail, waitTitle } from "./waiting";
 import {
@@ -139,6 +140,7 @@ function selectView(next: string) {
   // An unsaved connection choice is dropped when leaving Settings.
   if (next !== "settings") connectionChanged(false);
   currentView=next;
+  remember();
   text("home-title", titles[next]);
   for (const name of ["files", "devices", "activity", "settings"])
     visible(`view-${name}`, name === next);
@@ -224,6 +226,7 @@ function render(status: HomeStatus) {
     : status.owner ? "Pauses access for your other devices. Your setup stays saved."
       : "Pauses connections. Your network and shared items stay saved.");
   const next = primaryScreen(status);
+  if (next === "workspace" && !status.leaving) resume(status);
   if (status.leaving) {
     show("leaving");
   } else if (next !== "welcome" || !["create-screen", "join-screen", "restore-screen"].includes(screen))
@@ -320,7 +323,8 @@ function render(status: HomeStatus) {
     // Only after pairing here, not when a known device reconnects at launch.
     if (hadStatus && (wasJoining || !el("pair-card").hidden)) message(`${status.peer} added.`);
     visible("pair-card", false);
-    selectView("files");
+    // A known device reconnecting at launch stays where the person left off.
+    if (hadStatus) selectView("files");
   }
 }
 function renderConnection(status: HomeStatus) {
@@ -813,6 +817,36 @@ async function sendTo(space: HomeSpace) {
 el("cancel-send").addEventListener("click", () => {
   if (sendId) void invoke("cancel_send", { id: sendId }).catch((error) => problem(String(error)));
 });
+/** Remembers where the person is, so a relaunch returns there. */
+function remember() {
+  try {
+    localStorage.setItem(PLACE_KEY, JSON.stringify(place(currentView as View, currentSpace?.id ?? null, folderPath)));
+  } catch {
+    // Without storage Connect simply starts at Shared.
+  }
+}
+let resumed = false;
+/** Once per launch, back to the view, Space and folder the person left. */
+function resume(status: HomeStatus) {
+  if (resumed) return;
+  resumed = true;
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(PLACE_KEY);
+  } catch {
+    return;
+  }
+  const to = resumeTo(readPlace(saved), status.spaces);
+  if (!to) return;
+  if (to.view !== currentView) selectView(to.view);
+  const space = to.space ? status.spaces.find((s) => s.id === to.space) : undefined;
+  if (!space || to.view !== "files" || space.kind === "inbox" && !space.own || isService(space)) return;
+  // After this render; a failure keeps the Spaces list and says why.
+  setTimeout(() => void run(el<HTMLButtonElement>("browse-button"), async () => {
+    await openSpace(space);
+    if (to.path.length) await loadFiles(false, to.path);
+  }), 0);
+}
 async function openSpace(space: HomeSpace) {
   const previous = { currentSpace, folderPath, page, files };
   currentSpace = space;
@@ -830,6 +864,8 @@ el("all-spaces").addEventListener("click", () => {
   currentSpace = null;
   page = null;
   files = [];
+  folderPath = [];
+  remember();
   visible("remote-folder", false);
   visible("file-preview", false);
   if (current) render(current);
@@ -933,6 +969,7 @@ async function loadFiles(more: boolean, directory = folderPath) {
   if (JSON.stringify(result.directory) !== JSON.stringify(folderPath)) input("file-search").value = "";
   folderPath = result.directory;
   page = result;
+  remember();
   renderBreadcrumbs();
   files = more ? [...files, ...result.files] : result.files;
   renderFiles();
