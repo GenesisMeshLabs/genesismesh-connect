@@ -32,10 +32,10 @@ pub(crate) async fn files(
     #[cfg(desktop)]
     {
         let _ = app;
-        let mut dialog = rfd::AsyncFileDialog::new().set_title(if media {
-            "Choose photos or videos"
-        } else {
-            "Choose a file"
+        let mut dialog = rfd::AsyncFileDialog::new().set_title(match (media, multiple) {
+            (true, _) => "Choose photos or videos",
+            (false, true) => "Choose files",
+            (false, false) => "Choose a file",
         });
         if media {
             dialog = dialog.add_filter(

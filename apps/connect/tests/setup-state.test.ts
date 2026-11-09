@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {availability,recoveryReminder,recoveryStatus} from "../src/setup-state.ts";
+import {availability,recoveryReminder,recoveryStatus,restoredMessage} from "../src/setup-state.ts";
 
 test("starting a network says where it runs and when others reach it",()=>{
   const phone=availability("phone");
@@ -26,4 +26,13 @@ test("the recovery row says whether and when a file was saved",()=>{
   assert.match(recoveryStatus("2026-11-08T08:00:00Z",now),/^Last saved yesterday/);
   assert.match(recoveryStatus("2026-10-30T08:00:00Z",now),/^Last saved 10 days ago/);
   assert.equal(recoveryStatus("not a date",now),"Brings this network back on another device");
+});
+
+test("after a restore Connect says what the recovery file cannot bring back",()=>{
+  const said=restoredMessage("2026-10-30T09:00:00Z","en-GB");
+  assert.match(said,/as it was on 30 October 2026/);
+  assert.match(said,/devices that joined later must join again/);
+  assert.match(said,/devices you removed later may have access again/);
+  assert.match(said,/Don't run this network on the old device again/);
+  assert.match(restoredMessage("garbled"),/when its recovery file was saved/);
 });

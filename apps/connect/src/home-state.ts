@@ -133,6 +133,8 @@ export function friendlyProblem(value: string) {
   if (/cancelled before anything was saved/i.test(value)) return "Creating your network was cancelled before anything was saved. Try again, and confirm your screen lock when your phone asks.";
   if (/secure_screen_lock_required/i.test(value)) return "Set a screen lock (PIN, pattern or password) on this phone first. It protects your network’s main key.";
   if (/device_unlock_required/i.test(value)) return "Unlock your phone, then try again.";
+  // A network restored from an older recovery file is behind what this device saw.
+  if (/CRL rollback|Key history rollback/i.test(value)) return "Your network was restored from a recovery file older than what this device has seen, so this device does not trust it. Ask the network owner; this device may need to leave and join again with a new invitation.";
   if (/owner declined/i.test(value)) return "The network owner didn’t allow this device. Ask them, then scan a new invitation.";
   if (/join link has expired/i.test(value)) return "This invitation has expired. Ask the network owner for a new invitation.";
   if (/Choose a Genesis Mesh join link|Invalid join link|Join link is too long/i.test(value)) return "This invitation isn’t valid. Scan the QR code again or ask the network owner for a new invitation.";

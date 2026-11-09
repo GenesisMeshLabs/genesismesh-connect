@@ -703,14 +703,15 @@ pub async fn recovery_create(
 }
 
 /// Bring a network back on this computer from a recovery file and its key.
-/// `false` when the owner cancels choosing the file.
+/// Returns when the file was saved, so the screen can say that later changes
+/// are not in it; `None` when the owner cancels choosing the file.
 #[tauri::command]
 pub async fn recovery_restore(
     key: String,
     app: tauri::AppHandle,
     state: tauri::State<'_, WorkflowState>,
     desktop: tauri::State<'_, crate::desktop::DesktopState>,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
     let key = zeroize::Zeroizing::new(key);
     #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
     {
@@ -734,7 +735,7 @@ pub async fn recovery_restore(
             .pick_file()
             .await
         else {
-            return Ok(false);
+            return Ok(None);
         };
         let mut owner = state.slot.lock().await;
         let mut slot = desktop.slot.lock().await;
@@ -755,6 +756,7 @@ pub async fn recovery_restore(
         .await
         .map_err(|_| "The network was not restored.".to_owned())?
         .map_err(|e| e.to_string())?;
+        let saved_at = restored.saved_at;
         owner.runtime = Some(restored.owner);
         owner.info = Some(restored.info);
         owner.problem = None;
@@ -764,7 +766,7 @@ pub async fn recovery_restore(
             slot.problem = Some(error.to_string());
         }
         slot.controller = Some(device);
-        Ok(true)
+        Ok(Some(saved_at))
     }
 }
 
@@ -836,7 +838,7 @@ async fn phone_recovery_create(app: &tauri::AppHandle) -> Result<Option<String>,
 async fn phone_recovery_restore(
     app: &tauri::AppHandle,
     key: zeroize::Zeroizing<String>,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
     use connect_core::owner::foreground::{ForegroundNetwork, NativeSetupConfig, record_restored};
     let _turn = SetupTurn::take().ok_or("Your network is already being set up.")?;
     let state = app.state::<WorkflowState>();
@@ -856,7 +858,7 @@ async fn phone_recovery_restore(
         .await
         .map_err(|e| e.to_string())?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     let directory = app
         .path()
@@ -880,6 +882,7 @@ async fn phone_recovery_restore(
     .map_err(|e| e.to_string())?;
     drop(file);
     let mut restored = restored;
+    let saved_at = restored.saved_at.clone();
     restored
         .device
         .enable_managed_connectivity()
@@ -903,7 +906,7 @@ async fn phone_recovery_restore(
     {
         slot.problem = Some(error.to_string());
     }
-    Ok(true)
+    Ok(Some(saved_at))
 }
 
 /// Answer devices' Space requests, one at a time, with this computer's owner

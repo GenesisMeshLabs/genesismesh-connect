@@ -141,6 +141,108 @@ mod desktop {
         Ok(())
     }
 
+    /// A device removed after the recovery file was saved, and seen removed by
+    /// another device, puts the restored network behind what that device has
+    /// seen. Today devices refuse it as a rollback: safe, but they cannot use
+    /// the restored network. See docs/restore-proposal.md.
+    #[tokio::test]
+    #[ignore = "Requires the packaged, standalone owner runtime"]
+    async fn devices_that_saw_a_later_removal_refuse_a_network_restored_from_an_older_file()
+    -> Result<()> {
+        use connect_core::recovery;
+        let directory = tempfile::tempdir()?;
+        let first = directory.path().join("first");
+        let mut owner = OwnerRuntime::start(&binary()?, &first.join("network-owner"))?;
+        let info = owner.create("Older file")?;
+        let mut computer =
+            DeviceController::prepare(&first.join("device"), info.url.clone(), info.pin.clone())?;
+        computer.enable_managed_connectivity()?;
+        let invite = owner.invite(&computer.status()?.node_public_key, true)?;
+        computer.enroll_host(&invite).await?;
+        let mut phone = DeviceController::prepare(
+            &directory.path().join("phone"),
+            info.url.clone(),
+            info.pin.clone(),
+        )?;
+        // Devices join as the app pairs them, with host invitations.
+        phone.enable_managed_connectivity()?;
+        let invite = owner.invite(&phone.status()?.node_public_key, true)?;
+        phone.enroll_host(&invite).await?;
+        let mut tablet = DeviceController::prepare(
+            &directory.path().join("tablet"),
+            info.url.clone(),
+            info.pin.clone(),
+        )?;
+        let tablet_node = tablet.status()?.node_public_key;
+        tablet.enable_managed_connectivity()?;
+        let invite = owner.invite(&tablet_node, true)?;
+        tablet.enroll_host(&invite).await?;
+        phone.refresh().await?;
+        let before = phone.status()?.trust_checkpoint.crl_sequence;
+
+        let file = directory.path().join("Older.gmrecovery");
+        let key = recovery::create(
+            &mut owner,
+            info.pin.clone(),
+            computer.recovery_identity()?,
+            &file,
+        )?;
+        // After the file: the tablet is removed, and the phone sees it.
+        let removal = owner.remove_device(&tablet_node)?;
+        phone.refresh().await?;
+        let seen = phone.status()?.trust_checkpoint.crl_sequence;
+        let tablet_on_old = tablet.refresh().await;
+        eprintln!(
+            "Removal revoked {} certificate(s). Removed tablet refresh against the old network: {}.",
+            removal.revoked,
+            tablet_on_old
+                .as_ref()
+                .map_or_else(|e| format!("refused: {e:#}"), |()| "accepted".into()),
+        );
+        drop(computer);
+        drop(owner);
+
+        let second = directory.path().join("second");
+        let start = |dir: &std::path::Path| OwnerRuntime::start(&binary()?, dir);
+        let mut restored = recovery::restore(
+            &file,
+            &key,
+            &second.join("network-owner"),
+            &second.join("device"),
+            start,
+        )?;
+        restored.device.refresh().await?;
+        let restored_sequence = restored.device.status()?.trust_checkpoint.crl_sequence;
+        phone.rebind_owned_authority(restored.info.url.clone(), &restored.info.pin)?;
+        let phone_after = phone.refresh().await;
+        tablet.rebind_owned_authority(restored.info.url.clone(), &restored.info.pin)?;
+        let tablet_after = tablet.refresh().await;
+        eprintln!(
+            "CRL sequence: before the file {before:?}, seen by the phone after the removal {seen:?},              restored network {restored_sequence:?}. Phone refresh against the restored network: {}.              Removed tablet refresh against it: {}.",
+            phone_after
+                .as_ref()
+                .map_or_else(|e| format!("refused: {e:#}"), |()| "accepted".into()),
+            tablet_after
+                .as_ref()
+                .map_or_else(|e| format!("refused: {e:#}"), |()| "accepted".into()),
+        );
+        assert_eq!(removal.revoked, 1);
+        assert_eq!(
+            (before, seen, restored_sequence),
+            (Some(0), Some(1), Some(0))
+        );
+        for refused in [phone_after, tablet_after] {
+            assert!(
+                format!("{:#}", refused.expect_err("A rollback is refused"))
+                    .contains("CRL rollback")
+            );
+        }
+        drop(phone);
+        drop(tablet);
+        drop(restored);
+        Ok(())
+    }
+
     #[tokio::test]
     #[ignore = "Requires the packaged, standalone owner runtime"]
     async fn a_recovery_file_brings_the_same_network_computer_back_elsewhere() -> Result<()> {
@@ -239,6 +341,12 @@ mod desktop {
             start,
         )?;
         assert_eq!(restored.info.pin, info.pin);
+        // The screen says the network is back as it was then.
+        let saved = chrono::DateTime::parse_from_rfc3339(&restored.saved_at)?;
+        assert!(
+            saved <= chrono::Utc::now(),
+            "Saved when the file was written"
+        );
         let status = restored.device.status()?;
         assert_eq!(status.node_public_key, node, "The same computer identity");
         assert_eq!(status.certificate_id, certificate);

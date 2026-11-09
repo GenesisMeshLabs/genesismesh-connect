@@ -13,7 +13,7 @@ import { el, input, showPage } from "./ui";
 import { fillIcons, icon, type IconName } from "./icons";
 import { setupAdvanced } from "./advanced";
 import { PLACE_KEY, place, readPlace, resumeTo, type View } from "./resume-state";
-import { availability, recoveryReminder, recoveryStatus, RECOVERY_SAVED_KEY } from "./setup-state";
+import { availability, recoveryReminder, recoveryStatus, restoredMessage, RECOVERY_SAVED_KEY } from "./setup-state";
 import { EXPLAIN_AFTER_MS, STOPPED, finishingDetail, finishingTitle, stoppedWaiting, waitDetail, waitTitle } from "./waiting";
 import {
   primaryScreen,
@@ -458,11 +458,10 @@ el("restore-form").addEventListener("submit", (event) => {
   void run(
     el<HTMLButtonElement>("restore-form").querySelector("button[type=submit]")!,
     async () => {
-      if (await invoke<boolean>("recovery_restore", { key: input("restore-key").value })) {
+      const savedAt = await invoke<string | null>("recovery_restore", { key: input("restore-key").value });
+      if (savedAt) {
         input("restore-key").value = "";
-        message(
-          "Your network is back. Your devices reconnect when they next check in. Share your items again from this device.",
-        );
+        message(`${restoredMessage(savedAt)} Your devices reconnect when they next check in; share your items again from this device.`);
         selectView("devices");
       }
     },
