@@ -30,6 +30,18 @@ export function waitDetail(ms: number): string {
   return `${elapsed(ms)} · ${why}`;
 }
 
+/**
+ * After the owner approves, the new device finishes joining, for at most 80
+ * seconds. Nothing to cancel: the approval may already be recorded.
+ */
+export function finishingTitle(device?: string | null): string {
+  const name = device?.trim();
+  return name ? `Finishing with ${name}` : "Finishing with the new device";
+}
+export function finishingDetail(ms: number): string {
+  return `${elapsed(ms)} · Approved. Waiting for it to finish joining. Keep Connect open on both devices.`;
+}
+
 export function stoppedWaiting(error: unknown): boolean {
   return String(error).includes(STOPPED);
 }

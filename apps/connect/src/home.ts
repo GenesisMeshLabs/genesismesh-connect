@@ -13,7 +13,7 @@ import { el, input, showPage } from "./ui";
 import { fillIcons, icon, type IconName } from "./icons";
 import { setupAdvanced } from "./advanced";
 import { availability, recoveryReminder, recoveryStatus, RECOVERY_SAVED_KEY } from "./setup-state";
-import { EXPLAIN_AFTER_MS, STOPPED, stoppedWaiting, waitDetail, waitTitle } from "./waiting";
+import { EXPLAIN_AFTER_MS, STOPPED, finishingDetail, finishingTitle, stoppedWaiting, waitDetail, waitTitle } from "./waiting";
 import {
   primaryScreen,
   isService,
@@ -628,7 +628,12 @@ el("approve-device").addEventListener(
   "click",
   () =>
     void run(el<HTMLButtonElement>("approve-device"), async () => {
-      await invoke("pair_approve", { id: approval });
+      const done = explainWait(null, finishingTitle(el("approval-name").textContent), finishingDetail);
+      try {
+        await invoke("pair_approve", { id: approval });
+      } finally {
+        done();
+      }
       message("Device approved and securely paired.");
     }),
 );
@@ -875,15 +880,15 @@ function renderBreadcrumbs() {
   });
 }
 /**
- * Explains a read that waits for another device, as while it restarts: who it
- * waits for, for how long, and a Cancel that stops waiting. Returns the cleanup.
+ * Explains a wait for another device after 2.5 seconds: who it waits for, for
+ * how long, and, with an id, a Cancel that stops waiting. Returns the cleanup.
  */
-function explainWait(id: string, device: string | null | undefined): () => void {
+function explainWait(id: string | null, title: string, detail: (ms: number) => string): () => void {
   const started = Date.now();
   const banner = el("wait-banner");
   const update = () => {
-    text("wait-title", waitTitle(device));
-    text("wait-detail", waitDetail(Date.now() - started));
+    text("wait-title", title);
+    text("wait-detail", detail(Date.now() - started));
   };
   let ticking: ReturnType<typeof setInterval> | undefined;
   const showing = setTimeout(() => {
@@ -893,6 +898,7 @@ function explainWait(id: string, device: string | null | undefined): () => void 
   }, EXPLAIN_AFTER_MS);
   const cancel = el<HTMLButtonElement>("wait-cancel");
   cancel.disabled = false;
+  cancel.hidden = !id;
   cancel.onclick = () => {
     cancel.disabled = true;
     text("wait-detail", "Stopping…");
@@ -908,7 +914,7 @@ function explainWait(id: string, device: string | null | undefined): () => void 
 async function loadFiles(more: boolean, directory = folderPath) {
   const remote = !(currentSpace?.own && !isService(currentSpace));
   const wait = remote ? crypto.randomUUID() : null;
-  const done = wait ? explainWait(wait, currentSpace?.host ?? current?.peer) : () => {};
+  const done = wait ? explainWait(wait, waitTitle(currentSpace?.host ?? current?.peer), waitDetail) : () => {};
   let result: FilePage;
   try {
     result = await invoke<FilePage>(remote ? "browse_files" : "browse_received", {

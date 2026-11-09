@@ -177,8 +177,11 @@ Merged since 7 November (#37 to #53), and this change:
   devices must reach it at any time, and on a phone that the screen lock
   protects the network's main key. Right after Create, a sheet offers to save a
   recovery file; Later leaves a reminder in Devices until one is saved, and
-  Settings says when the last one was saved. Checked in the browser with the
-  native layer stubbed (A17 viewport); not yet on the phone.
+  Settings says when the last one was saved. After the owner approves a new
+  device, which can take up to 80 seconds to finish joining, the screen says
+  "Finishing with <device>" and how long it has taken, with no Cancel, because
+  the approval may already be recorded. Checked in the browser with the native
+  layer stubbed (A17 viewport); not yet on the phone.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
