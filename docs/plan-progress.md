@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #53), and this change:
+Merged since 7 November (#37 to #54), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -170,7 +170,7 @@ Merged since 7 November (#37 to #53), and this change:
 - **Whole journeys in CI** (#53): the app's own command tests and the five
   real-node journeys (pair and restart, share a folder, send into an inbox,
   resume transfers, read through an outage) now run on every pull request.
-- **Start my network** (this change). The Create screen says where the network
+- **Start my network** (#54). The Create screen says where the network
   runs and when other devices reach it: on a phone, while Connect is open there
   and for two minutes after leaving it; on a computer, while it is on and
   Connect is open. It suggests a computer you keep on, or a home server, when
@@ -182,7 +182,7 @@ Merged since 7 November (#37 to #53), and this change:
   "Finishing with <device>" and how long it has taken, with no Cancel, because
   the approval may already be recorded. Checked in the browser with the native
   layer stubbed (A17 viewport); not yet on the phone.
-- **Returning resumes** (this change). Connect remembers the tab, the open
+- **Returning resumes** (#54). Connect remembers the tab, the open
   Space and the folder inside it on the device. When it starts again within a
   day, as after Android ended it in the background, it returns there and opens
   that folder again, while that Space is still shared with it; otherwise it
