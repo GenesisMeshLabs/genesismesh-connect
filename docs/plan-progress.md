@@ -207,6 +207,11 @@ Merged since 7 November (#37 to #55), and this change:
 - **Several files at once** (#55). Sharing files lets the person choose
   several plain files, up to 100, not only several photos and videos. Both
   devices see the batch named after its first file, as "report.pdf and 2 more".
+- **Send several files** (this change). Sending into another device's inbox
+  takes up to 100 files, sent one after another with "File 2 of 5". At the end
+  the screen names what the other device saved them as; if one fails or the
+  person cancels, it says which arrived and that the rest were not sent, and
+  shows the cause on its own. Each file is sent exactly as before.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in

@@ -53,11 +53,32 @@ export function spaceSummary(space: HomeSpace) {
   return space.own ? "Shared by you · read-only" : `From ${space.host}`;
 }
 /** A send's progress in a few words. */
-export function sendSummary(progress: { state: string; sent: number; total: number; saved_as: string | null }) {
-  if (progress.state === "checking") return "Preparing…";
-  if (progress.state === "complete") return progress.saved_as ? `Sent · saved as ${progress.saved_as}` : "Sent";
-  if (progress.state === "canceled") return "Sending canceled";
-  return `${formatBytes(progress.sent)} of ${formatBytes(progress.total)}`;
+export interface SendState {
+  state: string; sent: number; total: number; saved_as: string | null;
+  /** Several files go one after another; older hosts report none of these. */
+  index?: number; count?: number; saved?: string[];
+}
+/** Names, the first few, then how many more. */
+function someNames(names: string[], shown = 3) {
+  return names.length <= shown ? names.join(", ") : `${names.slice(0, shown).join(", ")} and ${names.length - shown} more`;
+}
+export function sendSummary(progress: SendState) {
+  const count = progress.count ?? 1, saved = progress.saved ?? (progress.saved_as ? [progress.saved_as] : []);
+  const which = count > 1 ? `File ${progress.index ?? 1} of ${count} · ` : "";
+  if (progress.state === "checking") return `${which}Preparing…`;
+  if (progress.state === "complete")
+    return count > 1 ? `Sent ${count} files · saved as ${someNames(saved)}` : progress.saved_as ? `Sent · saved as ${progress.saved_as}` : "Sent";
+  if (progress.state === "canceled")
+    return count > 1 && saved.length ? `Stopped after ${saved.length} of ${count} files · saved as ${someNames(saved)}. The others were not sent.` : "Sending canceled";
+  return `${which}${formatBytes(progress.sent)} of ${formatBytes(progress.total)}`;
+}
+/** When one of several files fails, which ones already arrived; the cause is shown on its own. */
+export function sendPartial(progress: SendState) {
+  const count = progress.count ?? 1, saved = progress.saved ?? [];
+  if (count < 2) return "";
+  return saved.length
+    ? `${saved.length} of ${count} files arrived, saved as ${someNames(saved)}. The rest were not sent.`
+    : `None of the ${count} files were sent.`;
 }
 /** What the empty Files view suggests next. */
 export function filesEmptyText(status: HomeStatus) {

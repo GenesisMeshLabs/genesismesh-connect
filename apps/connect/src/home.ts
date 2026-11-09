@@ -25,6 +25,8 @@ import {
   connectionSummary,
   spaceSummary,
   sendSummary,
+  sendPartial,
+  type SendState,
   filesEmptyText,
   newAsks,
   type HomeSpace,
@@ -791,7 +793,7 @@ function spaceRow(space: HomeSpace, status: HomeStatus) {
   }
   return row;
 }
-interface SendProgress {
+interface SendProgress extends SendState {
   state: "checking" | "sending" | "complete" | "failed" | "canceled";
   sent: number; total: number; problem: string | null; saved_as: string | null; name: string;
 }
@@ -804,9 +806,14 @@ async function sendTo(space: HomeSpace) {
   try {
     while (true) {
       const progress = await invoke<SendProgress>("send_status", { id });
-      message(`${progress.name} to ${space.host}: ${sendSummary(progress)}`);
+      const several = (progress.count ?? 1) > 1 && (progress.state === "complete" || progress.state === "canceled");
+      message(several ? `To ${space.host}: ${sendSummary(progress)}` : `${progress.name} to ${space.host}: ${sendSummary(progress)}`);
       if (progress.state === "complete" || progress.state === "canceled") return;
-      if (progress.state === "failed") throw new Error(progress.problem || "Sending failed. Please try again.");
+      if (progress.state === "failed") {
+        // What arrived stays said; the cause is shown on its own.
+        message(sendPartial(progress) ? `To ${space.host}: ${sendPartial(progress)}` : "");
+        throw new Error(progress.problem || "Sending failed. Please try again.");
+      }
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
   } finally {
