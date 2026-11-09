@@ -180,10 +180,10 @@ jobs:
           python -m pip install -r apps/connect/authority/core-requirements.txt -r apps/connect/authority/build-requirements.txt
           echo "CONNECT_NA_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
           echo 'RUSTUP_TOOLCHAIN=1.98.0' >> "$GITHUB_ENV"
+      - name: Build standalone authority from installed pinned wheel (the app bundles it)
+        run: python apps/connect/authority/build.py
       - name: App commands (waits, downloads, sends, sharing, lifecycle)
         run: cargo test -p genesismesh-connect --lib --locked
-      - name: Build standalone authority from installed pinned wheel
-        run: python apps/connect/authority/build.py
       - name: Pair, share, send, resume, restart and outage journeys on a real node
         run: |
           export CONNECT_OWNER_BINARY="$PWD/apps/connect/src-tauri/binaries/genesismesh-authority-x86_64-unknown-linux-gnu"
