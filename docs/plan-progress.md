@@ -181,7 +181,15 @@ Merged since 7 November (#37 to #57), and this change:
   the owner key protected by DPAPI, driven by the Edge WebDriver that matches
   the runner's WebView2. It runs only on the hosted runner: this computer's
   Smart App Control blocks fresh Rust builds, and Windows keeps the app's data
-  and keys in the account itself.
+  and keys in the account itself. First passing hosted run (Windows Server
+  2025, WebView2 156): created at 7.1 s, joined and ready at 14.0 s, removed at
+  14.5 s, reopened at 16.3 s. Getting there found two things. The WebView2
+  options wry always sets take precedence over the debugging arguments Edge
+  WebDriver passes, so a debug-only `webdriver` feature, used only by this
+  build, adds them; release builds cannot contain it. And joining overflowed
+  the 1 MiB main-thread stack Windows gives (Linux gives 8 MiB), in the test
+  device and in the same way the agent: both now run on a worker thread with
+  8 MiB, so an agent can join from Windows.
 - **The desktop journey through the app, in CI** (#56). The Linux app,
   built as installed, is driven through its own screens: Welcome, create a
   network, invite, the joining device and the owner show the same code,
