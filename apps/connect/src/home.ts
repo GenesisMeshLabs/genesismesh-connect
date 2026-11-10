@@ -25,6 +25,8 @@ import {
   connectionSummary,
   spaceSummary,
   sendSummary,
+  sendPartial,
+  type SendState,
   filesEmptyText,
   newAsks,
   type HomeSpace,
@@ -631,15 +633,30 @@ el("approve-device").addEventListener(
   "click",
   () =>
     void run(el<HTMLButtonElement>("approve-device"), async () => {
-      const done = explainWait(null, finishingTitle(el("approval-name").textContent), finishingDetail);
+      const name = el("approval-name").textContent ?? "";
+      const done = explainWait(null, finishingTitle(name), finishingDetail);
       try {
         await invoke("pair_approve", { id: approval });
       } finally {
         done();
       }
       message("Device approved and securely paired.");
+      // The first useful action: share something with the new device.
+      await refresh();
+      const joined = current?.devices.filter((device) => device.name === name).slice(-1)[0];
+      if (joined && current?.can_share) offerFirstShare(joined.id, name);
     }),
 );
+/** After a device joins, offer to share something with it right away. */
+function offerFirstShare(node: string, name: string) {
+  text("next-step-title", `${name} joined. Share something with it now?`);
+  visible("next-step", true);
+  el("next-step-share").onclick = () => {
+    visible("next-step", false);
+    sharing.shareWith(node, () => message(`Shared with ${name}.`));
+  };
+}
+el("next-step-later").addEventListener("click", () => visible("next-step", false));
 el("reject-device").addEventListener(
   "click",
   () =>
@@ -791,7 +808,7 @@ function spaceRow(space: HomeSpace, status: HomeStatus) {
   }
   return row;
 }
-interface SendProgress {
+interface SendProgress extends SendState {
   state: "checking" | "sending" | "complete" | "failed" | "canceled";
   sent: number; total: number; problem: string | null; saved_as: string | null; name: string;
 }
@@ -804,9 +821,14 @@ async function sendTo(space: HomeSpace) {
   try {
     while (true) {
       const progress = await invoke<SendProgress>("send_status", { id });
-      message(`${progress.name} to ${space.host}: ${sendSummary(progress)}`);
+      const several = (progress.count ?? 1) > 1 && (progress.state === "complete" || progress.state === "canceled");
+      message(several ? `To ${space.host}: ${sendSummary(progress)}` : `${progress.name} to ${space.host}: ${sendSummary(progress)}`);
       if (progress.state === "complete" || progress.state === "canceled") return;
-      if (progress.state === "failed") throw new Error(progress.problem || "Sending failed. Please try again.");
+      if (progress.state === "failed") {
+        // What arrived stays said; the cause is shown on its own.
+        message(sendPartial(progress) ? `To ${space.host}: ${sendPartial(progress)}` : "");
+        throw new Error(progress.problem || "Sending failed. Please try again.");
+      }
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
   } finally {

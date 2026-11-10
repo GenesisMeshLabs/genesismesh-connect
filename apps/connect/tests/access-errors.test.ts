@@ -13,3 +13,7 @@ test("a device that refuses a network restored from an older file says why",()=>
   assert.match(friendlyProblem("Trust refresh failed: CRL rollback"),/restored from a recovery file older than what this device has seen/);
   assert.match(friendlyProblem("Key history rollback or equivocation"),/leave and join again/);
 });
+
+test("a removed device is told it was removed, not to wait",()=>{
+  assert.match(friendlyProblem("Trust refresh failed: Certificate revoked"),/removed from your network/);
+});

@@ -18,6 +18,8 @@ impl Drop for Picked {
     }
 }
 pub(crate) const MAX_SELECTION: usize = 100;
+/// One file, for choosing a recovery file on a phone.
+#[cfg(mobile)]
 pub(crate) async fn file(app: &tauri::AppHandle, media: bool) -> Result<Option<Picked>> {
     Ok(files(app, media, false).await?.pop())
 }

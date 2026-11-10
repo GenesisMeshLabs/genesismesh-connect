@@ -1,10 +1,13 @@
 //! Access requests that devices and agents send to the network computer: what
 //! they need and why, in their own words, for the owner to answer on screen.
 //! A request grants nothing. The owner answers by sharing something with the
-//! device, or declines it; either way it leaves the list.
+//! device, or declines it; either way it leaves the list. Waiting requests are
+//! kept in a file beside the network, so they survive the app being ended in
+//! the background or restarted, until answered or a day old.
 use anyhow::{Result, ensure};
 use chrono::{DateTime, Duration, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 /// At most this many requests wait at once; one per device.
 pub const MAX_WAITING: usize = 16;
@@ -13,7 +16,7 @@ pub const MAX_TEXT: usize = 280;
 /// A request nobody answered is dropped after this long.
 const KEPT_HOURS: i64 = 24;
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ask {
     pub id: String,
     pub node: String,
@@ -31,12 +34,54 @@ pub fn text(value: &str) -> Result<String> {
     Ok(value.to_owned())
 }
 
+/// The largest request file read back: 16 requests of 280 characters.
+const MAX_FILE: u64 = 64 * 1024;
+
 #[derive(Default)]
 pub struct Asks {
     waiting: Vec<Ask>,
+    /// Where the waiting requests are kept; none keeps them in memory only.
+    file: Option<PathBuf>,
 }
 
 impl Asks {
+    /// The requests kept at `file`, without those older than a day. A missing,
+    /// oversized or unreadable file starts an empty list; it is replaced at the
+    /// next change.
+    pub fn open(file: &Path) -> Self {
+        let waiting = std::fs::File::open(file)
+            .ok()
+            .filter(|f| f.metadata().is_ok_and(|m| m.len() <= MAX_FILE))
+            .and_then(|f| serde_json::from_reader::<_, Vec<Ask>>(f).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|ask| text(&ask.text).is_ok())
+            .take(MAX_WAITING)
+            .collect();
+        let mut asks = Self {
+            waiting,
+            file: Some(file.to_owned()),
+        };
+        asks.expire(Utc::now());
+        asks
+    }
+
+    /// Write the list beside its file and move it into place, so a crash
+    /// leaves the previous list or the new one, never half of one.
+    fn keep(&self) {
+        let Some(file) = &self.file else { return };
+        let written = (|| {
+            let partial = file.with_extension("partial");
+            std::fs::write(&partial, serde_json::to_vec(&self.waiting)?)?;
+            std::fs::rename(&partial, file)?;
+            Ok::<_, anyhow::Error>(())
+        })();
+        if let Err(problem) = written {
+            // Requests still work in memory; they would only be lost at a restart.
+            eprintln!("Waiting requests were not saved: {problem:#}");
+        }
+    }
+
     /// Keep a device's request; a newer one replaces its earlier one.
     pub fn add(&mut self, node: &str, value: &str, now: DateTime<Utc>) -> Result<String> {
         let value = text(value)?;
@@ -53,6 +98,7 @@ impl Asks {
             text: value,
             at: now,
         });
+        self.keep();
         Ok(id)
     }
 
@@ -75,17 +121,27 @@ impl Asks {
     /// Answer a request: it leaves the list. `None` if it already left.
     pub fn close(&mut self, id: &str) -> Option<Ask> {
         let index = self.waiting.iter().position(|ask| ask.id == id)?;
-        Some(self.waiting.remove(index))
+        let ask = self.waiting.remove(index);
+        self.keep();
+        Some(ask)
     }
 
     /// Drop the request of a device that left the network.
     pub fn forget(&mut self, node: &str) {
+        let before = self.waiting.len();
         self.waiting.retain(|ask| ask.node != node);
+        if self.waiting.len() != before {
+            self.keep();
+        }
     }
 
     fn expire(&mut self, now: DateTime<Utc>) {
+        let before = self.waiting.len();
         self.waiting
             .retain(|ask| now - ask.at < Duration::hours(KEPT_HOURS));
+        if self.waiting.len() != before {
+            self.keep();
+        }
     }
 }
 
@@ -122,6 +178,42 @@ mod tests {
         assert_eq!(asks.waiting(now).len(), MAX_WAITING - 2);
         let later = now + Duration::hours(KEPT_HOURS);
         assert!(asks.waiting(later).is_empty());
+    }
+
+    #[test]
+    fn waiting_requests_survive_a_restart_until_answered_or_a_day_old() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("asks.json");
+        let now = Utc::now();
+        let mut asks = Asks::open(&file);
+        assert!(asks.waiting(now).is_empty(), "No file yet: nothing waits");
+        let kept = asks.add("agent", "The 2025 tax papers", now).unwrap();
+        let answered = asks.add("tablet", "Holiday photos", now).unwrap();
+        asks.close(&answered);
+        // The app ends and starts again.
+        let mut reopened = Asks::open(&file);
+        let waiting = reopened.waiting(now);
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(
+            (waiting[0].id.as_str(), waiting[0].node.as_str()),
+            (kept.as_str(), "agent")
+        );
+        // A request a day old is gone after the next start, and the file says so.
+        let mut old = Asks::open(&file);
+        old.waiting.push(Ask {
+            id: "old".into(),
+            node: "laptop".into(),
+            text: "Something from yesterday".into(),
+            at: now - Duration::hours(KEPT_HOURS + 1),
+        });
+        old.keep();
+        assert_eq!(Asks::open(&file).waiting(now).len(), 1);
+        // A device that left takes its request with it, also on disk.
+        reopened.forget("agent");
+        assert!(Asks::open(&file).waiting(now).is_empty());
+        // A damaged file starts an empty list.
+        std::fs::write(&file, b"{not json").unwrap();
+        assert!(Asks::open(&file).waiting(now).is_empty());
     }
 
     #[test]

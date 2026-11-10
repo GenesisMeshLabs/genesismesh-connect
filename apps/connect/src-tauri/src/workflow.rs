@@ -93,6 +93,11 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let configured = cfg!(any(windows, target_os = "macos", target_os = "linux"))
         && directory.join("owner.json").is_file();
     let (owner, requests) = tokio::sync::mpsc::channel(8);
+    // Waiting requests outlive the app being ended in the background. They are
+    // kept in the app's own directory: the network folder must stay empty for
+    // a restore, and a phone network keeps no files there.
+    let asks =
+        connect_core::owner::asks::Asks::open(&directory.with_file_name("owner-requests.json"));
     app.manage(WorkflowState {
         directory,
         slot: Mutex::new(OwnerSlot {
@@ -101,7 +106,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             problem: None,
             pairing: None,
             joining: None,
-            asks: Default::default(),
+            asks,
             #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
             lease: None,
         }),

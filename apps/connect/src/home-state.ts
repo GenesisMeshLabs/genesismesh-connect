@@ -53,11 +53,32 @@ export function spaceSummary(space: HomeSpace) {
   return space.own ? "Shared by you · read-only" : `From ${space.host}`;
 }
 /** A send's progress in a few words. */
-export function sendSummary(progress: { state: string; sent: number; total: number; saved_as: string | null }) {
-  if (progress.state === "checking") return "Preparing…";
-  if (progress.state === "complete") return progress.saved_as ? `Sent · saved as ${progress.saved_as}` : "Sent";
-  if (progress.state === "canceled") return "Sending canceled";
-  return `${formatBytes(progress.sent)} of ${formatBytes(progress.total)}`;
+export interface SendState {
+  state: string; sent: number; total: number; saved_as: string | null;
+  /** Several files go one after another; older hosts report none of these. */
+  index?: number; count?: number; saved?: string[];
+}
+/** Names, the first few, then how many more. */
+function someNames(names: string[], shown = 3) {
+  return names.length <= shown ? names.join(", ") : `${names.slice(0, shown).join(", ")} and ${names.length - shown} more`;
+}
+export function sendSummary(progress: SendState) {
+  const count = progress.count ?? 1, saved = progress.saved ?? (progress.saved_as ? [progress.saved_as] : []);
+  const which = count > 1 ? `File ${progress.index ?? 1} of ${count} · ` : "";
+  if (progress.state === "checking") return `${which}Preparing…`;
+  if (progress.state === "complete")
+    return count > 1 ? `Sent ${count} files · saved as ${someNames(saved)}` : progress.saved_as ? `Sent · saved as ${progress.saved_as}` : "Sent";
+  if (progress.state === "canceled")
+    return count > 1 && saved.length ? `Stopped after ${saved.length} of ${count} files · saved as ${someNames(saved)}. The others were not sent.` : "Sending canceled";
+  return `${which}${formatBytes(progress.sent)} of ${formatBytes(progress.total)}`;
+}
+/** When one of several files fails, which ones already arrived; the cause is shown on its own. */
+export function sendPartial(progress: SendState) {
+  const count = progress.count ?? 1, saved = progress.saved ?? [];
+  if (count < 2) return "";
+  return saved.length
+    ? `${saved.length} of ${count} files arrived, saved as ${someNames(saved)}. The rest were not sent.`
+    : `None of the ${count} files were sent.`;
 }
 /** What the empty Files view suggests next. */
 export function filesEmptyText(status: HomeStatus) {
@@ -135,6 +156,8 @@ export function friendlyProblem(value: string) {
   if (/device_unlock_required/i.test(value)) return "Unlock your phone, then try again.";
   // A network restored from an older recovery file is behind what this device saw.
   if (/CRL rollback|Key history rollback/i.test(value)) return "Your network was restored from a recovery file older than what this device has seen, so this device does not trust it. Ask the network owner; this device may need to leave and join again with a new invitation.";
+  // The network computer removed this device: nothing to wait for or retry.
+  if (/Certificate revoked/i.test(value)) return "This device was removed from your network. To use it again, ask the network owner for a new invitation, then leave and join again.";
   if (/owner declined/i.test(value)) return "The network owner didn’t allow this device. Ask them, then scan a new invitation.";
   if (/join link has expired/i.test(value)) return "This invitation has expired. Ask the network owner for a new invitation.";
   if (/Choose a Genesis Mesh join link|Invalid join link|Join link is too long/i.test(value)) return "This invitation isn’t valid. Scan the QR code again or ask the network owner for a new invitation.";

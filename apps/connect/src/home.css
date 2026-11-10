@@ -150,6 +150,7 @@
   font-variant-numeric: tabular-nums;
 }
 .home-main > #approval-card,
+.home-main > #next-step,
 .home-main > #pair-card {
   order: -1;
 }
@@ -255,6 +256,10 @@
   border: 0;
   border-radius: 12px;
   color: var(--text);
+}
+/* The last device row, and its menu, stay clear of the floating button. */
+.everyday #view-devices:has(.fab:not([hidden])) {
+  padding-bottom: 88px;
 }
 .everyday .fab {
   position: fixed;

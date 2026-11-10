@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #55), and this change:
+Merged since 7 November (#37 to #56), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -167,12 +167,23 @@ Merged since 7 November (#37 to #55), and this change:
   stops the read at once; the read waits for its host instead. A starting agent
   or test device now waits as long as a running one, two minutes, so a restart
   like those measured no longer fails it.
-- **The desktop journey through the app, in CI** (this change). The Linux app,
+- **A first useful action after joining** (this change). Once the owner
+  approves a device, a card says it joined and that nothing is shared with it
+  yet, and offers Share with it, which opens the share sheet with that device
+  chosen, or Later. The Devices list now keeps its last row and menu clear of
+  the floating Add device button.
+- **Requests survive a restart** (this change). Requests from devices and agents
+  waiting for the owner were kept only in the app's memory, so Android ending
+  Connect in the background lost them. They are now kept in a file in the
+  app's own directory until answered, declined or a day old.
+- **The desktop journey through the app, in CI** (#56). The Linux app,
   built as installed, is driven through its own screens: Welcome, create a
   network, invite, the joining device and the owner show the same code,
   approve, the device is listed and ready, remove it, restart and reopen
   without Welcome. Locally in WSL it takes about 19 seconds end to end (create
   4.4 s, join request 3 s after the invitation, joined 6.6 s after approval).
+  First hosted run (#56, Linux runner, Xvfb): created at 4.9 s, joined and
+  ready at 12.4 s, removed at 14.5 s, reopened at 15.8 s.
 - **Whole journeys in CI** (#53): the app's own command tests and the five
   real-node journeys (pair and restart, share a folder, send into an inbox,
   resume transfers, read through an outage) now run on every pull request.
@@ -207,6 +218,16 @@ Merged since 7 November (#37 to #55), and this change:
 - **Several files at once** (#55). Sharing files lets the person choose
   several plain files, up to 100, not only several photos and videos. Both
   devices see the batch named after its first file, as "report.pdf and 2 more".
+- **Send several files** (this change). Sending into another device's inbox
+  takes up to 100 files, sent one after another with "File 2 of 5". At the end
+  the screen names what the other device saved them as; if one fails or the
+  person cancels, it says which arrived and that the rest were not sent, and
+  shows the cause on its own. Each file is sent exactly as before.
+- **A removed device is told so** (this change). A device removed from the
+  network hears "Certificate revoked" from the network computer within a
+  second, when it checks in and when it starts again, and the app now says it
+  was removed and needs a new invitation instead of an error. A new real-node
+  test checks this and that the devices that stay are unaffected.
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
@@ -270,6 +291,10 @@ Known limits and open findings:
   the file was saved refuse the restored network; nothing fences an old copy
   from a restored one. Options in the [restore proposal](restore-proposal.md)
   wait for a decision.
+- **Removing the last device.** When the device removed was the only one, the
+  network computer stops listening until another device pairs, so the removed
+  device cannot hear that it was removed; it waits two minutes and is told to
+  keep Connect open on the network computer. Removal itself is unaffected.
 - **12-hour relay stall:** seen once, unexplained, not reproduced by a 5-minute
   pause or by 5 h 42 min on screen.
 - **Certificate renewal every 4 minutes.** The documented freshness policy

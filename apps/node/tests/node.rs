@@ -846,6 +846,68 @@ fn a_running_device_reads_through_a_network_computer_restart() -> Result<()> {
     Ok(())
 }
 
+#[test]
+#[ignore = "Requires the packaged, standalone owner runtime"]
+fn a_removed_device_hears_that_it_was_removed() -> Result<()> {
+    let _one = one_at_a_time();
+    let directory = tempfile::tempdir()?;
+    devices_sealed();
+    let (store, credentials) = sealed(directory.path(), "server")?;
+    let server = Server {
+        state: directory.path().join("server"),
+        store,
+        credentials,
+    };
+    let init = server.command(&["init", "--name", "Home"])?.output()?;
+    ensure!(
+        init.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let runtime = tokio::runtime::Runtime::new()?;
+    let child = server.run()?;
+    let outcome = (|| {
+        server.control(json!({"op":"connection","setting":"local_network"}))?;
+        let mut phone = join(&server, &runtime, &directory.path().join("phone"), "Phone")?;
+        let mut pc = join(&server, &runtime, &directory.path().join("pc"), "Home PC")?;
+        runtime.block_on(phone.check_network())?;
+        server.control(json!({"op":"remove","name":"Phone"}))?;
+        let started = Instant::now();
+        // The devices that stay are not affected.
+        let kept = runtime.block_on(pc.check_network());
+        assert!(started.elapsed() < Duration::from_secs(10));
+        kept?;
+        // The removed device hears at once that its certificate is revoked,
+        // when it checks in and when it starts again: no wait for a network
+        // computer that is there and answering.
+        let started = Instant::now();
+        let refreshed = runtime.block_on(phone.refresh());
+        let took = started.elapsed();
+        let said = format!("{:#}", refreshed.expect_err("A removed device is refused"));
+        assert!(said.contains("Certificate revoked"), "{said}");
+        assert!(took < Duration::from_secs(10), "Took {took:?}");
+        assert!(!phone.status()?.ready);
+        runtime.block_on(phone.stop());
+        drop(phone);
+        let mut again = DeviceController::open(&directory.path().join("phone"))?;
+        let started = Instant::now();
+        let reached = runtime.block_on(again.connect_when_reachable());
+        let took = started.elapsed();
+        let said = format!("{:#}", reached.expect_err("A removed device is refused"));
+        assert!(said.contains("Certificate revoked"), "{said}");
+        assert!(
+            took < Duration::from_secs(10),
+            "Asked again for {took:?}: {said}"
+        );
+        eprintln!("A removed device heard {said:?} after {took:?}");
+        runtime.block_on(again.stop());
+        runtime.block_on(pc.stop());
+        Ok::<_, anyhow::Error>(())
+    })();
+    stop(child)?;
+    outcome
+}
+
 /// Send `bytes` as `name` into `host`'s inbox, window by window, declaring
 /// `declared` as the whole file's SHA-256. Returns the name it was saved as.
 fn send_file(
