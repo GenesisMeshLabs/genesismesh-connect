@@ -381,6 +381,11 @@ fn devices_join_one_after_another() -> Result<()> {
     let outcome = (|| {
         let mut devices = Vec::new();
         for number in 1..=8 {
+            // The first five at once, more than the old limit of three; the
+            // rest spaced so that a fast machine also crosses a refresh.
+            if number > 5 {
+                std::thread::sleep(Duration::from_secs(5));
+            }
             let name = format!("Device {number}");
             let device = join(
                 &server,
