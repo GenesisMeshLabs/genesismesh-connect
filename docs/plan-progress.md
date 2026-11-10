@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #54), and this change:
+Merged since 7 November (#37 to #55), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -167,6 +167,12 @@ Merged since 7 November (#37 to #54), and this change:
   stops the read at once; the read waits for its host instead. A starting agent
   or test device now waits as long as a running one, two minutes, so a restart
   like those measured no longer fails it.
+- **The desktop journey through the app, in CI** (this change). The Linux app,
+  built as installed, is driven through its own screens: Welcome, create a
+  network, invite, the joining device and the owner show the same code,
+  approve, the device is listed and ready, remove it, restart and reopen
+  without Welcome. Locally in WSL it takes about 19 seconds end to end (create
+  4.4 s, join request 3 s after the invitation, joined 6.6 s after approval).
 - **Whole journeys in CI** (#53): the app's own command tests and the five
   real-node journeys (pair and restart, share a folder, send into an inbox,
   resume transfers, read through an outage) now run on every pull request.
@@ -189,7 +195,7 @@ Merged since 7 November (#37 to #54), and this change:
   keeps the tab and shows the list. A known device reconnecting at launch no
   longer jumps to Shared. Checked in the browser with the native layer stubbed;
   not yet on the phone.
-- **Restore says what the file cannot bring back** (this change). Restoring
+- **Restore says what the file cannot bring back** (#55). Restoring
   returns when the recovery file was saved; the restore screen and the result
   say the network is back as it was then, that devices which joined later must
   join again, that devices removed later may have access again, and that the old
@@ -198,7 +204,7 @@ Merged since 7 November (#37 to #54), and this change:
   as a rollback ("CRL rollback"), safely but with no way forward. A device that
   refuses now says why. Fixing it, and fencing an old copy from a restored one,
   need decisions: see the [restore proposal](restore-proposal.md).
-- **Several files at once** (this change). Sharing files lets the person choose
+- **Several files at once** (#55). Sharing files lets the person choose
   several plain files, up to 100, not only several photos and videos. Both
   devices see the batch named after its first file, as "report.pdf and 2 more".
 

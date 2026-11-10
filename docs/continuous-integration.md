@@ -12,7 +12,12 @@ and `Connect qualification`. The latter can also be started manually. It checks:
   downloads, sends, sharing, lifecycle), then the headless node with the
   packaged authority while devices pair, share a folder, send into an inbox,
   resume transfers, restart, and read through a network computer restart. They
-  run one at a time, about 13 minutes.
+  run one at a time, about 13 minutes. Then the desktop app itself, built as
+  installed, is driven through its screens over WebDriver (`tauri-driver` with
+  WebKitWebDriver, a virtual display and a throwaway keyring): create a
+  network, invite the headless test device, compare codes and approve, remove
+  it, restart and reopen (`apps/connect/tests/desktop`). Screenshots of each
+  step are kept with the run.
 - An arm64 Android debug APK built with the existing initialization/branding/
   permission patches, followed by signature verification, 16 KiB ELF/RELRO/ZIP
   alignment refusal checks and SHA-256 inventory.
