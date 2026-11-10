@@ -395,7 +395,9 @@ jobs:
           test "${#apks[@]}" -eq 1
           echo "JOURNEY_APK=$PWD/${apks[0]}" >> "$GITHUB_ENV"
       - name: Start the emulator
+        timeout-minutes: 20
         run: |
+          trap 'tail -60 "$RUNNER_TEMP/emulator.log" || true' ERR
           # Hardware acceleration for the emulator on the hosted Linux runner.
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
@@ -403,7 +405,9 @@ jobs:
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force -n journey -k "$AVD_IMAGE" -d pixel_6
           nohup "$ANDROID_HOME/emulator/emulator" -avd journey -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader_indirect -memory 4096 -cores 4 > "$RUNNER_TEMP/emulator.log" 2>&1 &
-          adb wait-for-device
+          ls -l /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+          timeout 300 adb wait-for-device
           timeout 600 bash -c 'until [ "$(adb shell getprop sys.boot_completed | tr -d "\r")" = 1 ]; do sleep 5; done'
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
