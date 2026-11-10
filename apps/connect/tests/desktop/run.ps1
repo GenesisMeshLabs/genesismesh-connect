@@ -54,12 +54,33 @@ foreach ($i in 1..40) {
 $exited = $first.HasExited
 if (-not $exited) { $first | Stop-Process -Force; $first.WaitForExit() }
 Get-Process | Where-Object { $_.ProcessName -like 'genesismesh-authority*' } | Stop-Process -Force
+Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 if (-not $shown) {
   Write-Host "The app did not show its window (exited: $exited, code: $(if ($exited) { $first.ExitCode }))."
   Get-Content "$log.out", "$log.err" -ErrorAction SilentlyContinue | Select-Object -Last 60
   throw 'The app did not start'
 }
 Write-Host 'Preflight: the app starts and shows its window.'
+
+# Probe: does the app's WebView2 take debugging arguments from the environment,
+# as Edge WebDriver passes them, and where does it write DevToolsActivePort?
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
+$probe = Start-Process $App -PassThru
+$answered = $false
+foreach ($i in 1..40) {
+  Start-Sleep -Milliseconds 500
+  try { $v = Invoke-RestMethod http://127.0.0.1:9222/json/version -TimeoutSec 2; $answered = $true; break } catch { }
+}
+Write-Host "Probe: DevTools on 9222 answered: $answered $(if ($answered) { $v.Browser })"
+Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" | Select-Object -First 3 | ForEach-Object {
+  $line = $_.CommandLine
+  Write-Host ("Probe: webview2 " + ($line.Substring(0, [Math]::Min(600, $line.Length))))
+}
+Get-ChildItem -Path $env:LOCALAPPDATA, $env:TEMP -Recurse -Filter DevToolsActivePort -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Host "Probe: port file $($_.FullName)" }
+$probe | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+Start-Sleep -Seconds 2
 
 $driver = Start-Process tauri-driver -ArgumentList '--port', '4444', '--native-driver', $wrapper -PassThru -NoNewWindow
 try {
