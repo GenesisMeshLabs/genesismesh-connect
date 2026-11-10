@@ -1,13 +1,13 @@
 // Line icons from Lucide (ISC license), drawn at 24px with the current colour.
 import {
   createElement, type IconNode,
-  AppWindow, ArchiveRestore, ArrowLeft, ChevronRight, CircleAlert, CircleCheck, Clock, Copy, EllipsisVertical,
+  AppWindow, ArchiveRestore, ArrowLeft, Bot, ChevronRight, CircleAlert, CircleCheck, Clock, Copy, EllipsisVertical,
   File, FileText, Folder, FolderPlus, Folders, History, House, Image, Inbox, KeyRound, Link, LogOut,
   MonitorSmartphone, Plus, Power, RefreshCw, Send, Settings, Smartphone, Terminal, Trash2, WifiOff, Wrench, X,
 } from "lucide";
 
 const icons = {
-  "app-window": AppWindow, "archive-restore": ArchiveRestore, "arrow-left": ArrowLeft, "chevron-right": ChevronRight,
+  "app-window": AppWindow, "archive-restore": ArchiveRestore, "arrow-left": ArrowLeft, bot: Bot, "chevron-right": ChevronRight,
   "circle-alert": CircleAlert, "circle-check": CircleCheck, clock: Clock, copy: Copy, more: EllipsisVertical,
   file: File, "file-text": FileText, folder: Folder, "folder-plus": FolderPlus, folders: Folders, history: History,
   house: House, image: Image, inbox: Inbox, "key-round": KeyRound, link: Link, "log-out": LogOut,

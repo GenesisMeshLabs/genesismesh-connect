@@ -21,6 +21,8 @@ pub struct HomeAsk {
     node: String,
     /// The name the device or agent joined with.
     name: String,
+    /// The owner added it as an AI agent.
+    agent: bool,
     text: String,
     at: String,
 }
@@ -32,6 +34,8 @@ pub struct HomeDevice {
     authority_connection: bool,
     /// Listed by the network computer rather than paired with this device.
     member: bool,
+    /// Added by the owner as an AI agent. Known only on the network computer.
+    agent: bool,
 }
 /// A shared folder as the Files view shows it.
 #[derive(Serialize)]
@@ -76,6 +80,8 @@ pub struct HomeStatus {
     asks: Vec<HomeAsk>,
     joining: Option<String>,
     request: Option<PairRequest>,
+    /// The open invitation is for an AI agent.
+    inviting_agent: bool,
     problem: Option<String>,
     legacy: bool,
     connection: Option<ConnectivityStatus>,
@@ -105,6 +111,7 @@ pub async fn home_status(
                         .find(|p| p.node == ask.node)
                 })
                 .map_or_else(|| "A device".to_owned(), |p| p.name.clone()),
+            agent: owner.agents.contains(&ask.node),
             id: ask.id,
             node: ask.node,
             text: ask.text,
@@ -140,6 +147,7 @@ pub async fn home_status(
                         selected: d.peer_node.as_ref() == Some(&p.node),
                         authority_connection: d.bridge_host_node.as_ref() == Some(&p.node),
                         member,
+                        agent: owner.agents.contains(&p.node),
                     })
                     .collect()
             })
@@ -176,6 +184,7 @@ pub async fn home_status(
         asks,
         joining: owner.joining.clone(),
         request: owner.pairing.as_ref().and_then(|p| p.pending()),
+        inviting_agent: owner.pairing.is_some() && owner.inviting_agent,
         problem: owner
             .problem
             .clone()
@@ -301,6 +310,7 @@ pub struct JoinLink {
 #[tauri::command]
 pub async fn pair_begin(
     name: String,
+    agent: Option<bool>,
     state: tauri::State<'_, WorkflowState>,
     desktop: tauri::State<'_, DesktopState>,
 ) -> Result<JoinLink, String> {
@@ -322,6 +332,7 @@ pub async fn pair_begin(
         expires_at: card.expires_at,
     };
     owner.pairing = Some(host);
+    owner.inviting_agent = agent.unwrap_or(false);
     owner.problem = None;
     Ok(result)
 }
@@ -408,6 +419,17 @@ pub async fn pair_approve(id: String, app: tauri::AppHandle) -> Result<(), Strin
         .await
         .map_err(error)?;
     drop(slot);
+    // The owner invited an agent: label the member that joined with it.
+    let mut owner = workflow.slot.lock().await;
+    if owner.inviting_agent
+        && owner
+            .pairing
+            .as_ref()
+            .is_some_and(|p| std::sync::Arc::ptr_eq(p, &pair))
+    {
+        owner.agents.add(&target.node);
+    }
+    drop(owner);
     // The server needs to deliver its final confirmation before it is closed.
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -960,6 +982,7 @@ pub async fn remove_device(
     owner.runtime = Some(outcome.0);
     let (removal, spaces) = outcome.1.map_err(error)?;
     owner.asks.forget(&id);
+    owner.agents.forget(&id);
     let mut slot = desktop.slot.lock().await;
     let device = slot.controller.as_mut().ok_or("Device is unavailable")?;
     device.forget_device(&id).await.map_err(error)?;

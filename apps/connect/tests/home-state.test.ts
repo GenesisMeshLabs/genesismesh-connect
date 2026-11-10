@@ -12,6 +12,8 @@ import {
   sendSummary,
   sendPartial,
   filesEmptyText,
+  invitationText,
+  deviceDetail,
   type HomeStatus,
 } from "../src/home-state.ts";
 const blank: HomeStatus = {
@@ -168,3 +170,19 @@ test("only requests not seen before are announced", () => {
   assert.deepEqual(newAsks([ask("a")], undefined), []);
 });
 
+
+test("an agent the owner invited is named as one, and a device is not", () => {
+  const agent = invitationText(true);
+  const device = invitationText(false);
+  assert.equal(agent.title, "Add an AI agent");
+  assert.equal(device.title, "Add a device");
+  assert.match(agent.eyebrow, /AI AGENT/);
+  assert.match(agent.compare, /agent's setup/);
+  assert.match(device.compare, /other device/);
+  assert.match(agent.note, /remove it on its own/);
+  assert.match(agent.description, /its own identity/);
+  assert.equal(deviceDetail({ authority_connection: false, agent: true }), "AI agent");
+  assert.equal(deviceDetail({ authority_connection: false }), "On your network");
+  // The network computer is never shown as an agent.
+  assert.equal(deviceDetail({ authority_connection: true, agent: true }), "Runs your network");
+});

@@ -342,6 +342,7 @@
             </div>
             <h2 id="saved-devices-label" class="section-label" hidden>Your other devices</h2>
             <div id="saved-devices" class="list-group" aria-labelledby="saved-devices-label"></div>
+            <button id="add-agent-button" class="secondary" hidden><span data-icon="bot"></span><span>Add an AI agent</span></button>
             <section id="client-admin-card" class="home-card" hidden>
               <h2>Manage joining devices</h2>
               <p>Check this device's request to help manage who joins your network.</p>
@@ -515,8 +516,8 @@
           <button id="hide-pair-card" class="text-button">
             Close invitation
           </button>
-          <h2>Add a device</h2>
-          <p>
+          <h2 id="pair-title">Add a device</h2>
+          <p id="pair-description">
             On the other device, scan this code with its camera, or send it the
             invitation.
           </p>
@@ -539,11 +540,11 @@
           role="region"
           aria-label="Device approval"
         >
-          <p class="home-eyebrow">A DEVICE WANTS TO JOIN</p>
+          <p id="approval-eyebrow" class="home-eyebrow">A DEVICE WANTS TO JOIN</p>
           <h2 id="approval-name"></h2>
-          <p>Compare this code with the one on the other device.</p>
+          <p id="approval-compare">Compare this code with the one on the other device.</p>
           <strong id="approval-code" class="approval-code"></strong>
-          <p class="home-muted">
+          <p id="approval-note" class="home-muted">
             Allow only a device you recognize. This adds it to your network;
             nothing is shared with it until you choose to.
           </p>

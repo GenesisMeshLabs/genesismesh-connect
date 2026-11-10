@@ -1585,3 +1585,6 @@
     bottom: 24px;
   }
 }
+
+/* Adding an agent is the less common choice, under the devices it joins. */
+#add-agent-button { margin-top: 12px; }
