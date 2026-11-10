@@ -407,6 +407,9 @@ jobs:
           export ANDROID_AVD_HOME="$RUNNER_TEMP/avd"
           mkdir -p "$ANDROID_AVD_HOME"
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force -n journey -k "$AVD_IMAGE" -d pixel_6
+          # One adb daemon, started before the emulator looks for it: started
+          # by both at once, one of them fails.
+          adb start-server
           nohup "$ANDROID_HOME/emulator/emulator" -avd journey -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader_indirect -memory 4096 -cores 4 > "$RUNNER_TEMP/emulator.log" 2>&1 &
           ls -l /dev/kvm
