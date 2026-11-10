@@ -27,6 +27,10 @@ import {
   sendSummary,
   sendPartial,
   sendWaits,
+  sharesNothing,
+  nothingSharedText,
+  insetProperties,
+  type SystemInsets,
   unfinishedSendText,
   type SendProgress,
   filesEmptyText,
@@ -44,6 +48,9 @@ let current: HomeStatus | null = null;
 let currentView="files";
 let libraryFilter: LibraryFilter = "all";
 let statusProblem: string | null = null;
+// The device whose answer was that it shares nothing with this one, so
+// Shared says so in place rather than as an alert.
+let nothingFrom: string | null = null;
 let screen = "welcome",
   busy = false,
   polling = false;
@@ -307,7 +314,11 @@ function render(status: HomeStatus) {
 
   visible("files-add-device", status.owner && !status.peer);
   text("files-description", status.disconnected ? "Reconnect to use your shared items." : "Files, apps and services across your devices.");
-  text("files-empty-description", legacy ? "Refresh to see your shared files." : filesEmptyText(status));
+  if (nothingFrom !== null && (!legacy || nothingFrom !== (status.peer ?? ""))) nothingFrom = null;
+  text(
+    "files-empty-description",
+    legacy ? (nothingFrom !== null ? nothingSharedText(status.peer) : "Refresh to see your shared files.") : filesEmptyText(status),
+  );
   visible("approval-card", !!status.request);
   approval = status.request?.id || "";
   const wording = invitationText(!!status.inviting_agent);
@@ -1049,12 +1060,19 @@ async function loadFiles(more: boolean, directory = folderPath) {
       ...(wait ? { wait } : {}),
     });
   } catch (error) {
+    // Nothing shared is an answer, not a failure: the empty state says it.
+    if (!more && sharesNothing(error)) {
+      nothingFrom = current?.peer ?? "";
+      text("files-empty-description", nothingSharedText(nothingFrom));
+      return;
+    }
     if (!stoppedWaiting(error)) throw error;
     message(STOPPED);
     return;
   } finally {
     done();
   }
+  nothingFrom = null;
   if (JSON.stringify(result.directory) !== JSON.stringify(folderPath)) input("file-search").value = "";
   folderPath = result.directory;
   page = result;
@@ -1367,6 +1385,19 @@ if (isTauri()) {
     visible("choose-existing", status.runtime_available && !status.phone);
     visible("choose-restore", status.runtime_available);
     if (status.phone) usePhoneSetupWording();
+  });
+  // Keep clear of the system bars the page lies under, where CSS is not told.
+  const keepClear = () =>
+    invoke<SystemInsets>("system_insets").then(
+      (insets) => {
+        for (const [name, value] of Object.entries(insetProperties(insets))) document.documentElement.style.setProperty(name, value);
+      },
+      () => {},
+    );
+  void keepClear();
+  window.addEventListener("resize", () => void keepClear());
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) void keepClear();
   });
   void refresh();
   setInterval(() => {

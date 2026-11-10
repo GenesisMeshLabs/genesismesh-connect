@@ -31,6 +31,7 @@ const NEVER_WAIT: &[&str] = &[
     "client_admin_status",
     "client_requests_status",
     "operation_registry",
+    "system_insets",
     "pair_cancel",
     "cancel_send",
     "discard_send",
@@ -304,6 +305,7 @@ mod tests {
             "network_reopen",
             "recovery_restore",
             "discard_send",
+            "system_insets",
         ] {
             assert!(!waits_for_network(command), "{command}");
         }

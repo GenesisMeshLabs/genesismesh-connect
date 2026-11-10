@@ -33,3 +33,7 @@ pub struct WebResponse {}
 
 #[derive(Debug, Serialize)]
 pub struct ShareTextRequest { pub text: String }
+
+/// The system bars and cutout the page lies under, in CSS pixels.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
+pub struct Insets { pub top: f64, pub bottom: f64, pub left: f64, pub right: f64 }

@@ -19,3 +19,9 @@ not used. Native build/device verification is recorded separately in temp/.
 
 Upstream local.properties, wrapper binaries, JS tooling and tests were omitted
 from this Rust/mobile dependency snapshot. Tauri uses the app's Gradle wrapper.
+
+Connect also adds an Android `insets` command, called natively: the system
+bars and display cutout the page lies under, in CSS pixels. WebViews before
+136 report only the cutout to CSS while Android draws apps edge to edge, so
+the bottom navigation sat under the gesture bar. It takes no argument and
+returns four numbers.

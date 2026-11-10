@@ -6,6 +6,9 @@ import {
   formatBytes,
   folderCrumbs,
   friendlyProblem,
+  sharesNothing,
+  nothingSharedText,
+  insetProperties,
   newAsks,
   connectionSummary,
   spaceSummary,
@@ -220,4 +223,32 @@ test("a send that stopped says what arrived and never asks to send an arrived fi
     "2 of 3 files arrived · saved as a.jpg, c.pdf · b.mov may already be there: the other device no longer says. Check before sending it again.");
   assert.equal(sendSummary({ ...done, count: 1, saved: [], unsure: ["b.mov"] }),
     "b.mov may already be there: the other device no longer says. Check before sending it again.");
+});
+
+test("a device that shares nothing is an empty state, not an alert", () => {
+  const answer = "Error: connection lost: peer doesn't support any known protocol";
+  assert.equal(sharesNothing(answer), true);
+  assert.equal(sharesNothing(new Error("peer doesn't support any known protocol")), true);
+  // Anything else is still a problem to show.
+  for (const other of ["connection lost: timed out", "Access was not allowed", "Certificate revoked", ""])
+    assert.equal(sharesNothing(other), false, other);
+  assert.equal(
+    nothingSharedText("Home server"),
+    "Home server isn’t sharing anything with you yet. What it shares with you will appear here.",
+  );
+  assert.match(nothingSharedText(null), /^This device isn’t sharing anything/);
+});
+
+test("the page keeps clear of the system bars it lies under", () => {
+  assert.deepEqual(insetProperties({ top: 0, bottom: 24, left: 0, right: 0 }), {
+    "--system-top": "0px",
+    "--system-bottom": "24px",
+  });
+  assert.deepEqual(insetProperties({ top: 51.428571, bottom: 16.5 }), {
+    "--system-top": "51.43px",
+    "--system-bottom": "16.5px",
+  });
+  // A missing or senseless answer moves nothing.
+  for (const none of [null, undefined, {}, { bottom: -4 }, { bottom: Number.NaN }, { bottom: 5000 }, { bottom: "24" as unknown as number }])
+    assert.deepEqual(insetProperties(none), { "--system-top": "0px", "--system-bottom": "0px" });
 });

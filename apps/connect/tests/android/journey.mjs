@@ -189,8 +189,10 @@ const PHONE = await paired("The phone", async (n) => {
 step(`${PHONE} joined and is listed on the node`);
 // Right after joining a network computer that shares nothing: Shared says so
 // in place, and nothing is shown as a problem.
-await pause(3_000);
-await until(() => app.idle(), 60_000, "first look finished");
+// The first look at the network computer has ended either way: in place, or
+// as a problem.
+await until(async () => (await app.visible("#home-error")) || /sharing anything with you yet/.test((await app.text("#files-empty-description")) ?? ""), 60_000, "first look finished");
+await until(() => app.idle(), 30_000, "first look settled");
 const empty = (await app.text("#files-empty-description")) ?? "";
 const alert = (await app.visible("#home-error")) ? await app.text("#home-error") : "";
 step(`Shared says: ${empty.trim()}${alert ? `; and as a problem: ${alert}` : "; no problem is shown"}`);
