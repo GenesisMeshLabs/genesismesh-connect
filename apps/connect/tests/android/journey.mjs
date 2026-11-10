@@ -153,11 +153,13 @@ await screenshot("2-joining");
 const approved = control({ op: "pair_approve", id: pending.id });
 await until(() => app.visible("#workspace"), 180_000, "phone joined");
 await approved;
-step("Phone joined");
+await until(async () => (await control({ op: "status" })).devices.includes("Journey phone"), 60_000, "phone listed on the node");
+step("Phone joined and listed on the node");
 await screenshot("3-joined");
 
-// 2. A laptop joins too and receives files.
-invitation = await control({ op: "pair_begin", name: "Journey server" });
+// 2. A laptop joins too and receives files. The node takes the next
+// invitation once the phone's pairing has closed.
+invitation = await until(() => control({ op: "pair_begin", name: "Journey server" }), 60_000, "laptop's invitation");
 mkdirSync(`${WORLD}/device`, { recursive: true });
 writeFileSync(`${PROFILE}.link`, invitation.link);
 const joiner = spawn("bash", [DEVICE, PROFILE, "join", "Journey laptop"]);

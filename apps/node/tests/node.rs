@@ -969,7 +969,7 @@ fn send_with(
         [
             "connection lost",
             "closed by peer",
-            "Trust changed during",
+            "Trust changed",
             "Trust snapshot stale",
             "Connection is suspended",
         ]
@@ -1018,6 +1018,8 @@ fn send_with(
             }
             other => anyhow::bail!("Unexpected answer: {other:?}"),
         };
+        // Each window has its own attempts, as in the app.
+        attempts = 0;
         offset += window.bytes as u64;
         token = Some(window.token);
         if window.done {
