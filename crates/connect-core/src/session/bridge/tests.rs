@@ -591,6 +591,44 @@ async fn refreshed_bridge_refuses_revoked_peer_and_suspension_cancels_handshake(
     Ok(())
 }
 
+/// The network computer holds no credentials for a moment each time it
+/// refreshes or renews its own trust. A device that connected in that moment
+/// was refused outright, which cut a pairing off right after approval.
+#[tokio::test]
+async fn a_device_arriving_while_the_bridge_refreshes_its_trust_waits_for_it() -> Result<()> {
+    let f = Fixture::new();
+    let http = authority(&f).await?;
+    let bridge = host(&f, &http).await?;
+    let directory = tempfile::tempdir()?;
+    let mut store = TrustStore::create(&directory.path().join("trust.json"), pin(&f))?;
+    let client = BridgeAuthority::new(route(&bridge, &f))?;
+    bridge.suspend();
+    let started = Instant::now();
+    let (answered, resumed) = tokio::join!(client.refresh_once(&mut store), async {
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        bridge.refresh(
+            SessionIdentity::new(f.server.clone(), f.server_cert.clone())?,
+            f.trust()?,
+        )
+    });
+    resumed?;
+    answered.context("One connection, asked once, is served under the refreshed trust")?;
+    assert!(started.elapsed() >= Duration::from_millis(700));
+    assert_eq!(bridge.refused(), None, "Nothing was turned away");
+
+    // Trust that does not return still turns the device away, and says why.
+    bridge.suspend();
+    let started = Instant::now();
+    assert!(client.refresh_once(&mut store).await.is_err());
+    assert!(started.elapsed() >= crate::session::TRUST_WAIT);
+    assert_eq!(
+        bridge.refused().as_deref(),
+        Some("Its authority connection turned away 1 while its trust was not current")
+    );
+    bridge.close().await;
+    Ok(())
+}
+
 #[tokio::test]
 async fn enrollment_checks_the_host_and_selected_node_before_forwarding_an_invite() -> Result<()> {
     let f = Fixture::new();

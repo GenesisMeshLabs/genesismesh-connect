@@ -127,6 +127,7 @@ pub struct PairHost {
     gate: Arc<Mutex<Gate>>,
     task: Mutex<Option<JoinHandle<()>>>,
     created: std::time::Instant,
+    refused: Arc<super::Refused>,
 }
 impl PairHost {
     pub async fn bind(
@@ -184,12 +185,14 @@ impl PairHost {
             attempts: 0,
             failure: None,
         }));
+        let refused = Arc::new(super::Refused::default());
         let task = tokio::spawn(accept(
             endpoint.clone(),
             state.clone(),
             gate.clone(),
             card.clone(),
             authority,
+            refused.clone(),
         ));
         Ok(Arc::new(Self {
             endpoint,
@@ -198,6 +201,7 @@ impl PairHost {
             gate,
             task: Mutex::new(Some(task)),
             created: std::time::Instant::now(),
+            refused,
         }))
     }
     pub fn card(&self) -> &PairCard {
@@ -338,6 +342,10 @@ impl PairHost {
     }
     pub fn suspend(&self) {
         self.state.send_replace(None);
+    }
+    /// Connections this invitation turned away, by reason.
+    pub fn refused(&self) -> Option<String> {
+        self.refused.summary("Its invitation")
     }
     /// Why the last pairing on this invitation ended without joining. The
     /// reason is recorded as the pairing's task ends, a moment after its
@@ -562,6 +570,7 @@ async fn accept(
     gate: Arc<Mutex<Gate>>,
     card: PairCard,
     authority: LocalAuthority,
+    refused: Arc<super::Refused>,
 ) {
     let mut tasks = JoinSet::new();
     let expires = tokio::time::sleep(WINDOW);
@@ -571,10 +580,13 @@ async fn accept(
             _=&mut expires=>break,
             incoming=endpoint.accept()=>{let Some(incoming)=incoming else{break};
                 let allowed={let mut g=gate.lock().expect("pair gate");if g.used||g.attempts>=12{false}else{g.attempts+=1;true}};
-                if !allowed||tasks.len()>=2{incoming.refuse();continue}
-                let mut changes=state.subscribe();let Some(credentials)=changes.borrow_and_update().clone()else{incoming.refuse();continue};
+                if !allowed{refused.closed();incoming.refuse();continue}
+                if tasks.len()>=2{refused.full();incoming.refuse();continue}
+                let mut changes=state.subscribe();let refused=refused.clone();
                 let(gate,card,authority,local,state)=(gate.clone(),card.clone(),authority.clone(),endpoint.id(),state.clone());
-                tasks.spawn(async move{let Ok(Ok(connection))=timeout(DEADLINE,incoming).await else{return};super::limit_streams(&connection);
+                tasks.spawn(async move{
+                    let Some(credentials)=super::current_credentials(&mut changes).await else{refused.paused();incoming.refuse();return};
+                    let Ok(Ok(connection))=timeout(DEADLINE,incoming).await else{return};super::limit_streams(&connection);
                     // Recheck the current refreshed owner snapshot at approval
                     // and completion, including after renewal while waiting.
                     let failure=match timeout(Duration::from_secs(240),serve(&connection,local,&credentials,&gate,&card,&authority,&state)).await{

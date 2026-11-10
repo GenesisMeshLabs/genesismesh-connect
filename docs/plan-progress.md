@@ -254,8 +254,8 @@ Merged since 7 November (#37 to #60), and this change:
   anything with you yet" notice right after joining a server, and the
   bottom navigation labels under the system gesture bar on this image; both
   are recorded for the availability-status work, not fixed here.
-- **Pairing was cut off after approval** (found by #61, fixed by this
-  change). In five of the nine hosted emulator runs of #61 that reached
+- **Pairing was cut off after approval** (found by #61; two causes fixed
+  by #63). In five of the nine hosted emulator runs of #61 that reached
   pairing, a pairing with the headless node failed, usually with "The other
   device disconnected: channel closed" seconds after approval. The serving
   tasks discarded their own errors, so nothing said why. Both now keep the
@@ -291,8 +291,50 @@ Merged since 7 November (#37 to #60), and this change:
   device half joined in the same way (now reported as such to the
   approver); an owner would have to add eleven devices in a minute to meet
   it. A half-joined device still has to leave and start again.
-- **A wrong digest is refused without saying so** (found by this change,
-  open). The inbox test accepted any error for a file whose bytes do not
+- **The enrollment limits #63 set are a change already made, not yet a
+  decision.** Three attempts a minute for each approved device and 32 a
+  minute for the network replaced three a minute for the whole network.
+  They stay until the Maintainer confirms or changes them; nothing since
+  has raised a limit.
+- **A device arriving while the network computer refreshed its trust was
+  turned away** (third cause of the cut pairings, fixed by this change).
+  After #63, one of four hosted emulator runs still cut the laptop's
+  pairing right after approval, and this time the run said why: "aborted by
+  peer: the server refused to accept a new connection". The network
+  computer refuses a connection before any exchange in three cases, and
+  said nothing about any of them: every connection in use, more arrivals
+  in a minute than it takes, or no current credentials. It now counts each
+  by reason for its own side (`refused` on the node's control socket, and
+  in the approver's message when a pairing ends). A local run with two
+  active devices and ten more pairing showed one refusal "while its trust
+  was not current": each time the network computer refreshes or renews its
+  own trust (every 30 seconds, and at every invitation and approval) it
+  holds no credentials for a moment, so that nothing is served under the
+  old ones, and a device that connected in that moment was refused
+  outright. A joining device makes several connections in the seconds
+  after approval, so that is where it showed. An arriving connection now
+  waits up to five seconds for the refreshed credentials. It is never
+  served without them, and is still turned away, and counted, if they do
+  not return. No limit, approval, freshness or refusal check changed. The
+  regression needs no pairing and asks once: a bridge with its trust
+  suspended, one connection, trust restored 0.7 s later. Without the wait
+  it fails with the hosted run's own error; with it the connection is
+  served and nothing is counted as turned away. A second half checks that
+  trust which does not return still refuses, after the wait, with the
+  reason recorded. This is the cause seen in the one hosted cut that
+  recorded a reason; the five cuts in #61 recorded none, so that they had
+  the same cause is likely, not proven.
+- **A cut pairing leaves the device half joined** (open). A device marks
+  its enrollment as begun before it asks, so that an uncertain enrollment
+  is never repeated. When the pairing is then cut, for any reason, the next
+  try on that device is refused with "Review the saved enrollment before
+  starting another pairing", and the person has to leave the network on
+  that device and start again with a new invitation. The network computer
+  may or may not list the device, depending on where the cut fell. Three
+  causes of cuts are fixed; the state itself and a plain way out of it are
+  not. One known way in remains: from the eleventh device in a minute the
+  authority answers HTTP 429 after approval.
+- **A wrong digest is refused without saying so** (found by #63, open). The inbox test accepted any error for a file whose bytes do not
   match its declared SHA-256. Made exact, it shows the receiving device
   never saves the file, but ends the connection without a reason and, asked
   again, answers "start over". The test now asserts that outcome and that

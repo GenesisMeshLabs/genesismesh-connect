@@ -617,6 +617,8 @@ async fn handle(node: &Shared, request: Value) -> Result<Value> {
             approve(node, request["id"].as_str().context("Missing request")?).await?;
             Ok(json!(true))
         }
+        // Connections this node turned away, by reason.
+        "refused" => Ok(json!(node.lock().await.device.refused())),
         // Why the current invitation's last pairing ended, if it did.
         "pair_failure" => {
             let pair = node.lock().await.pairing.clone();
@@ -717,7 +719,13 @@ async fn approve(node: &Shared, id: &str) -> Result<()> {
                     "Pairing ended before the device joined: its enrollment was not completed ({enrollment}){}",
                     pairing.map(|p| format!("; {p}")).unwrap_or_default()
                 ),
-                (Some(pairing), None) => bail!("Pairing ended before the device joined: {pairing}"),
+                (Some(pairing), None) => {
+                    let refused = node.lock().await.device.refused();
+                    bail!(
+                        "Pairing ended before the device joined: {pairing}{}",
+                        refused.map(|r| format!(". {r}")).unwrap_or_default()
+                    )
+                }
                 (None, None) => bail!("The other device disconnected"),
             }
         }
