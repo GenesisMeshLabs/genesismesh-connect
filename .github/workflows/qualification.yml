@@ -402,6 +402,10 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          # One place for the virtual device, for the tool that creates it and
+          # the emulator that looks for it.
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force -n journey -k "$AVD_IMAGE" -d pixel_6
           nohup "$ANDROID_HOME/emulator/emulator" -avd journey -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader_indirect -memory 4096 -cores 4 > "$RUNNER_TEMP/emulator.log" 2>&1 &

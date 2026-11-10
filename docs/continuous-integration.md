@@ -33,6 +33,21 @@ and `Connect qualification`. The latter can also be started manually. It checks:
   reach. Release builds cannot contain it. A preflight first checks that
   the app starts on its own, and Edge WebDriver's verbose log is kept with the
   screenshots.
+- The send interruption journey on Android, on an emulator, in its own job.
+  The headless node runs the network on the runner. An x86_64 debug test
+  APK, built with the same debug-only `webdriver` feature, runs on an API 35
+  x86_64 emulator, and its WebView is driven over the DevTools protocol, which
+  debug builds allow (`apps/connect/tests/android`). The phone joins and the
+  comparison codes are checked. The test device joins and receives files. The
+  phone sends it an 8 MB file and is force-stopped partway, as Android ends an
+  app. It must keep its send record and its copy of the file. It opens again,
+  shows the unfinished send and continues it. The received file must have the
+  same SHA-256 with no second copy, and the phone's copy and record must be
+  gone. Then it is stopped and opened once more. The Android test build takes
+  a file the journey places in its cache instead of the system picker, so the
+  picker itself is not covered. Screenshots, the node's log and the
+  emulator's logcat are kept with the run. This is emulator evidence; a
+  physical phone is a separate check.
 - An arm64 Android debug APK built with the existing initialization/branding/
   permission patches, followed by signature verification, 16 KiB ELF/RELRO/ZIP
   alignment refusal checks and SHA-256 inventory.
