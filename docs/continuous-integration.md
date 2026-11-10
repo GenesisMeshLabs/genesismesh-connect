@@ -18,6 +18,12 @@ and `Connect qualification`. The latter can also be started manually. It checks:
   network, invite the headless test device, compare codes and approve, remove
   it, restart and reopen (`apps/connect/tests/desktop`). Screenshots of each
   step are kept with the run.
+- The same desktop journey on Windows, in its own job: the Windows app in
+  WebView2 with the authority it bundles and the owner key protected by DPAPI,
+  driven by `tauri-driver` with the Microsoft Edge WebDriver that matches the
+  runner's WebView2. Windows keeps app data and keys in the account's own
+  folders and Credential Manager, so `run.ps1` refuses to run outside CI
+  unless given `-OnThisAccount`.
 - An arm64 Android debug APK built with the existing initialization/branding/
   permission patches, followed by signature verification, 16 KiB ELF/RELRO/ZIP
   alignment refusal checks and SHA-256 inventory.

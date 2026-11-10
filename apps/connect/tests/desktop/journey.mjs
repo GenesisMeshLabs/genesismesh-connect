@@ -1,20 +1,34 @@
-// Desktop hosting through the real Linux app, driven over WebDriver
-// (tauri-driver and WebKitWebDriver): create a network, invite a device,
-// compare codes and approve, remove it and check that it is refused, then
+// Desktop hosting through the real app, driven over WebDriver (tauri-driver
+// with WebKitWebDriver on Linux, Microsoft Edge WebDriver on Windows): create
+// a network, invite a device, compare codes and approve, remove it, then
 // restart and reopen. A headless test device (the second_device example)
-// plays the other device. Run through run.sh, which sets up a disposable
-// world. Prints one line per step with the time since the start.
+// plays the other device. Run through run.sh (Linux) or run.ps1 (Windows),
+// which set up the world. Prints one line per step with the time since the
+// start.
 import { spawn, execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const APP = process.env.CONNECT_APP;
+// Linux: device.sh, which gives the device its own home and keyring.
+// Windows: the second_device binary itself, run directly.
 const DEVICE = process.env.CONNECT_DEVICE_SCRIPT;
 const WORLD = process.env.CONNECT_WORLD;
 const OUT = process.env.CONNECT_OUT ?? `${WORLD}/out`;
 const DRIVER = process.env.CONNECT_DRIVER ?? "http://127.0.0.1:4444";
-if (!APP || !DEVICE || !WORLD) throw new Error("Run through run.sh");
+const COMPUTER = process.platform === "win32" ? "Windows desktop" : "Linux desktop";
+if (!APP || !DEVICE || !WORLD) throw new Error("Run through run.sh or run.ps1");
 mkdirSync(OUT, { recursive: true });
 const PROFILE = `${WORLD}/device/laptop`;
+// The command line for the test device: join reads the link written beside
+// the profile.
+function deviceCommand(...args) {
+  if (DEVICE.endsWith(".sh")) return ["bash", [DEVICE, PROFILE, ...args]];
+  if (args[0] === "join") {
+    const link = readFileSync(`${PROFILE}.link`, "utf8").trim();
+    return [DEVICE, [PROFILE, "join", link, ...args.slice(1)]];
+  }
+  return [DEVICE, [PROFILE, ...args]];
+}
 
 async function call(method, path, body) {
   const res = await fetch(DRIVER + path, {
@@ -51,7 +65,7 @@ async function session() {
   };
   return app;
 }
-const device = (...args) => execFileSync("bash", [DEVICE, PROFILE, ...args], { encoding: "utf8" });
+const device = (...args) => execFileSync(...deviceCommand(...args), { encoding: "utf8" });
 const t0 = Date.now();
 const step = (label) => console.log(`${((Date.now() - t0) / 1000).toFixed(1).padStart(6)} s  ${label}`);
 
@@ -61,7 +75,7 @@ try {
   step("Welcome");
   await app.click("#choose-create");
   await app.type("#create-name", "Journey home");
-  await app.type("#computer-name", "Linux desktop");
+  await app.type("#computer-name", COMPUTER);
   await app.js(`document.getElementById("create-form").requestSubmit()`);
   await app.until(async () => (await app.text("#home-network")) === "Journey home", 120_000, "network created");
   step("Network created");
@@ -78,7 +92,7 @@ try {
   writeFileSync(`${PROFILE}.link`, await app.js("return window.__copied"));
   step("Invitation created");
 
-  const joiner = spawn("bash", [DEVICE, PROFILE, "join", "Journey laptop"]);
+  const joiner = spawn(...deviceCommand("join", "Journey laptop"));
   let said = "";
   joiner.stdout.on("data", (d) => (said += d));
   joiner.stderr.on("data", (d) => (said += d));
