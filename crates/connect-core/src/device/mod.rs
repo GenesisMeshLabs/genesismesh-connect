@@ -925,6 +925,20 @@ impl DeviceController {
         self.pairing = Some(host.clone());
         Ok(host)
     }
+    /// Connections this device turned away before any exchange, by reason,
+    /// since each of its endpoints opened. The other device hears only that it
+    /// was refused.
+    pub fn refused(&self) -> Option<String> {
+        let parts: Vec<String> = [
+            self.endpoint.as_ref().and_then(|e| e.refused()),
+            self.bridge_host.as_ref().and_then(|h| h.refused()),
+            self.pairing.as_ref().and_then(|p| p.refused()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        (!parts.is_empty()).then(|| parts.join("; "))
+    }
     /// Why the last enrollment that reached this network computer ended
     /// without a certificate, once, for the owner's side to say.
     pub fn take_enrollment_failure(&self) -> Option<String> {

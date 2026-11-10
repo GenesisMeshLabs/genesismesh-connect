@@ -133,6 +133,70 @@ async fn proving_again<T, A: std::future::Future<Output = Result<T>>>(
 const MAX_MESSAGE: usize = 1024;
 const MAX_CONNECTIONS: usize = 8;
 
+/// How long an arriving connection waits for this device's own trust.
+pub(crate) const TRUST_WAIT: Duration = Duration::from_secs(5);
+/// This device's current credentials for a connection that just arrived.
+/// While it refreshes or renews its own trust it holds none for a moment, so
+/// that nothing is served under the old ones. A connection arriving then
+/// waits for the new ones; it is never served without them, and is turned
+/// away if they do not return within `TRUST_WAIT`.
+pub(crate) async fn current_credentials(
+    changes: &mut watch::Receiver<Option<Arc<Credentials>>>,
+) -> Option<Arc<Credentials>> {
+    if let Some(credentials) = changes.borrow_and_update().clone() {
+        return Some(credentials);
+    }
+    let returned = timeout(TRUST_WAIT, changes.wait_for(Option::is_some)).await;
+    match returned {
+        Ok(Ok(credentials)) => credentials.clone(),
+        _ => None,
+    }
+}
+
+/// Connections this device turned away before any exchange, by reason. The
+/// other device hears only that it was refused; this device can say why.
+#[derive(Default)]
+pub(crate) struct Refused {
+    full: AtomicU64,
+    budget: AtomicU64,
+    paused: AtomicU64,
+    closed: AtomicU64,
+}
+impl Refused {
+    /// Every connection it may hold at once is in use.
+    pub(crate) fn full(&self) {
+        self.full.fetch_add(1, Ordering::Relaxed);
+    }
+    /// More arrivals in a minute than it takes.
+    pub(crate) fn budget(&self) {
+        self.budget.fetch_add(1, Ordering::Relaxed);
+    }
+    /// Its trust was being refreshed or is not current.
+    pub(crate) fn paused(&self) {
+        self.paused.fetch_add(1, Ordering::Relaxed);
+    }
+    /// An invitation already used or tried too often.
+    pub(crate) fn closed(&self) {
+        self.closed.fetch_add(1, Ordering::Relaxed);
+    }
+    /// The counts since this endpoint opened, or nothing when it refused none.
+    pub(crate) fn summary(&self, what: &str) -> Option<String> {
+        let parts: Vec<String> = [
+            (&self.full, "with every connection in use"),
+            (&self.budget, "over its arrivals for a minute"),
+            (&self.paused, "while its trust was not current"),
+            (&self.closed, "on an invitation already used"),
+        ]
+        .iter()
+        .filter_map(|(count, why)| {
+            let count = count.load(Ordering::Relaxed);
+            (count > 0).then(|| format!("{count} {why}"))
+        })
+        .collect();
+        (!parts.is_empty()).then(|| format!("{what} turned away {}", parts.join(", ")))
+    }
+}
+
 /// Node key is separate from Iroh's ephemeral transport key; never serialized.
 #[derive(Clone)]
 pub struct SessionIdentity {
@@ -289,6 +353,7 @@ pub struct SessionEndpoint {
     node_public_key: String,
     peers: Mutex<Peers>,
     accepted: Arc<AtomicU64>,
+    refused: Arc<Refused>,
     accept_task: Mutex<Option<JoinHandle<()>>>,
     outgoing: Semaphore,
 }
@@ -389,10 +454,12 @@ impl SessionEndpoint {
         })))
         .0;
         let accepted = Arc::new(AtomicU64::new(0));
+        let refused = Arc::new(Refused::default());
         let task = tokio::spawn(accept_sessions(
             endpoint.clone(),
             credentials.clone(),
             accepted.clone(),
+            refused.clone(),
             share,
         ));
         Ok(Self {
@@ -401,6 +468,7 @@ impl SessionEndpoint {
             node_public_key,
             peers: Mutex::new(peers),
             accepted,
+            refused,
             accept_task: Mutex::new(Some(task)),
             outgoing: Semaphore::new(2),
         })
@@ -487,6 +555,10 @@ impl SessionEndpoint {
         self.round_trip_to(None, ticket, message).await
     }
 
+    /// Connections this endpoint turned away, by reason, since it opened.
+    pub fn refused(&self) -> Option<String> {
+        self.refused.summary("Its sharing connection")
+    }
     pub async fn round_trip_to(
         &self,
         node: Option<&str>,
@@ -965,6 +1037,7 @@ async fn accept_sessions(
     endpoint: Endpoint,
     state: watch::Sender<Option<Arc<Credentials>>>,
     accepted: Arc<AtomicU64>,
+    refused: Arc<Refused>,
     share: Option<Arc<sharing::Shares>>,
 ) {
     let mut tasks = JoinSet::new();
@@ -972,13 +1045,14 @@ async fn accept_sessions(
         tokio::select! {
             incoming = endpoint.accept() => {
                 let Some(incoming) = incoming else { break };
-                if tasks.len() >= MAX_CONNECTIONS { incoming.refuse(); continue; }
+                if tasks.len() >= MAX_CONNECTIONS { refused.full(); incoming.refuse(); continue; }
                 let mut changes = state.subscribe();
-                let Some(credentials) = changes.borrow_and_update().clone() else { incoming.refuse(); continue };
                 let accepted = accepted.clone();
+                let refused = refused.clone();
                 let local_id = endpoint.id();
                 let share=share.clone();
                 tasks.spawn(async move {
+                    let Some(credentials) = current_credentials(&mut changes).await else { refused.paused(); incoming.refuse(); return };
                     let Ok(Ok(connection)) = timeout(DEADLINE, incoming).await else { return };
                     limit_streams(&connection);
                     if connection.alpn()==wire::Protocol::Service.alpn() {

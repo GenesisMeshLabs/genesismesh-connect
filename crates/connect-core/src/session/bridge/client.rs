@@ -382,7 +382,7 @@ impl BridgeAuthority {
             outcome => outcome,
         }
     }
-    async fn refresh_once(&self, store: &mut TrustStore) -> Result<TrustSnapshot> {
+    pub(super) async fn refresh_once(&self, store: &mut TrustStore) -> Result<TrustSnapshot> {
         let _permit = self
             .outgoing
             .try_acquire()

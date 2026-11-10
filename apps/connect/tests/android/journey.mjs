@@ -146,7 +146,8 @@ const named = (name) => name;
 async function paired(what, attempt) {
   try { return await attempt(1); } catch (error) {
     const reason = await control({ op: "pair_failure" }).catch(String);
-    throw new Error(`${what}'s pairing was cut off: ${error.message}; the node's reason: ${reason}`);
+    const refused = await control({ op: "refused" }).catch(String);
+    throw new Error(`${what}'s pairing was cut off: ${error.message}; the node's reason: ${reason}; the node refused: ${refused}`);
   }
 }
 

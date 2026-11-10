@@ -35,6 +35,8 @@ struct Published {
     /// Why the last enrollment that reached this computer ended without a
     /// certificate, for the owner's side; the device hears only a refusal.
     enrollment_failure: Mutex<Option<String>>,
+    /// Connections turned away before any exchange, by reason.
+    refused: crate::session::Refused,
 }
 
 impl AuthorityBridge {
@@ -113,6 +115,7 @@ impl AuthorityBridge {
             owner: Mutex::new(None),
             spaces: Mutex::new(None),
             enrollment_failure: Mutex::new(None),
+            refused: Default::default(),
         });
         let task = tokio::spawn(accept(
             endpoint.clone(),
@@ -168,6 +171,10 @@ impl AuthorityBridge {
             .owner
             .lock()
             .expect("bridge publication mutex poisoned") = Some(owner);
+    }
+    /// Connections this bridge turned away, by reason, since it opened.
+    pub fn refused(&self) -> Option<String> {
+        self.published.refused.summary("Its authority connection")
     }
     /// Why the last enrollment here ended without a certificate, once.
     pub fn take_enrollment_failure(&self) -> Option<String> {
@@ -989,11 +996,12 @@ async fn accept(
                 let Some(incoming) = incoming else { break };
                 // Each device checks in with a few quick connections in a row,
                 // and a network has up to 32 devices.
-                if tasks.len() >= MAX_CONNECTIONS || !arrivals.allow() { incoming.refuse(); continue; }
+                if tasks.len() >= MAX_CONNECTIONS { published.refused.full(); incoming.refuse(); continue; }
+                if !arrivals.allow() { published.refused.budget(); incoming.refuse(); continue; }
                 let mut changes = state.subscribe();
-                let Some(credentials) = changes.borrow_and_update().clone() else { incoming.refuse(); continue };
                 let (authority, forwarded, budgets, local, published) = (authority.clone(), forwarded.clone(), budgets.clone(), endpoint.clone(), published.clone());
                 tasks.spawn(async move {
+                    let Some(credentials) = crate::session::current_credentials(&mut changes).await else { published.refused.paused(); incoming.refuse(); return };
                     let incoming = timeout(DEADLINE, incoming);
                     let connection = tokio::select! { biased; _ = changes.changed() => return, result = incoming => match result { Ok(Ok(c)) => c, _ => return } };
                     limit_streams(&connection);
