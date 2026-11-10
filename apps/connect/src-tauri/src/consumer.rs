@@ -412,10 +412,19 @@ pub async fn pair_approve(id: String, app: tauri::AppHandle) -> Result<(), Strin
         slot.controller = Some(device);
         (pair, target, result.map_err(error)?)
     };
-    let joined = tokio::time::timeout(std::time::Duration::from_secs(80), completion)
+    let joined = match tokio::time::timeout(std::time::Duration::from_secs(80), completion)
         .await
         .map_err(|_| "The other device did not finish joining")?
-        .map_err(|_| "The other device disconnected")?;
+    {
+        Ok(joined) => joined,
+        // The pairing ended on this side or the device left; say which.
+        Err(_) => {
+            return Err(match pair.failure().await {
+                Some(failure) => format!("Pairing ended before the device joined: {failure}"),
+                None => "The other device disconnected".into(),
+            });
+        }
+    };
     let mut slot = desktop.slot.lock().await;
     let device = slot.controller.as_mut().ok_or("Device is unavailable")?;
     device

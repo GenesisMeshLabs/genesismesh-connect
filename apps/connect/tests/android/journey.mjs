@@ -146,7 +146,8 @@ const named = (name, attempt) => (attempt === 1 ? name : `${name} ${attempt}`);
 async function paired(what, attempt) {
   for (let n = 1; ; n++) {
     try { return await attempt(n); } catch (error) {
-      step(`${what}'s pairing was cut off (attempt ${n}): ${error.message}`);
+      const reason = await control({ op: "pair_failure" }).catch(String);
+      step(`${what}'s pairing was cut off (attempt ${n}): ${error.message}; the node's reason: ${reason}`);
       if (n === 3 || /codes differ/.test(error.message)) throw error;
       await pause(5_000);
     }

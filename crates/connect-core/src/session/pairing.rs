@@ -116,6 +116,9 @@ struct Gate {
     pending: Option<Pending>,
     used: bool,
     attempts: u8,
+    /// Why the last pairing on this invitation ended without joining, for the
+    /// owner's side to say; the joining device hears only that it ended.
+    failure: Option<String>,
 }
 pub struct PairHost {
     endpoint: Endpoint,
@@ -179,6 +182,7 @@ impl PairHost {
             pending: None,
             used: false,
             attempts: 0,
+            failure: None,
         }));
         let task = tokio::spawn(accept(
             endpoint.clone(),
@@ -334,6 +338,18 @@ impl PairHost {
     }
     pub fn suspend(&self) {
         self.state.send_replace(None);
+    }
+    /// Why the last pairing on this invitation ended without joining. The
+    /// reason is recorded as the pairing's task ends, a moment after its
+    /// channels close, so this waits briefly for it.
+    pub async fn failure(&self) -> Option<String> {
+        for _ in 0..20 {
+            if let Some(failure) = self.gate.lock().expect("pair gate").failure.clone() {
+                return Some(failure);
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        None
     }
     pub async fn close(&self) {
         self.suspend();
@@ -561,7 +577,9 @@ async fn accept(
                 tasks.spawn(async move{let Ok(Ok(connection))=timeout(DEADLINE,incoming).await else{return};super::limit_streams(&connection);
                     // Recheck the current refreshed owner snapshot at approval
                     // and completion, including after renewal while waiting.
-                    let _=timeout(Duration::from_secs(240),serve(&connection,local,&credentials,&gate,&card,&authority,&state)).await;
+                    let failure=match timeout(Duration::from_secs(240),serve(&connection,local,&credentials,&gate,&card,&authority,&state)).await{
+                        Ok(Ok(()))=>None,Ok(Err(error))=>Some(format!("{error:#}")),Err(_)=>Some("Pairing took too long".into())};
+                    if let Some(failure)=failure{gate.lock().expect("pair gate").failure=Some(failure);}
                     connection.close(0u32.into(),b"pairing ended");});
             },
             _=tasks.join_next(),if !tasks.is_empty()=>{},
