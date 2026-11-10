@@ -187,7 +187,7 @@ for (let left = SEND_MB; left > 0; left -= 4) {
 closeSync(out);
 const digest = hash.digest("hex");
 // Its own process group, so stopping it stops the device too.
-const receiver = spawn("bash", [DEVICE, PROFILE, "receive", RECEIVED], { detached: true });
+const receiver = spawn("bash", [DEVICE, PROFILE, "receive", RECEIVED, "Journey phone"], { detached: true });
 let heard = "";
 receiver.stdout.on("data", (d) => (heard += d));
 receiver.stderr.on("data", (d) => (heard += d));
