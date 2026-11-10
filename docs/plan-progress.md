@@ -211,7 +211,7 @@ Merged since 7 November (#37 to #59), and this change:
   continuing from the saved record: partway, after the last window, a small
   file, a receiving device that forgot the file, a changed file, failure and
   cancel; each check fails when its safeguard is removed. The desktop journey
-  now also has the test device receive files, sends it a 64 MB file, closes
+  now also has the test device receive files, sends it an 8 MB file, closes
   the app partway, restarts it, checks the card, continues and compares the
   received file's SHA-256, on Linux and Windows. A debug-only test build
   takes the file from the journey instead of the native picker, under the
@@ -220,7 +220,10 @@ Merged since 7 November (#37 to #59), and this change:
   unavailable" while the network computer was still starting, and that the
   message then cleared on its own. Sending and Continue now wait for the
   receiving device as reads do, up to two minutes with the wait explained
-  ("Nothing has been sent yet") and Cancel. Not yet on a phone.
+  ("Nothing has been sent yet") and Cancel. The first hosted runs also showed
+  that debug builds send at 60 to 100 KB/s on the hosted runners (about
+  750 KB/s in WSL here); release throughput is not measured yet. Not yet on a
+  phone.
 - **A Space another device shares is listed at once** (this change). The
   network computer learns of a device's new Space in its 30-second pass, but
   its screen reads the device only when nothing else holds it, so the new

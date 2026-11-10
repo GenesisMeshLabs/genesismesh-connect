@@ -25,8 +25,9 @@ const PROFILE = `${WORLD}/device/laptop`;
 // The file the app sends: the debug test build's picker returns it.
 const SOURCE = process.env.CONNECT_TEST_PICK;
 const RECEIVED = `${WORLD}/device/received`;
-// Large enough to close the app partway, small enough for a debug build.
-const SEND_MB = Number(process.env.CONNECT_SEND_MB ?? 64);
+// Large enough to close the app partway, small enough for a debug build:
+// hosted runners send at 60 to 100 KB/s in one, so 8 MB takes 1 to 2 minutes.
+const SEND_MB = Number(process.env.CONNECT_SEND_MB ?? 8);
 if (!SOURCE) throw new Error("Run through run.sh or run.ps1");
 // The command line for the test device: join reads the link written beside
 // the profile.
@@ -134,8 +135,8 @@ try {
 mkdirSync(dirname(SOURCE), { recursive: true });
 const hash = createHash("sha256");
 const out = openSync(SOURCE, "w");
-for (let left = SEND_MB; left > 0; left -= 16) {
-  const chunk = randomBytes(Math.min(left, 16) << 20);
+for (let left = SEND_MB; left > 0; left -= 4) {
+  const chunk = randomBytes(Math.min(left, 4) << 20);
   hash.update(chunk);
   writeSync(out, chunk);
 }

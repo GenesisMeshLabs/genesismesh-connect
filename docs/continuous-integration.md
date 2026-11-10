@@ -16,7 +16,7 @@ and `Connect qualification`. The latter can also be started manually. It checks:
   build with the bundled pages, is driven through its screens over WebDriver
   (`tauri-driver` with WebKitWebDriver, a virtual display and a throwaway
   keyring): create a network, invite the headless test device, compare codes
-  and approve; the device receives files, the app sends it a 64 MB file and
+  and approve; the device receives files, the app sends it an 8 MB file and
   is closed partway, then restarts, shows the unfinished send and continues it,
   and the received file's SHA-256 is compared; then remove the device, restart
   and reopen (`apps/connect/tests/desktop`). Screenshots of each step are kept
