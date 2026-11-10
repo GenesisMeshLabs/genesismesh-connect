@@ -41,7 +41,10 @@ const keeps = () => inApp("find cache/connect-sends cache/connect-picked -type f
 async function until(condition, ms, label, onTimeout) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    try { const value = await condition(); if (value) return value; } catch { /* reopening or reloading */ }
+    try { const value = await condition(); if (value) return value; } catch (error) {
+      // Reopening or reloading passes; a condition's own verdict does not.
+      if (error.final) { await screenshot(`failed-${label.replace(/\W+/g, "-")}`).catch(() => {}); throw error; }
+    }
     await pause(500);
   }
   await screenshot(`timeout-${label.replace(/\W+/g, "-")}`).catch(() => {});
@@ -150,9 +153,19 @@ const phoneCode = await until(async () => (await app.visible("#joining-code")) &
 step(`Join request from "${pending.name}": node shows ${digits(pending.code)}, phone shows ${phoneCode}`);
 if (digits(pending.code) !== phoneCode) throw new Error("The comparison codes differ");
 await screenshot("2-joining");
-const approved = control({ op: "pair_approve", id: pending.id });
-await until(() => app.visible("#workspace"), 180_000, "phone joined");
-await approved;
+// The node's answer to the approval and what the phone shows are both kept:
+// when a pairing is cut off, the run says which side saw what.
+let approval = "pending";
+control({ op: "pair_approve", id: pending.id }).then(() => (approval = "approved"), (error) => (approval = `failed: ${error.message}`));
+const shown = () => app.js(`return [...document.querySelectorAll('#joining-progress, #home-message, #last-error-detail, #join-screen:not([hidden]) h1')]
+  .map((e) => e.innerText || e.textContent).filter(Boolean).join(" | ")`);
+await until(async () => {
+  if (approval.startsWith("failed") && !(await app.visible("#workspace"))) await pause(15_000);
+  if (approval.startsWith("failed")) throw Object.assign(new Error(`The node's approval ${approval}; the phone shows: ${await shown().catch(String)}`), { final: true });
+  return app.visible("#workspace");
+}, 180_000, "phone joined", async () => console.log(`         approval ${approval}; the phone shows: ${await shown()}`));
+await until(() => approval !== "pending", 90_000, "node's approval");
+if (approval !== "approved") throw new Error(`The node's approval ${approval}`);
 await until(async () => (await control({ op: "status" })).devices.includes("Journey phone"), 60_000, "phone listed on the node");
 step("Phone joined and listed on the node");
 await screenshot("3-joined");
