@@ -471,6 +471,45 @@ fn control_proof_has_a_separate_domain_and_budgets_do_not_grow_unbounded() -> Re
     Ok(())
 }
 
+/// Devices added one after another each enroll: three a minute for the whole
+/// network refused the fourth approved device and left it half joined.
+#[test]
+fn devices_joining_in_a_row_do_not_use_up_each_others_enrollments() {
+    let mut budget = EnrollmentBudget::new();
+    for device in 0..EnrollmentBudget::NETWORK {
+        assert!(
+            budget.allow(&format!("device-{device}")),
+            "device {device} of a full network enrolls within a minute"
+        );
+    }
+    assert!(
+        !budget.allow("one-more"),
+        "the network's ceiling for a minute still holds"
+    );
+    // A minute on, they may again.
+    budget.network.since = Instant::now() - Duration::from_secs(61);
+    for device in budget.devices.values_mut() {
+        device.since = Instant::now() - Duration::from_secs(61);
+    }
+    assert!(budget.allow("one-more"));
+}
+
+#[test]
+fn a_device_repeating_its_enrollment_spends_only_its_own_attempts() {
+    let mut budget = EnrollmentBudget::new();
+    for _ in 0..EnrollmentBudget::DEVICE {
+        assert!(budget.allow("repeating"));
+    }
+    assert!(!budget.allow("repeating"));
+    assert!(!budget.allow("repeating"));
+    assert_eq!(
+        budget.network.used,
+        EnrollmentBudget::DEVICE,
+        "a refused attempt takes nothing from the network"
+    );
+    assert!(budget.allow("another"), "another device is not held up");
+}
+
 #[tokio::test]
 async fn bridge_renewal_budget_is_enforced_before_another_http_call() -> Result<()> {
     let f = Fixture::new();

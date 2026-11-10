@@ -102,6 +102,34 @@ async fn asking_again<T, A: std::future::Future<Output = Result<T>>>(
         }
     }
 }
+/// How long a pairing's final proof is asked again. The joining device waits
+/// 20 seconds for the owner's answer.
+const PAIRING_PROOF: Duration = Duration::from_secs(12);
+/// A pairing's final proof that a trust refresh ended on either side: the
+/// refresh every 30 seconds closes open connections, and this one was not
+/// refused. Asked again, it runs under the new trust, so a device revoked
+/// meanwhile is refused then.
+fn proof_ended_by_refresh(error: &anyhow::Error) -> bool {
+    clears_by_itself(error) || format!("{error:#}").starts_with("Trust changed; reconnect")
+}
+/// Asks a pairing's final proof again while a trust refresh ended it, waiting
+/// 1, 2 and 4 seconds, within `budget`. Any other outcome is final at once.
+async fn proving_again<T, A: std::future::Future<Output = Result<T>>>(
+    budget: Duration,
+    mut attempt: impl FnMut() -> A,
+) -> Result<T> {
+    let started = tokio::time::Instant::now();
+    let mut wait = FIRST_WAIT;
+    loop {
+        match attempt().await {
+            Err(error) if proof_ended_by_refresh(&error) && started.elapsed() + wait < budget => {
+                tokio::time::sleep(wait).await;
+                wait = (wait * 2).min(LONGEST_WAIT);
+            }
+            outcome => return outcome,
+        }
+    }
+}
 const MAX_MESSAGE: usize = 1024;
 const MAX_CONNECTIONS: usize = 8;
 
@@ -471,15 +499,23 @@ impl SessionEndpoint {
             .0)
     }
 
+    /// The final proof of a pairing: the other device answers under its new
+    /// certificate. A trust refresh landing on it does not fail the pairing;
+    /// the proof is asked again under the refreshed trust.
     pub(crate) async fn prove_pairing_to(
         &self,
         node: &str,
         ticket: &str,
     ) -> Result<AuthenticatedPeer> {
-        Ok(self
-            .authenticated_round_trip_to(Some(node), ticket, "Connect pairing verification")
-            .await?
-            .1)
+        Ok(proving_again(PAIRING_PROOF, || {
+            self.authenticated_round_trip_to(Some(node), ticket, "Connect pairing verification")
+        })
+        .await?
+        .1)
+    }
+    /// The same proof for a host that keeps its own record of the device.
+    pub async fn verify_pairing_to(&self, node: &str, ticket: &str) -> Result<()> {
+        self.prove_pairing_to(node, ticket).await.map(|_| ())
     }
 
     async fn authenticated_round_trip_to(

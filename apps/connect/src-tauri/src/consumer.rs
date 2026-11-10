@@ -419,9 +419,23 @@ pub async fn pair_approve(id: String, app: tauri::AppHandle) -> Result<(), Strin
         Ok(joined) => joined,
         // The pairing ended on this side or the device left; say which.
         Err(_) => {
-            return Err(match pair.failure().await {
-                Some(failure) => format!("Pairing ended before the device joined: {failure}"),
-                None => "The other device disconnected".into(),
+            let pairing = pair.failure().await;
+            let enrollment = desktop
+                .slot
+                .lock()
+                .await
+                .controller
+                .as_ref()
+                .and_then(|device| device.take_enrollment_failure());
+            return Err(match (pairing, enrollment) {
+                (pairing, Some(enrollment)) => format!(
+                    "Pairing ended before the device joined: its enrollment was not completed ({enrollment}){}",
+                    pairing.map(|p| format!("; {p}")).unwrap_or_default()
+                ),
+                (Some(pairing), None) => {
+                    format!("Pairing ended before the device joined: {pairing}")
+                }
+                (None, None) => "The other device disconnected".into(),
             });
         }
     };

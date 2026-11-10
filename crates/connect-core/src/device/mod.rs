@@ -925,6 +925,13 @@ impl DeviceController {
         self.pairing = Some(host.clone());
         Ok(host)
     }
+    /// Why the last enrollment that reached this network computer ended
+    /// without a certificate, once, for the owner's side to say.
+    pub fn take_enrollment_failure(&self) -> Option<String> {
+        self.bridge_host
+            .as_ref()
+            .and_then(|host| host.take_enrollment_failure())
+    }
     pub fn pairing(&self) -> Option<Arc<crate::session::pairing::PairHost>> {
         self.pairing.clone()
     }

@@ -32,6 +32,9 @@ struct Published {
     /// The Space registry as the network computer last published it, so
     /// listing never waits for the owner runtime.
     spaces: Mutex<Option<Vec<crate::owner::Space>>>,
+    /// Why the last enrollment that reached this computer ended without a
+    /// certificate, for the owner's side; the device hears only a refusal.
+    enrollment_failure: Mutex<Option<String>>,
 }
 
 impl AuthorityBridge {
@@ -109,6 +112,7 @@ impl AuthorityBridge {
             reported: Mutex::new(Default::default()),
             owner: Mutex::new(None),
             spaces: Mutex::new(None),
+            enrollment_failure: Mutex::new(None),
         });
         let task = tokio::spawn(accept(
             endpoint.clone(),
@@ -164,6 +168,14 @@ impl AuthorityBridge {
             .owner
             .lock()
             .expect("bridge publication mutex poisoned") = Some(owner);
+    }
+    /// Why the last enrollment here ended without a certificate, once.
+    pub fn take_enrollment_failure(&self) -> Option<String> {
+        self.published
+            .enrollment_failure
+            .lock()
+            .expect("bridge publication mutex poisoned")
+            .take()
     }
     /// Session addresses members reported since the last call, by node.
     pub fn take_reported(&self) -> std::collections::BTreeMap<String, String> {
@@ -325,7 +337,7 @@ pub(super) fn check_request_signature(body: &Value, expected_node: &str) -> Resu
 struct Budgets {
     renewals: Mutex<Budget>,
     collections: Mutex<Budget>,
-    enrollments: Mutex<Budget>,
+    enrollments: Mutex<EnrollmentBudget>,
     settings: Mutex<Budget>,
     members: Mutex<Budget>,
     spaces: Mutex<Budget>,
@@ -962,7 +974,7 @@ async fn accept(
     let budgets = Arc::new(Budgets {
         renewals: Mutex::new(Budget::new(8)),
         collections: Mutex::new(Budget::new(480)),
-        enrollments: Mutex::new(Budget::new(3)),
+        enrollments: Mutex::new(EnrollmentBudget::new()),
         // Each device asks once per trust refresh (every 30 seconds).
         settings: Mutex::new(Budget::new(120)),
         members: Mutex::new(Budget::new(120)),
@@ -987,9 +999,16 @@ async fn accept(
                     limit_streams(&connection);
                     // Only a cancel for new credentials says so: a device may
                     // ask that operation again, never one that was refused.
+                    let enrolling = connection.alpn() == Protocol::Enrollment.alpn();
                     let reason: &[u8] = tokio::select! { biased;
                         _ = changes.changed() => super::CREDENTIALS_CHANGED,
-                        _ = timeout(DEADLINE, exchange(&connection, &local, &credentials, &authority, &budgets, &forwarded, &published)) => b"authority operation ended",
+                        outcome = timeout(DEADLINE, exchange(&connection, &local, &credentials, &authority, &budgets, &forwarded, &published)) => {
+                            let failure = match outcome { Ok(Ok(())) => None, Ok(Err(error)) => Some(format!("{error:#}")), Err(_) => Some("Enrollment took too long".into()) };
+                            if enrolling && let Some(failure) = failure {
+                                *published.enrollment_failure.lock().expect("bridge publication mutex poisoned") = Some(failure);
+                            }
+                            b"authority operation ended"
+                        },
                     };
                     connection.close(0u32.into(), reason);
                 });

@@ -226,7 +226,7 @@ pub(super) async fn serve(
     local_id: iroh::EndpointId,
     credentials: &Credentials,
     authority: &LocalAuthority,
-    budget: &Mutex<Budget>,
+    budget: &Mutex<EnrollmentBudget>,
 ) -> Result<()> {
     let (mut send, mut recv) = connection.accept_bi().await?;
     let peer: ClientHello = read_frame(&mut recv).await?;
@@ -272,13 +272,15 @@ pub(super) async fn serve(
         "Unexpected enrollment data"
     );
     check_body(&signed, &credentials.expected_node)?;
-    ensure!(
-        budget
-            .lock()
-            .expect("enrollment budget mutex poisoned")
-            .allow(),
-        "Enrollment budget exhausted"
-    );
+    if !budget
+        .lock()
+        .expect("enrollment budget mutex poisoned")
+        .allow(&peer.node_public_key)
+    {
+        // The device hears a refusal, not a dropped connection.
+        respond(&mut send, Err(anyhow::anyhow!("Refused"))).await?;
+        anyhow::bail!("Enrollment budget exhausted");
+    }
     let result = authority
         .forward_enrollment(&signed)
         .await
@@ -293,9 +295,14 @@ pub(super) async fn serve(
             Ok(certificate)
         });
     own_credential(credentials)?;
+    // The device hears only a refusal; the owner's side keeps the reason.
+    let refused = result.as_ref().err().map(|error| format!("{error:#}"));
     respond(&mut send, result).await?;
     connection.closed().await;
-    Ok(())
+    match refused {
+        Some(reason) => anyhow::bail!("The authority did not enroll the device: {reason}"),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]

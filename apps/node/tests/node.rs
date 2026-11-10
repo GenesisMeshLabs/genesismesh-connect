@@ -352,6 +352,65 @@ fn join(
     Ok(device)
 }
 
+/// A household adds its devices one after another. The network computer
+/// used to enroll three devices a minute in all, so the fourth was cut off
+/// after approval and left half joined; and its 30-second trust refresh
+/// failed a pairing whose final proof it landed on. Eight in a row take
+/// longer than one refresh interval. Nothing here is asked twice.
+#[test]
+#[ignore = "Requires the packaged, standalone owner runtime"]
+fn devices_join_one_after_another() -> Result<()> {
+    let _one = one_at_a_time();
+    let directory = tempfile::tempdir()?;
+    devices_sealed();
+    let (store, credentials) = sealed(directory.path(), "server")?;
+    let server = Server {
+        state: directory.path().join("server"),
+        store,
+        credentials,
+    };
+    let init = server.command(&["init", "--name", "Home"])?.output()?;
+    ensure!(
+        init.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let child = server.run()?;
+    let runtime = tokio::runtime::Runtime::new()?;
+    let started = Instant::now();
+    let outcome = (|| {
+        let mut devices = Vec::new();
+        for number in 1..=8 {
+            let name = format!("Device {number}");
+            let device = join(
+                &server,
+                &runtime,
+                &directory.path().join(format!("device-{number}")),
+                &name,
+            )
+            .with_context(|| format!("{name} after {:?}", started.elapsed()))?;
+            devices.push(device);
+        }
+        let listed = server.control(json!({"op":"status"}))?["devices"].clone();
+        assert_eq!(
+            listed,
+            json!((1..=8).map(|n| format!("Device {n}")).collect::<Vec<_>>()),
+            "Every approved device is listed"
+        );
+        ensure!(
+            started.elapsed() > Duration::from_secs(30),
+            "The joins must span a trust refresh, took {:?}",
+            started.elapsed()
+        );
+        Ok::<_, anyhow::Error>(devices)
+    })();
+    stop(child)?;
+    for mut device in outcome? {
+        runtime.block_on(device.stop());
+    }
+    Ok(())
+}
+
 #[test]
 #[ignore = "Requires the packaged, standalone owner runtime"]
 fn a_device_shares_a_folder_with_another_through_the_server() -> Result<()> {
@@ -1157,7 +1216,14 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
             &photo,
             Some("0".repeat(64)),
         );
-        assert!(wrong.is_err());
+        // The PC does not save it and keeps nothing of it: it ends the
+        // connection, and asked again it says to start over. Asking again
+        // never turns that into a saved file.
+        let wrong = wrong.expect_err("A file with a wrong digest is refused");
+        assert!(
+            format!("{wrong:#}").contains("StartOver"),
+            "The PC discarded the file: {wrong:#}"
+        );
         assert!(!received.join("tampered.bin").exists());
 
         // A device the inbox does not name is refused before any byte, and a

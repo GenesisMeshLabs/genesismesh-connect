@@ -138,19 +138,15 @@ function stop(app) {
 const device = (...args) => execFileSync("bash", [DEVICE, PROFILE, ...args], { encoding: "utf8" });
 const digits = (text) => String(text ?? "").replace(/\D/g, "");
 
-// A pairing can be cut off between approval and the end of joining (seen in
-// hosted runs, cause open). The journey prints each cut with what both sides
-// said and pairs again from a clean state, up to three times, under a new
-// name so a half-joined device is never mistaken for the joined one.
-const named = (name, attempt) => (attempt === 1 ? name : `${name} ${attempt}`);
+// A pairing is asked once. Pairings used to be cut off after approval (three
+// enrollments a minute for the whole network, and a trust refresh landing on
+// the final proof); asking again here would hide that coming back. A cut
+// fails the run and says what the node and the device each reported.
+const named = (name) => name;
 async function paired(what, attempt) {
-  for (let n = 1; ; n++) {
-    try { return await attempt(n); } catch (error) {
-      const reason = await control({ op: "pair_failure" }).catch(String);
-      step(`${what}'s pairing was cut off (attempt ${n}): ${error.message}; the node's reason: ${reason}`);
-      if (n === 3 || /codes differ/.test(error.message)) throw error;
-      await pause(5_000);
-    }
+  try { return await attempt(1); } catch (error) {
+    const reason = await control({ op: "pair_failure" }).catch(String);
+    throw new Error(`${what}'s pairing was cut off: ${error.message}; the node's reason: ${reason}`);
   }
 }
 
@@ -158,17 +154,10 @@ async function paired(what, attempt) {
 let app, pending;
 const PHONE = await paired("The phone", async (n) => {
   const name = named("Journey phone", n);
-  if (n > 1) {
-    // The test app starts again as new: its own data only, on the emulator.
-    stop(app);
-    adb("shell", "pm", "clear", PACKAGE);
-  }
   app = await open();
   await until(() => app.visible("#choose-join"), 120_000, "Welcome");
-  if (n === 1) {
-    step("Welcome");
-    await screenshot("1-welcome");
-  }
+  step("Welcome");
+  await screenshot("1-welcome");
   const invitation = await until(() => control({ op: "pair_begin", name: "Journey server" }), 60_000, "phone's invitation");
   await app.click("#choose-join");
   await app.type("#join-name", name);

@@ -707,21 +707,26 @@ async fn approve(node: &Shared, id: &str) -> Result<()> {
         .context("The other device did not finish joining")?
     {
         Ok(joined) => joined,
-        // The pairing ended on this side or the device left; say which.
-        Err(_) => match pair.failure().await {
-            Some(failure) => bail!("Pairing ended before the device joined: {failure}"),
-            None => bail!("The other device disconnected"),
-        },
+        // The pairing ended on this side or the device left; say which,
+        // and what became of the device's enrollment here.
+        Err(_) => {
+            let pairing = pair.failure().await;
+            let enrollment = node.lock().await.device.take_enrollment_failure();
+            match (pairing, enrollment) {
+                (pairing, Some(enrollment)) => bail!(
+                    "Pairing ended before the device joined: its enrollment was not completed ({enrollment}){}",
+                    pairing.map(|p| format!("; {p}")).unwrap_or_default()
+                ),
+                (Some(pairing), None) => bail!("Pairing ended before the device joined: {pairing}"),
+                (None, None) => bail!("The other device disconnected"),
+            }
+        }
     };
     // The device waits briefly for confirmation, so its final proof is checked
     // without holding the node while other work runs.
     let session = node.lock().await.device.session()?;
     if let Err(error) = session
-        .round_trip_to(
-            Some(&request.node),
-            &joined.ticket,
-            "Connect pairing verification",
-        )
+        .verify_pairing_to(&request.node, &joined.ticket)
         .await
     {
         let _ = joined.confirm.send(false);
