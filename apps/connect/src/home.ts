@@ -14,7 +14,7 @@ import { fillIcons, icon, type IconName } from "./icons";
 import { setupAdvanced } from "./advanced";
 import { PLACE_KEY, place, readPlace, resumeTo, type View } from "./resume-state";
 import { availability, recoveryReminder, recoveryStatus, restoredMessage, RECOVERY_SAVED_KEY } from "./setup-state";
-import { EXPLAIN_AFTER_MS, STOPPED, finishingDetail, finishingTitle, stoppedWaiting, waitDetail, waitTitle } from "./waiting";
+import { EXPLAIN_AFTER_MS, STOPPED, finishingDetail, finishingTitle, sendWaitDetail, stoppedWaiting, waitDetail, waitTitle } from "./waiting";
 import {
   primaryScreen,
   isService,
@@ -26,7 +26,9 @@ import {
   spaceSummary,
   sendSummary,
   sendPartial,
-  type SendState,
+  sendWaits,
+  unfinishedSendText,
+  type SendProgress,
   filesEmptyText,
   newAsks,
   invitationText,
@@ -284,6 +286,7 @@ function render(status: HomeStatus) {
   text("peer-name", status.peer || "");
   renderDevices(status);
   renderUnfinished(status);
+  renderUnfinishedSend(status);
   if (oldDevice !== status.selected_device) {
     currentSpace = null;
     folderPath = [];
@@ -821,32 +824,84 @@ function spaceRow(space: HomeSpace, status: HomeStatus) {
   }
   return row;
 }
-interface SendProgress extends SendState {
-  state: "checking" | "sending" | "complete" | "failed" | "canceled";
-  sent: number; total: number; problem: string | null; saved_as: string | null; name: string;
-}
 let sendId = "";
 async function sendTo(space: HomeSpace) {
-  const id = await invoke<string | null>("send_file", { space: space.id });
-  if (!id) return;
+  const id = await reaching(space.host, (wait) => invoke<string | null>("send_file", { space: space.id, wait }));
+  if (id) await follow(id, space.host);
+}
+/**
+ * Start or continue a send. While the network opens after a restart, or the
+ * other device cannot be reached yet, it waits up to two minutes with the
+ * wait explained and Cancel; nothing is sent meanwhile. Stopped: null.
+ */
+async function reaching<T>(host: string, start: (wait: string) => Promise<T>): Promise<T | null> {
+  const wait = crypto.randomUUID();
+  const done = explainWait(wait, waitTitle(host), sendWaitDetail);
+  try {
+    return await start(wait);
+  } catch (error) {
+    if (!stoppedWaiting(error)) throw error;
+    message(STOPPED);
+    return null;
+  } finally {
+    done();
+  }
+}
+/** The device a send goes to, by name. */
+function sendHost(status: HomeStatus, progress: SendProgress) {
+  return status.spaces.find((space) => space.id === progress.space)?.host || "the other device";
+}
+/** Show a send's progress until it ends. One that fails stays to continue. */
+async function follow(id: string, host: string) {
   sendId = id;
   visible("cancel-send", true);
+  visible("unfinished-send", false);
   try {
     while (true) {
       const progress = await invoke<SendProgress>("send_status", { id });
       const several = (progress.count ?? 1) > 1 && (progress.state === "complete" || progress.state === "canceled");
-      message(several ? `To ${space.host}: ${sendSummary(progress)}` : `${progress.name} to ${space.host}: ${sendSummary(progress)}`);
+      message(several ? `To ${host}: ${sendSummary(progress)}` : `${progress.name} to ${host}: ${sendSummary(progress)}`);
       if (progress.state === "complete" || progress.state === "canceled") return;
-      if (progress.state === "failed") {
+      if (progress.state === "failed" || progress.state === "interrupted") {
         // What arrived stays said; the cause is shown on its own.
-        message(sendPartial(progress) ? `To ${space.host}: ${sendPartial(progress)}` : "");
+        message(sendPartial(progress) ? `To ${host}: ${sendPartial(progress)}` : "");
         throw new Error(progress.problem || "Sending failed. Please try again.");
       }
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
   } finally {
+    sendId = "";
     visible("cancel-send", false);
   }
+}
+/** A send that stopped, after a failure or a restart: what arrived, and Continue or Discard. */
+function renderUnfinishedSend(status: HomeStatus) {
+  const progress = status.send;
+  // A send still running when the page reloaded is followed again; one this
+  // page is starting or continuing is followed by the action itself.
+  if (progress && !sendId && !busy && (progress.state === "sending" || progress.state === "checking"))
+    void follow(progress.id, sendHost(status, progress)).catch((error) => problem(String(error)));
+  const waiting = !sendId && sendWaits(progress);
+  visible("unfinished-send", waiting);
+  if (!waiting || !progress) return;
+  const card = el("unfinished-send");
+  const stamp = JSON.stringify([progress, sendHost(status, progress)]);
+  if (card.dataset.state === stamp) return;
+  card.dataset.state = stamp;
+  const host = sendHost(status, progress);
+  const words = unfinishedSendText(progress, host);
+  text("unfinished-send-title", words.title);
+  text("unfinished-send-detail", words.detail);
+  text("unfinished-send-note", words.note);
+  const resume = el<HTMLButtonElement>("resume-send"), drop = el<HTMLButtonElement>("discard-send");
+  resume.onclick = () => void run(resume, async () => {
+    const id = await reaching(host, (wait) => invoke<string>("resume_send", { id: progress.id, wait }));
+    if (id) await follow(id, host);
+  });
+  drop.onclick = () => void run(drop, async () => {
+    await invoke("discard_send", { id: progress.id });
+    message("Unfinished send discarded. Files that arrived stay on the other device.");
+  });
 }
 el("cancel-send").addEventListener("click", () => {
   if (sendId) void invoke("cancel_send", { id: sendId }).catch((error) => problem(String(error)));

@@ -12,6 +12,9 @@ world=$(mktemp -d)
 # display, the driver, the app and the authority it started, and nothing else.
 trap 'kill -- -"${driver:-0}" 2>/dev/null || true; sleep 1; rm -rf "$world"' EXIT
 mkdir -m 700 "$world"/{home,data,config,cache,runtime}
+# The file the app sends: its debug test build takes it instead of a picker.
+# The journey writes it; the app, started by the driver, inherits the name.
+export CONNECT_TEST_PICK="$world/send/journey.bin"
 HOME="$world/home" XDG_DATA_HOME="$world/data" XDG_CONFIG_HOME="$world/config"   XDG_CACHE_HOME="$world/cache" XDG_RUNTIME_DIR="$world/runtime" WAYLAND_DISPLAY= DISPLAY=   setsid dbus-run-session -- bash -c '
     printf connect-journey | gnome-keyring-daemon --unlock --components=secrets >/dev/null 2>&1
     exec xvfb-run -a -s "-screen 0 1280x900x24" tauri-driver --port 4444 --native-driver "$1"

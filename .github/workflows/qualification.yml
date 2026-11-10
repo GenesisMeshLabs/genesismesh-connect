@@ -193,13 +193,13 @@ jobs:
         run: |
           export CONNECT_OWNER_BINARY="$PWD/apps/connect/src-tauri/binaries/genesismesh-authority-x86_64-unknown-linux-gnu"
           cargo test -p genesismesh-connect-node --test node --locked -- --ignored --nocapture
-      - name: Build the desktop app as installed, and the test device
+      - name: Build the desktop app with its debug-only journey hooks, and the test device
         run: |
           (cd apps/connect && npm ci && npx tsc --noEmit && npx vite build)
-          cargo build -p genesismesh-connect --bin genesismesh-connect --features tauri/custom-protocol --locked
+          cargo build -p genesismesh-connect --bin genesismesh-connect --features tauri/custom-protocol,webdriver --locked
           cargo build -p connect-core --example second_device --locked
           cargo install tauri-driver --locked --version 2.1.0
-      - name: Desktop journey through the app (create, invite, approve, remove, restart)
+      - name: Desktop journey through the app (create, invite, approve, send closed partway and continued, remove, restart)
         env:
           CONNECT_OUT: ${{ github.workspace }}/temp/desktop-journey
         run: bash apps/connect/tests/desktop/run.sh target/debug/genesismesh-connect target/debug/examples/second_device
@@ -244,7 +244,7 @@ jobs:
           "RUSTUP_TOOLCHAIN=1.98.0" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - name: Build standalone authority from installed pinned wheel (the app bundles it)
         run: python apps/connect/authority/build.py
-      - name: Build the desktop app as installed, and the test device
+      - name: Build the desktop app with its debug-only journey hooks, and the test device
         run: |
           Push-Location apps/connect
           npm ci
@@ -254,7 +254,7 @@ jobs:
           cargo build -p genesismesh-connect --bin genesismesh-connect --features tauri/custom-protocol,webdriver --locked
           cargo build -p connect-core --example second_device --locked
           cargo install tauri-driver --locked --version 2.1.0
-      - name: Desktop journey through the app (create, invite, approve, remove, restart)
+      - name: Desktop journey through the app (create, invite, approve, send closed partway and continued, remove, restart)
         env:
           CONNECT_OUT: ${{ github.workspace }}/temp/desktop-journey
         run: ./apps/connect/tests/desktop/run.ps1 target/debug/genesismesh-connect.exe target/debug/examples/second_device.exe

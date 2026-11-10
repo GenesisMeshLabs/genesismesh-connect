@@ -33,6 +33,7 @@ const NEVER_WAIT: &[&str] = &[
     "operation_registry",
     "pair_cancel",
     "cancel_send",
+    "discard_send",
     "cancel_download",
     "cancel_wait",
     "cancel_access_review",
@@ -302,10 +303,17 @@ mod tests {
             "pair_cancel",
             "network_reopen",
             "recovery_restore",
+            "discard_send",
         ] {
             assert!(!waits_for_network(command), "{command}");
         }
-        for command in ["pair_begin", "share_invitation", "open_file", "device_read"] {
+        for command in [
+            "pair_begin",
+            "share_invitation",
+            "open_file",
+            "device_read",
+            "resume_send",
+        ] {
             assert!(waits_for_network(command), "{command}");
         }
     }

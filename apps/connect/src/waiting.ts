@@ -30,6 +30,14 @@ export function waitDetail(ms: number): string {
   return `${elapsed(ms)} · ${why}`;
 }
 
+/** Before a send starts or continues: nothing has gone yet. */
+export function sendWaitDetail(ms: number): string {
+  const left = WAIT_LIMIT_MS - ms;
+  return `${elapsed(ms)} · Nothing has been sent yet. ${left > 0
+    ? "Connect may still be opening your network, or that device may be restarting."
+    : "Finishing the last try."}`;
+}
+
 /**
  * After the owner approves, the new device finishes joining, for at most 80
  * seconds. Nothing to cancel: the approval may already be recorded.

@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #58), and this change:
+Merged since 7 November (#37 to #59), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -167,7 +167,7 @@ Merged since 7 November (#37 to #58), and this change:
   stops the read at once; the read waits for its host instead. A starting agent
   or test device now waits as long as a running one, two minutes, so a restart
   like those measured no longer fails it.
-- **Add an agent safely: labelled as one** (this change). Devices has Add an
+- **Add an agent safely: labelled as one** (#59). Devices has Add an
   AI agent beside Add device. The owner's choice marks the invitation, so the
   label is the owner's own record, not a claim the joining program makes, and
   the pairing protocol is unchanged. The invitation explains that the agent
@@ -181,7 +181,7 @@ Merged since 7 November (#37 to #58), and this change:
   real-node and desktop journeys. A test now keeps the agent's Windows stack
   fix from #58: the task it runs overflows with 1, 2 or 4 MiB of stack and
   finishes with the agent's 8 MiB; the Core job runs it on Windows and Linux.
-- **A device shows in Devices as soon as it is approved** (this change). The
+- **A device shows in Devices as soon as it is approved** (#59). The
   Windows journey once waited over 60 seconds for the approved device to be
   listed. The 30-second maintenance pass holds the device controller while it
   reaches saved devices, and the test device had already left; on Windows that
@@ -189,6 +189,48 @@ Merged since 7 November (#37 to #58), and this change:
   Approving and removing a device now update what Devices shows while they
   still hold the controller, as the phone already did, so a device whose
   screen goes off right after joining is still listed at once.
+- **Survive interruption: a send continues after a restart** (this change).
+  A send stopped by closing Connect, or by a failure such as a lost
+  connection, used to leave nothing: the person had to choose the files again
+  and could send twice a file that had arrived. Connect now keeps a small
+  record of the send beside its cache: the files chosen, what the receiving
+  device saved each finished one as, and where it last said the current file
+  stood. Shared then shows "Unfinished send to <device>" with what arrived
+  ("1 of 3 files arrived, saved as a.jpg. b.mov: at least 1.0 MB of 4.0 MB
+  arrived.") and Continue or Discard. Continue asks the receiving device where
+  the file stands and goes on from there; files that arrived are never sent
+  again. When the window on its way as Connect closed could have finished a
+  file, and the receiving device no longer remembers it (after ten minutes,
+  or for a small file whose only window it never answered), the file is not
+  sent again: Connect says it may already be there and to check. A file
+  changed or moved since it was chosen is refused with its name. Cancel and a
+  finished send remove the record; on a phone, the copies of picked files stay
+  only until their file arrives or the send is discarded, and copies left by
+  a closed app go at the next start. Unit tests drive the send against a
+  stand-in receiving device, closing the app at a chosen window and
+  continuing from the saved record: partway, after the last window, a small
+  file, a receiving device that forgot the file, a changed file, failure and
+  cancel; each check fails when its safeguard is removed. The desktop journey
+  now also has the test device receive files, sends it an 8 MB file, closes
+  the app partway, restarts it, checks the card, continues and compares the
+  received file's SHA-256, on Linux and Windows. A debug-only test build
+  takes the file from the journey instead of the native picker, under the
+  same `webdriver` feature as the Windows driver arguments. The journey found
+  that Continue pressed right after a restart failed with "Authority
+  unavailable" while the network computer was still starting, and that the
+  message then cleared on its own. Sending and Continue now wait for the
+  receiving device as reads do, up to two minutes with the wait explained
+  ("Nothing has been sent yet") and Cancel. The first hosted runs also showed
+  that debug builds send at 60 to 100 KB/s on the hosted runners (about
+  750 KB/s in WSL here); release throughput is not measured yet. Not yet on a
+  phone.
+- **A Space another device shares is listed at once** (this change). The
+  network computer learns of a device's new Space in its 30-second pass, but
+  its screen reads the device only when nothing else holds it, so the new
+  Space could stay unlisted for minutes: the send journey above waited over
+  90 seconds for a laptop's inbox while the app's own status already listed
+  it. The pass now updates the screen while it holds the device, as approving
+  and removing devices do since #59.
 - **A first useful action after joining** (#57). Once the owner
   approves a device, a card says it joined and that nothing is shared with it
   yet, and offers Share with it, which opens the share sheet with that device

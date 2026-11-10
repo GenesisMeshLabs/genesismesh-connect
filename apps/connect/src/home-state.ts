@@ -36,6 +36,8 @@ export interface HomeStatus {
   connection: ConnectionStatus | null;
   /** Downloads that stopped before they finished, to continue. */
   unfinished: { id: string; name: string; received: number; total: number }[];
+  /** The send running, finished, or stopped and able to continue. */
+  send?: SendProgress | null;
 }
 /** A shared folder: this device's, or another device's shared with it. */
 export interface HomeSpace {
@@ -61,6 +63,16 @@ export interface SendState {
   state: string; sent: number; total: number; saved_as: string | null;
   /** Several files go one after another; older hosts report none of these. */
   index?: number; count?: number; saved?: string[];
+  /** Files that may have arrived although the other device no longer says: never sent again. */
+  unsure?: string[];
+  /** The file being sent may have arrived; continuing does not send it twice. */
+  maybe_arrived?: boolean;
+  /** It stopped and can continue where it stopped. */
+  kept?: boolean;
+}
+export interface SendProgress extends SendState {
+  id: string; space: string; name: string; problem: string | null;
+  state: "checking" | "sending" | "complete" | "failed" | "canceled" | "interrupted";
 }
 /** Names, the first few, then how many more. */
 function someNames(names: string[], shown = 3) {
@@ -70,6 +82,12 @@ export function sendSummary(progress: SendState) {
   const count = progress.count ?? 1, saved = progress.saved ?? (progress.saved_as ? [progress.saved_as] : []);
   const which = count > 1 ? `File ${progress.index ?? 1} of ${count} · ` : "";
   if (progress.state === "checking") return `${which}Preparing…`;
+  if (progress.state === "interrupted") return `${which}Stopped when Connect closed`;
+  const unsure = progress.unsure ?? [];
+  if (progress.state === "complete" && unsure.length) {
+    const arrived = saved.length ? `${count > 1 ? `${saved.length} of ${count} files arrived` : "Sent"} · saved as ${someNames(saved)} · ` : "";
+    return `${arrived}${someNames(unsure)} may already be there: the other device no longer says. Check before sending ${unsure.length > 1 ? "them" : "it"} again.`;
+  }
   if (progress.state === "complete")
     return count > 1 ? `Sent ${count} files · saved as ${someNames(saved)}` : progress.saved_as ? `Sent · saved as ${progress.saved_as}` : "Sent";
   if (progress.state === "canceled")
@@ -83,6 +101,26 @@ export function sendPartial(progress: SendState) {
   return saved.length
     ? `${saved.length} of ${count} files arrived, saved as ${someNames(saved)}. The rest were not sent.`
     : `None of the ${count} files were sent.`;
+}
+/** A send that stopped, as its card says it: what arrived, where the rest stands, what Continue does. */
+export function unfinishedSendText(progress: SendProgress, host: string) {
+  const count = progress.count ?? 1, saved = progress.saved ?? [], unsure = progress.unsure ?? [];
+  const cause = (progress.problem || "it did not finish").trim().replace(/([^.!?])$/, "$1.");
+  const lines = [progress.state === "interrupted" ? "Connect closed before it finished." : `It stopped: ${cause}`];
+  if (count > 1 && (saved.length || !unsure.length))
+    lines.push(saved.length ? `${saved.length} of ${count} files arrived, saved as ${someNames(saved)}.` : `None of the ${count} files had arrived.`);
+  if (unsure.length)
+    lines.push(`${someNames(unsure)} may already be on ${host}: it no longer says. Check there before sending ${unsure.length > 1 ? "them" : "it"} again.`);
+  lines.push(progress.maybe_arrived
+    ? `${progress.name} may have arrived. Continue does not send it twice.`
+    : progress.sent > 0
+      ? `${progress.name}: at least ${formatBytes(progress.sent)} of ${formatBytes(progress.total)} arrived.`
+      : `${progress.name} had not started.`);
+  return { title: `Unfinished send to ${host}`, detail: lines.join(" "), note: "Continue sends only what is missing." };
+}
+/** Whether a send stopped and waits to continue or be discarded. */
+export function sendWaits(progress: SendProgress | null | undefined) {
+  return !!progress?.kept && (progress.state === "failed" || progress.state === "interrupted");
 }
 /** What the empty Files view suggests next. */
 export function filesEmptyText(status: HomeStatus) {

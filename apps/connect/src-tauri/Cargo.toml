@@ -20,7 +20,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 default = []
 android-owner-qualification = ["connect-core/pairing-completion-recovery", "connect-core/owner-requests-qualification"]
-# Windows desktop journey tests only, in debug builds: see `webdriver_context`.
+# Desktop journey tests only, in debug builds: WebView2 driver arguments on
+# Windows (`webdriver_context`) and named files instead of the file picker
+# (`picking::files`).
 webdriver = []
 
 [build-dependencies]

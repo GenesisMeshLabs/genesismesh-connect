@@ -140,7 +140,7 @@ pub fn run() {
             desktop::setup(app)?;
             workflow::setup(app)?;
             downloads::setup(app)?;
-            sends::setup(app);
+            sends::setup(app)?;
             services::setup(app);
             Ok(())
         })
@@ -198,6 +198,8 @@ pub fn run() {
             sends::send_file,
             sends::send_status,
             sends::cancel_send,
+            sends::resume_send,
+            sends::discard_send,
             consumer::stop_sharing,
             consumer::browse_files,
             waits::cancel_wait,

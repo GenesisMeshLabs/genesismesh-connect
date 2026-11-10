@@ -10,6 +10,14 @@ pub(crate) struct Picked {
     pub name: String,
     temporary: bool,
 }
+impl Picked {
+    /// Take the file over: a copy is no longer removed when this is dropped,
+    /// and the caller learns whether it is one.
+    pub(crate) fn keep(mut self) -> (PathBuf, bool) {
+        let temporary = std::mem::replace(&mut self.temporary, false);
+        (std::mem::take(&mut self.path), temporary)
+    }
+}
 impl Drop for Picked {
     fn drop(&mut self) {
         if self.temporary {
@@ -31,6 +39,25 @@ pub(crate) async fn files(
     let _picker = PICKING
         .try_lock()
         .context("Finish choosing the current files first")?;
+    // The desktop journey cannot reach the native dialog: a debug test build
+    // takes the files it names instead.
+    #[cfg(all(desktop, debug_assertions, feature = "webdriver"))]
+    if let Some(paths) = std::env::var_os("CONNECT_TEST_PICK") {
+        return std::env::split_paths(&paths)
+            .map(|path| {
+                let name = path
+                    .file_name()
+                    .context("File has no name")?
+                    .to_string_lossy()
+                    .into_owned();
+                Ok(Picked {
+                    path,
+                    name,
+                    temporary: false,
+                })
+            })
+            .collect();
+    }
     #[cfg(desktop)]
     {
         let _ = app;

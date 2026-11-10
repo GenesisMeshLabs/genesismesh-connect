@@ -98,6 +98,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     };
     let cleanup = if DeviceController::leaving(&profile) {
         crate::downloads::clear_previous_network(app)
+            .and_then(|()| crate::sends::clear_previous_network(app))
             .and_then(|()| DeviceController::finish_leave(&profile))
     } else {
         Ok(())
