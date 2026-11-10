@@ -250,13 +250,23 @@ Merged since 7 November (#37 to #60), and this change:
   are not covered. The run also showed the red "This device isn't sharing
   anything with you yet" notice right after joining a server, and the
   bottom navigation labels under the system gesture bar on this image; both
-  are recorded for the availability-status work, not fixed here. In two of
-  five hosted runs the node's approval of the laptop, asked for seconds
-  after the phone joined, ended with "The other device disconnected:
-  channel closed". A pairing right after another device joins can be cut
-  off, most likely by the same closing of connections when the network
-  changes. The journey asks again up to three times and prints each cut;
-  the cause is open and a person adding two devices in a row could meet it.
+  are recorded for the availability-status work, not fixed here.
+- **Pairing is sometimes cut off after approval** (found by this change,
+  open). In four of eight hosted emulator runs a pairing with the headless
+  node failed. Twice the laptop had shown "Approved. Finishing the secure
+  connection…" and the node's approval ended about three seconds later with
+  "The other device disconnected: channel closed"; once the same happened
+  to the phone's own first join; once the node closed the pairing ("pairing
+  ended") before the request was listed. A second attempt with the same
+  half-joined profile is refused with "Review the saved enrollment before
+  starting another pairing". The node discards the pairing's own error, so
+  the cause is not yet known; a trust refresh on the node landing inside
+  the approval is the first thing to check. The emulator journey pairs
+  again from a clean state up to three times, under a new device name, and
+  prints each cut with what both sides said, so the send evidence does not
+  depend on it and every cut stays visible. Not seen in the desktop
+  journeys, where the app runs the network. A person adding a device to a
+  server could meet it and would have to start again.
 - **The inbox journey on a real node no longer fails on a renewal** (this
   change). `a_device_sends_files_into_another_devices_inbox` failed
   intermittently, on main too, with "Trust snapshot stale" and then with

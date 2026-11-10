@@ -20,7 +20,7 @@ const PACKAGE = process.env.CONNECT_PACKAGE ?? "org.genesismesh.connect.qualific
 if (!WORLD || !DEVICE) throw new Error("Run through run.sh");
 mkdirSync(OUT, { recursive: true });
 const CONTROL = `${WORLD}/node/control.sock`;
-const PROFILE = `${WORLD}/device/laptop`;
+let PROFILE = `${WORLD}/device/laptop`;
 const RECEIVED = `${WORLD}/device/received`;
 const NAME = "journey.bin";
 const SOURCE = `${WORLD}/send/${NAME}`;
@@ -138,47 +138,75 @@ function stop(app) {
 const device = (...args) => execFileSync("bash", [DEVICE, PROFILE, ...args], { encoding: "utf8" });
 const digits = (text) => String(text ?? "").replace(/\D/g, "");
 
+// A pairing can be cut off between approval and the end of joining (seen in
+// hosted runs, cause open). The journey prints each cut with what both sides
+// said and pairs again from a clean state, up to three times, under a new
+// name so a half-joined device is never mistaken for the joined one.
+const named = (name, attempt) => (attempt === 1 ? name : `${name} ${attempt}`);
+async function paired(what, attempt) {
+  for (let n = 1; ; n++) {
+    try { return await attempt(n); } catch (error) {
+      step(`${what}'s pairing was cut off (attempt ${n}): ${error.message}`);
+      if (n === 3 || /codes differ/.test(error.message)) throw error;
+      await pause(5_000);
+    }
+  }
+}
+
 // 1. The phone joins the node's network.
-let app = await open();
-await until(() => app.visible("#choose-join"), 120_000, "Welcome");
-step("Welcome");
-await screenshot("1-welcome");
-let invitation = await control({ op: "pair_begin", name: "Journey server" });
-await app.click("#choose-join");
-await app.type("#join-name", "Journey phone");
-await app.type("#join-link", invitation.link);
-await app.js(`document.getElementById("join-form").requestSubmit()`);
-let pending = await until(() => control({ op: "pair_pending" }), 120_000, "join request");
-const phoneCode = await until(async () => (await app.visible("#joining-code")) && digits(await app.text("#joining-code")), 60_000, "phone code");
-step(`Join request from "${pending.name}": node shows ${digits(pending.code)}, phone shows ${phoneCode}`);
-if (digits(pending.code) !== phoneCode) throw new Error("The comparison codes differ");
-await screenshot("2-joining");
-// The node's answer to the approval and what the phone shows are both kept:
-// when a pairing is cut off, the run says which side saw what.
-let approval = "pending";
-control({ op: "pair_approve", id: pending.id }).then(() => (approval = "approved"), (error) => (approval = `failed: ${error.message}`));
-const shown = () => app.js(`return [...document.querySelectorAll('#joining-progress, #home-message, #last-error-detail, #join-screen:not([hidden]) h1')]
-  .map((e) => e.innerText || e.textContent).filter(Boolean).join(" | ")`);
-await until(async () => {
-  if (approval.startsWith("failed") && !(await app.visible("#workspace"))) await pause(15_000);
-  if (approval.startsWith("failed")) throw Object.assign(new Error(`The node's approval ${approval}; the phone shows: ${await shown().catch(String)}`), { final: true });
-  return app.visible("#workspace");
-}, 180_000, "phone joined", async () => console.log(`         approval ${approval}; the phone shows: ${await shown()}`));
-await until(() => approval !== "pending", 90_000, "node's approval");
-if (approval !== "approved") throw new Error(`The node's approval ${approval}`);
-await until(async () => (await control({ op: "status" })).devices.includes("Journey phone"), 60_000, "phone listed on the node");
-step("Phone joined and listed on the node");
+let app, pending;
+const PHONE = await paired("The phone", async (n) => {
+  const name = named("Journey phone", n);
+  if (n > 1) {
+    // The test app starts again as new: its own data only, on the emulator.
+    stop(app);
+    adb("shell", "pm", "clear", PACKAGE);
+  }
+  app = await open();
+  await until(() => app.visible("#choose-join"), 120_000, "Welcome");
+  if (n === 1) {
+    step("Welcome");
+    await screenshot("1-welcome");
+  }
+  const invitation = await until(() => control({ op: "pair_begin", name: "Journey server" }), 60_000, "phone's invitation");
+  await app.click("#choose-join");
+  await app.type("#join-name", name);
+  await app.type("#join-link", invitation.link);
+  await app.js(`document.getElementById("join-form").requestSubmit()`);
+  pending = await until(() => control({ op: "pair_pending" }), 120_000, "join request");
+  const phoneCode = await until(async () => (await app.visible("#joining-code")) && digits(await app.text("#joining-code")), 60_000, "phone code");
+  step(`Join request from "${pending.name}": node shows ${digits(pending.code)}, phone shows ${phoneCode}`);
+  if (digits(pending.code) !== phoneCode) throw new Error("The comparison codes differ");
+  await screenshot("2-joining");
+  let approval = "pending";
+  control({ op: "pair_approve", id: pending.id }).then(() => (approval = "approved"), (error) => (approval = `failed: ${error.message}`));
+  const shown = () => app.js(`return [...document.querySelectorAll('#joining-progress, #home-message, #last-error-detail')]
+    .map((e) => e.innerText || e.textContent).filter(Boolean).join(" | ")`).catch(String);
+  const end = Date.now() + 180_000;
+  while (approval === "pending" || !(await app.visible("#workspace").catch(() => false))) {
+    if (approval.startsWith("failed") || Date.now() > end) {
+      // What the phone goes on to show after the node gave up.
+      await pause(15_000);
+      await screenshot(`cut-phone-${n}`).catch(() => {});
+      throw new Error(`the node's approval ${approval}; the phone shows: ${await shown()}`);
+    }
+    await pause(500);
+  }
+  await until(async () => (await control({ op: "status" })).devices.includes(name), 60_000, "phone listed on the node");
+  return name;
+});
+step(`${PHONE} joined and is listed on the node`);
 await screenshot("3-joined");
 
 // 2. A laptop joins too and receives files. The node takes the next
-// invitation once the phone's pairing has closed. A pairing asked for right
-// after another device joined can be cut off, as the network's change closes
-// open connections; it is asked again, and each cut is printed.
+// invitation once the phone's pairing has closed.
 mkdirSync(`${WORLD}/device`, { recursive: true });
-async function joinLaptop() {
-  invitation = await until(() => control({ op: "pair_begin", name: "Journey server" }), 60_000, "laptop's invitation");
+const LAPTOP = await paired("The laptop", async (n) => {
+  const name = named("Journey laptop", n);
+  PROFILE = `${WORLD}/device/laptop-${n}`;
+  const invitation = await until(() => control({ op: "pair_begin", name: "Journey server" }), 60_000, "laptop's invitation");
   writeFileSync(`${PROFILE}.link`, invitation.link);
-  const joiner = spawn("bash", [DEVICE, PROFILE, "join", "Journey laptop"]);
+  const joiner = spawn("bash", [DEVICE, PROFILE, "join", name]);
   let said = "";
   joiner.stdout.on("data", (d) => (said += d));
   joiner.stderr.on("data", (d) => (said += d));
@@ -191,19 +219,15 @@ async function joinLaptop() {
     const exit = await Promise.race([joined, pause(120_000).then(() => "timeout")]);
     if (exit !== 0) throw new Error(`joining ended with ${exit}`);
   } catch (error) {
+    // The laptop's own account of it, if it ends by itself.
+    await Promise.race([joined, pause(20_000)]);
     joiner.kill();
-    throw new Error(`${error.message}; the laptop said: ${said.trim().split("\n").slice(-3).join(" | ")}`);
+    throw new Error(`${error.message}; the laptop said: ${said.trim().split("\n").filter((l) => l.trim()).slice(-4).join(" | ")}`);
   }
-}
-for (let attempt = 1; ; attempt++) {
-  try { await joinLaptop(); break; } catch (error) {
-    step(`The laptop's pairing was cut off (attempt ${attempt}): ${error.message}`);
-    if (attempt === 3 || /codes differ/.test(error.message)) throw error;
-    await pause(5_000);
-  }
-}
+  return name;
+});
 const status = await control({ op: "status" });
-step(`Laptop joined; the node lists ${JSON.stringify(status.devices)}`);
+step(`${LAPTOP} joined; the node lists ${JSON.stringify(status.devices)}`);
 
 mkdirSync(`${WORLD}/send`, { recursive: true });
 const hash = createHash("sha256");
@@ -216,12 +240,12 @@ for (let left = SEND_MB; left > 0; left -= 4) {
 closeSync(out);
 const digest = hash.digest("hex");
 // Its own process group, so stopping it stops the device too.
-const receiver = spawn("bash", [DEVICE, PROFILE, "receive", RECEIVED, "Journey phone"], { detached: true });
+const receiver = spawn("bash", [DEVICE, PROFILE, "receive", RECEIVED, PHONE], { detached: true });
 let heard = "";
 receiver.stdout.on("data", (d) => (heard += d));
 receiver.stderr.on("data", (d) => (heard += d));
 const stopReceiver = () => { try { process.kill(-receiver.pid, "SIGTERM"); } catch { /* already stopped */ } };
-const SEND = `[aria-label="Send a file to Journey laptop"]`;
+const SEND = `[aria-label="Send a file to ${LAPTOP}"]`;
 try {
   await until(() => /Receiving in/.test(heard) || receiver.exitCode !== null, 90_000, "laptop receiving");
   if (receiver.exitCode !== null) throw new Error(`The laptop does not receive: ${heard}`);
@@ -241,7 +265,7 @@ try {
   await until(() => app.idle(), 30_000, "send ready");
   await app.click(SEND);
   const partway = (text) => {
-    const prefix = `${NAME} to Journey laptop: `;
+    const prefix = `${NAME} to ${LAPTOP}: `;
     return text.startsWith(prefix) && /^[\d.]+ [KMG]B of /.test(text.slice(prefix.length));
   };
   await until(async () => partway((await app.text("#home-message")) ?? ""), 180_000, "send under way");
@@ -264,7 +288,7 @@ try {
   await screenshot("5-unfinished-send");
   await until(() => app.idle(), 30_000, "continue ready");
   await app.click("#resume-send");
-  const sent = `${NAME} to Journey laptop: Sent · saved as ${NAME}`;
+  const sent = `${NAME} to ${LAPTOP}: Sent · saved as ${NAME}`;
   let shownBefore = "", progress = 0;
   await until(async () => {
     const [shown, error] = await app.js(`return [document.querySelector('#home-message').innerText,
