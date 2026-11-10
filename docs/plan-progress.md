@@ -19,7 +19,7 @@ manual/assisted/platform acceptance gate; no parity percentage is claimed.
 | CONNECT-06 lifecycle | Existing disconnect/reconnect/leave; administrative native-store refusal and cleanup | Physical lock/suspend/force-quit/reboot/network switching and user-presence handling |
 | CONNECT-07 distribution/hosting | Existing Tauri packaging and headless Linux server; CI builds the full Android owner app with the embedded authority (#25) | Signed fresh-machine installer/update/service/uninstall acceptance and guided host setup |
 | CONNECT-08 continuity | Existing encrypted recovery and server restore; recovery file for a phone-run network, exported after root authentication and restored onto another phone with the same identity (#27) | Physical save/restore on the phone, checkpoints, missing-history reconciliation, restricted restore, and old-host fencing (key succession after a lost phone) |
-| CONNECT-09 agents | `genesismesh-connect-agent`: own identity through pairing, MCP read tools and `ask_for_access`; real-core fixture of two agents on one machine with separate Spaces and independent revocation (#28, #29) | Approving each read on the phone, write/service tools and descriptors; the agent label (this change) is known only on the network computer |
+| CONNECT-09 agents | `genesismesh-connect-agent`: own identity through pairing, MCP read tools and `ask_for_access`; real-core fixture of two agents on one machine with separate Spaces and independent revocation (#28, #29) | Approving each read on the phone, write/service tools and descriptors; the agent label (#59) is known only on the network computer |
 | CONNECT-10 general policies | Resource recipients/expiry/size/duration and extra gates; plain end choices and a review naming who gains and loses access (#30) | Visual general policy templates/selectors/gates, impact preview and semantic round-trip |
 | CONNECT-11 Activity/evidence | Ordinary local access history, attention filtering, status readback and unsigned record export | Core signed evidence timeline/audit packs/independent verification and execution attribution |
 | CONNECT-12 assistance | Shared typed operation boundary; no model configured or enabled | Opt-in constrained assistance using the exact manual review/authorization/dispatch path and privacy controls |
@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #59), and this change:
+Merged since 7 November (#37 to #60), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -189,7 +189,7 @@ Merged since 7 November (#37 to #59), and this change:
   Approving and removing a device now update what Devices shows while they
   still hold the controller, as the phone already did, so a device whose
   screen goes off right after joining is still listed at once.
-- **Survive interruption: a send continues after a restart** (this change).
+- **Survive interruption: a send continues after a restart** (#60).
   A send stopped by closing Connect, or by a failure such as a lost
   connection, used to leave nothing: the person had to choose the files again
   and could send twice a file that had arrived. Connect now keeps a small
@@ -224,13 +224,74 @@ Merged since 7 November (#37 to #59), and this change:
   that debug builds send at 60 to 100 KB/s on the hosted runners (about
   750 KB/s in WSL here); release throughput is not measured yet. Not yet on a
   phone.
-- **A Space another device shares is listed at once** (this change). The
+- **A Space another device shares is listed at once** (#60). The
   network computer learns of a device's new Space in its 30-second pass, but
   its screen reads the device only when nothing else holds it, so the new
   Space could stay unlisted for minutes: the send journey above waited over
   90 seconds for a laptop's inbox while the app's own status already listed
   it. The pass now updates the screen while it holds the device, as approving
   and removing devices do since #59.
+- **Survive interruption on Android, on an emulator** (this change). A new
+  CI job runs the app on an API 35 x86_64 emulator (Android 15, WebView 124)
+  against a network the headless node runs on the same runner, with the test
+  device as a laptop whose inbox names the phone. The app is driven through
+  its WebView's DevTools protocol, which debug builds allow
+  (`apps/connect/tests/android`). First passing hosted run: the phone joined
+  with matching codes at 23 s; the laptop's inbox was listed on the phone
+  39 s after the laptop joined; the phone began an 8 MB send and was
+  force-stopped at 64 KB. It had kept `send.json` and its copy of the file.
+  Reopened, it showed "Connect closed before it finished. journey.bin: at
+  least 64.0 KB of 8.0 MB arrived."; Continue finished in 56 s. In later
+  passing runs the same 8 MB took 38 s, 76 s and 193 s, and the receiving
+  device twice reported 128 KB where the phone had recorded 64 KB; the
+  send went on from the receiving device's figure. The laptop
+  held one file with the same SHA-256, and the phone's copy and record were
+  gone. Stopped and opened once more, the network reopened without Welcome.
+  This is emulator evidence only. The test build takes a file placed in its
+  cache instead of the system picker (under the debug-only `webdriver`
+  feature), so the picker, a physical phone, screen lock and a network change
+  are not covered. The run also showed the red "This device isn't sharing
+  anything with you yet" notice right after joining a server, and the
+  bottom navigation labels under the system gesture bar on this image; both
+  are recorded for the availability-status work, not fixed here.
+- **Pairing is sometimes cut off after approval** (found by this change,
+  open). In five of the nine hosted emulator runs that reached pairing, a
+  pairing with the headless node failed. Four ended with the node's approval
+  answering "The other device disconnected: channel closed": three for the
+  laptop, which in the one run that recorded it had shown "Approved.
+  Finishing the secure connection…" about three seconds earlier, and one
+  for the phone's own first join. In the fifth the node closed the pairing
+  ("pairing ended") before the request was listed. A second attempt with the same
+  half-joined profile is refused with "Review the saved enrollment before
+  starting another pairing". The node discards the pairing's own error, so
+  the cause is not yet known; a trust refresh on the node landing inside
+  the approval is the first thing to check. The emulator journey pairs
+  again from a clean state up to three times, under a new device name, and
+  prints each cut with what both sides said, so the send evidence does not
+  depend on it and every cut stays visible. Not seen in the desktop
+  journeys, where the app runs the network. A person adding a device to a
+  server could meet it and would have to start again.
+- **The inbox journey on a real node no longer fails on a renewal** (this
+  change). `a_device_sends_files_into_another_devices_inbox` failed
+  intermittently, on main too, with "Trust snapshot stale" and then with
+  "connection lost … authority credentials changed". Neither was a transfer
+  fault. The test drove its devices without the 30-second trust refresh a
+  running app makes, so on a slow runner a snapshot passed its 60-second
+  limit; and its sender gave up on the first error, where the app's sender
+  asks a window again up to six times and goes on from where the receiving
+  device says the file stands. The test's devices now refresh between and
+  during the sends, and its sender follows the app's rule: any error but a
+  refusal is asked again, per window. The freshness limit is unchanged, and
+  refusals and a wrong digest still fail. With the refresh running the log
+  shows what a real send lives with: every 30-second refresh on either
+  device closes the open connection ("session ended", "Trust changed while
+  sending", briefly "the server refused to accept a new connection"), and
+  the sender pauses two seconds or more before asking again. That is a
+  likely part of the slow sends measured in debug builds, and is not yet
+  measured or changed. Release throughput is still unmeasured. The first
+  test failed in all four completed hosted runs on this branch before the
+  change and passed in all six after it, with such interruptions in the
+  log each time. That is evidence, not proof, that the failure is gone.
 - **A first useful action after joining** (#57). Once the owner
   approves a device, a card says it joined and that nothing is shared with it
   yet, and offers Share with it, which opens the share sheet with that device
@@ -450,6 +511,53 @@ pickers; clearer recovery when an action cannot finish.
 **Next milestone:** create a network on Android, join a computer and another
 phone, share in both directions, change access, survive interruption, remove a
 device, and restore safely.
+
+## Priorities from the 10 November 2026 review
+
+A review of the source, these records and the live checks (not a fresh
+installed-app or phone test) set the next priority: make outcomes predictable.
+A person should know what is available, what happened and what to do next.
+Waiting with Cancel, hosting explained at setup, a first share after joining,
+agent labels, requests surviving a restart and resumable sends are no longer
+gaps. In order:
+
+1. **Safe recovery before it is presented as protection.** An older backup
+   can conflict with revocations devices have already seen, and an original
+   and a restored host can hold the same identity
+   (`docs/restore-proposal.md`). Restore stays restricted until history is
+   reconciled and the old host is retired. Warnings alone do not complete
+   the journey. The design remains the Maintainer's decision.
+2. **Separate "Send files" from "Share access".** Send delivers copies to
+   another device. Share lets chosen devices open files, folders or services
+   while the host is available. Show the consequence before confirming.
+   "Shared" must not suggest a copy has arrived.
+3. **Receiving as part of sending.** Choose files, choose a device, the
+   recipient accepts if required, send. No trip to the other device to set
+   up Receive files first. Receiving permission stays explicit and scoped.
+4. **One availability status that names the device.** For example "Waiting
+   for Home PC. Open Connect there to continue." Tell apart the network host
+   being unavailable, the sharing device being unavailable, access refused
+   and a transfer needing attention, each with one useful action.
+5. **A permanent home for transfers.** Sends and downloads together:
+   Sending, Received, Needs attention, Completed, each with destination,
+   saved name, progress and Open, Show location or Continue. Partial
+   delivery in plain words: "2 files arrived; 1 still needs attention."
+6. **Requests within reach.** A count on Devices and a "Needs your
+   attention" entry on Shared. Each request says who asks, for what, for how
+   long and with what consequence. Text an agent wrote stays a request,
+   never an authorization.
+7. **Recovery status that means something.** "Last saved" is a local
+   timestamp from when the person confirmed writing down the key. Track the
+   network and snapshot behind the backup, and say "Device permissions
+   changed since this backup" when they have.
+8. **Service sharing through a working example.** Choose the app, check it
+   works locally, choose recipients, test opening it. Custom TCP details go
+   under Advanced, and the service's own login still applies.
+
+Mobile measures follow: startup time, time to resume a useful action,
+battery and CPU, picker behaviour and interruption recovery. The unexplained
+long-running relay stall stays open, and debug CPU figures say nothing about
+release performance.
 
 ## Independent phone hosting requirement — 5 November 2026
 

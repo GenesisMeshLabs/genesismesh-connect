@@ -58,6 +58,32 @@ pub(crate) async fn files(
             })
             .collect();
     }
+    // Nor can the emulator journey reach the system picker: a debug test build
+    // takes the files placed in its cache's `connect-test-pick` folder, moved
+    // into the picker's own folder as the picker copies what it is given.
+    #[cfg(all(target_os = "android", debug_assertions, feature = "webdriver"))]
+    {
+        let cache = app.path().app_cache_dir()?;
+        let placed = cache.join("connect-test-pick");
+        if placed.is_dir() {
+            let picked = cache.join("connect-picked");
+            std::fs::create_dir_all(&picked)?;
+            let mut files = Vec::new();
+            for entry in std::fs::read_dir(&placed)? {
+                let entry = entry?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_nanos();
+                let copy = picked.join(format!("picked-test-{stamp}.bin"));
+                std::fs::rename(entry.path(), &copy)?;
+                files.push(selected_file(&picked, copy, name)?);
+            }
+            if !files.is_empty() {
+                return Ok(files);
+            }
+        }
+    }
     #[cfg(desktop)]
     {
         let _ = app;

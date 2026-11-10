@@ -908,6 +908,27 @@ fn a_removed_device_hears_that_it_was_removed() -> Result<()> {
     outcome
 }
 
+/// The pass a running app makes every 30 seconds: each device refreshes its
+/// trust, whose snapshot is refused once it is 60 seconds old. A test that
+/// drives devices itself makes the pass between and during its steps, as
+/// `DeviceController::refresh` asks.
+struct Pass(Instant);
+impl Pass {
+    fn due(
+        &mut self,
+        runtime: &tokio::runtime::Runtime,
+        devices: [&mut DeviceController; 3],
+    ) -> Result<()> {
+        if self.0.elapsed() >= Duration::from_secs(30) {
+            for device in devices {
+                runtime.block_on(device.refresh())?;
+            }
+            self.0 = Instant::now();
+        }
+        Ok(())
+    }
+}
+
 /// Send `bytes` as `name` into `host`'s inbox, window by window, declaring
 /// `declared` as the whole file's SHA-256. Returns the name it was saved as.
 fn send_file(
@@ -938,7 +959,13 @@ fn send_with(
     let mut file = tempfile::tempfile()?;
     file.write_all(bytes)?;
     let digest = declared.unwrap_or_else(|| sha256(bytes));
-    let (mut token, mut offset, mut waits) = (None, 0u64, 0);
+    let (mut token, mut offset, mut waits, mut attempts) = (None, 0u64, 0, 0);
+    // A trust or credential renewal on either device closes every open
+    // connection, and the receiving device refuses new ones for a moment. As
+    // in the app, a window is asked again up to six times after any error but
+    // a refusal, and goes on from where the receiving device says the file
+    // stands.
+    let passes = |error: &anyhow::Error| !format!("{error:#}").contains("isn't accepting files");
     loop {
         let sent = runtime.block_on(session.send_window_to(
             &host.node,
@@ -964,7 +991,13 @@ fn send_with(
                 std::thread::sleep(Duration::from_secs(2));
                 continue;
             }
-            sent => sent?,
+            Err(error) if attempts < 6 && passes(&error) => {
+                attempts += 1;
+                eprintln!("Sending {name} at {offset}, asking again after: {error:#}");
+                std::thread::sleep(Duration::from_secs(2));
+                continue;
+            }
+            sent => sent.with_context(|| format!("Sending {name} at {offset}"))?,
         };
         let window = match window {
             Outcome::Sent(window) => window,
@@ -975,6 +1008,8 @@ fn send_with(
             }
             other => anyhow::bail!("Unexpected answer: {other:?}"),
         };
+        // Each window has its own attempts, as in the app.
+        attempts = 0;
         offset += window.bytes as u64;
         token = Some(window.token);
         if window.done {
@@ -1051,6 +1086,7 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
         for device in [&mut phone, &mut tablet] {
             runtime.block_on(device.check_network())?;
         }
+        let mut pass = Pass(Instant::now());
         let listed = phone.status()?.spaces;
         assert_eq!(
             listed
@@ -1070,6 +1106,7 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
 
         // Several windows, each decided by the PC for the whole file.
         let photo: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        pass.due(&runtime, [&mut pc, &mut phone, &mut tablet])?;
         let saved = send_file(
             &runtime,
             &phone,
@@ -1086,6 +1123,7 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
         );
         assert_eq!(std::fs::read(received.join("photo (2).jpg"))?, photo);
         assert_eq!(std::fs::read(received.join("photo.jpg"))?, b"already here");
+        pass.due(&runtime, [&mut pc, &mut phone, &mut tablet])?;
         let again = send_file(
             &runtime,
             &phone,
@@ -1096,6 +1134,7 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
             None,
         )?;
         assert_eq!(again.as_deref(), Some("photo (3).jpg"));
+        pass.due(&runtime, [&mut pc, &mut phone, &mut tablet])?;
         let empty = send_file(
             &runtime,
             &phone,
@@ -1108,6 +1147,7 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
         assert_eq!(empty.as_deref(), Some("empty.txt"));
 
         // A file that does not match its declared digest is never saved.
+        pass.due(&runtime, [&mut pc, &mut phone, &mut tablet])?;
         let wrong = send_file(
             &runtime,
             &phone,
@@ -1122,6 +1162,7 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
 
         // A device the inbox does not name is refused before any byte, and a
         // shared folder or an unknown inbox accepts nothing.
+        pass.due(&runtime, [&mut pc, &mut phone, &mut tablet])?;
         let refused = send_file(
             &runtime,
             &tablet,
@@ -1134,7 +1175,7 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
         assert!(
             refused
                 .err()
-                .is_some_and(|e| e.to_string().contains("isn't accepting files"))
+                .is_some_and(|e| format!("{e:#}").contains("isn't accepting files"))
         );
         assert!(!received.join("spam.txt").exists());
         let photos = directory.path().join("photos");
@@ -1148,6 +1189,7 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
         ))?;
         // Both refusals reach the PC and come back as denials, not as a
         // connection failure.
+        pass.due(&runtime, [&mut pc, &mut phone, &mut tablet])?;
         let into_folder = send_file(
             &runtime,
             &phone,
@@ -1160,7 +1202,7 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
         assert!(
             into_folder
                 .err()
-                .is_some_and(|e| e.to_string().contains("isn't accepting files")),
+                .is_some_and(|e| format!("{e:#}").contains("isn't accepting files")),
             "A folder accepts no files"
         );
         assert!(!photos.join("into-folder.txt").exists());
@@ -1197,7 +1239,7 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
         let large: Vec<u8> = (0..1_500_000u32).map(|i| (i % 241) as u8).collect();
         let (from_phone, from_tablet) = (phone.session()?, tablet.session()?);
         let (phone_host, tablet_host) = (pc_from(&phone)?, pc_from(&tablet)?);
-        let (a, b) = std::thread::scope(|scope| {
+        let (a, b, kept) = std::thread::scope(|scope| {
             let a = scope.spawn(|| {
                 send_with(
                     &runtime,
@@ -1220,8 +1262,17 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
                     None,
                 )
             });
-            (a.join().expect("phone"), b.join().expect("tablet"))
+            // The long step: the devices keep refreshing while both send.
+            let mut kept = Ok(());
+            while !(a.is_finished() && b.is_finished()) {
+                std::thread::sleep(Duration::from_millis(200));
+                if kept.is_ok() {
+                    kept = pass.due(&runtime, [&mut pc, &mut phone, &mut tablet]);
+                }
+            }
+            (a.join().expect("phone"), b.join().expect("tablet"), kept)
         });
+        kept?;
         assert_eq!(a?.as_deref(), Some("a.bin"));
         assert_eq!(b?.as_deref(), Some("b.bin"));
         assert_eq!(std::fs::read(shared.join("a.bin"))?, large);

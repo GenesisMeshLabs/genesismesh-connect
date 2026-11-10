@@ -20,7 +20,7 @@ use connect_core::{
 };
 use std::path::{Path, PathBuf};
 
-const USAGE: &str = "Usage: second_device <profile> (join <link> [name] | status | browse [space] [folder/...] | read <space> <name> [sha256] | watch <space> <name> <reads> | receive <folder>)";
+const USAGE: &str = "Usage: second_device <profile> (join <link> [name] | status | browse [space] [folder/...] | read <space> <name> [sha256] | watch <space> <name> <reads> | receive <folder> [sending device])";
 
 /// Windows gives the main thread 1 MiB of stack, Linux 8 MiB, and joining a
 /// network overflowed it on Windows. The program runs on a runtime worker
@@ -142,13 +142,25 @@ async fn run() -> Result<()> {
             }
             Ok(())
         }
-        // Receive files from the network computer into `folder` until stopped,
-        // as a laptop that shares its inbox does.
+        // Receive files into `folder` until stopped, as a laptop that shares
+        // its inbox does: from the network computer, or from the device named.
         Some("receive") => {
             let folder = PathBuf::from(args.get(2).context(USAGE)?);
             std::fs::create_dir_all(&folder)?;
             let mut device = connected(profile).await?;
-            let recipients = device.status()?.bridge_host_node.into_iter().collect();
+            let recipients = match args.get(3) {
+                Some(sender) => {
+                    device.check_network().await?;
+                    let member = device
+                        .status()?
+                        .members
+                        .into_iter()
+                        .find(|member| &member.name == sender)
+                        .with_context(|| format!("{sender} is not on the network"))?;
+                    vec![member.node]
+                }
+                None => device.status()?.bridge_host_node.into_iter().collect(),
+            };
             let config = device
                 .share_space(
                     None,
