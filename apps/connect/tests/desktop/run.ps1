@@ -34,6 +34,28 @@ if (-not $NativeDriver) {
   $NativeDriver = Join-Path $world 'edgedriver\msedgedriver.exe'
 }
 
+# Preflight: the app starts on its own and shows its window. WebDriver reports
+# an app that ends at startup only as a missing DevTools port, without the
+# app's own output, so say here what it printed.
+$log = Join-Path $world 'app'
+$first = Start-Process $App -PassThru -RedirectStandardOutput "$log.out" -RedirectStandardError "$log.err"
+$shown = $false
+foreach ($i in 1..40) {
+  Start-Sleep -Milliseconds 500
+  $first.Refresh()
+  if ($first.HasExited) { break }
+  if ($first.MainWindowHandle -ne 0) { $shown = $true; break }
+}
+$exited = $first.HasExited
+if (-not $exited) { $first | Stop-Process -Force; $first.WaitForExit() }
+Get-Process | Where-Object { $_.ProcessName -like 'genesismesh-authority*' } | Stop-Process -Force
+if (-not $shown) {
+  Write-Host "The app did not show its window (exited: $exited, code: $(if ($exited) { $first.ExitCode }))."
+  Get-Content "$log.out", "$log.err" -ErrorAction SilentlyContinue | Select-Object -Last 60
+  throw 'The app did not start'
+}
+Write-Host 'Preflight: the app starts and shows its window.'
+
 $driver = Start-Process tauri-driver -ArgumentList '--port', '4444', '--native-driver', $NativeDriver -PassThru -NoNewWindow
 try {
   $ready = $false
