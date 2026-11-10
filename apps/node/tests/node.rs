@@ -960,22 +960,12 @@ fn send_with(
     file.write_all(bytes)?;
     let digest = declared.unwrap_or_else(|| sha256(bytes));
     let (mut token, mut offset, mut waits, mut attempts) = (None, 0u64, 0, 0);
-    // What ends a connection without deciding anything: either device renewed
-    // its trust or credentials, which closes every open connection. The app
-    // asks again and goes on from where the receiving device says the file
-    // stands; a refusal or a wrong digest is final.
-    let passes = |error: &anyhow::Error| {
-        let text = format!("{error:#}");
-        [
-            "connection lost",
-            "closed by peer",
-            "Trust changed",
-            "Trust snapshot stale",
-            "Connection is suspended",
-        ]
-        .iter()
-        .any(|sign| text.contains(sign))
-    };
+    // A trust or credential renewal on either device closes every open
+    // connection, and the receiving device refuses new ones for a moment. As
+    // in the app, a window is asked again up to six times after any error but
+    // a refusal, and goes on from where the receiving device says the file
+    // stands.
+    let passes = |error: &anyhow::Error| !format!("{error:#}").contains("isn't accepting files");
     loop {
         let sent = runtime.block_on(session.send_window_to(
             &host.node,
