@@ -89,6 +89,27 @@ async fn send_probe(
         .map_err(|e| format!("{e:#}"))
 }
 
+/// Desktop journey tests on Windows only: Edge WebDriver passes its debugging
+/// arguments in `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, but the WebView2
+/// options wry always sets take precedence, so the driver never finds the app.
+/// The test build adds them to wry's own arguments. Release builds cannot
+/// contain this: it needs a debug build and the `webdriver` feature.
+#[cfg(all(windows, debug_assertions, feature = "webdriver"))]
+fn webdriver_context(mut context: tauri::Context<tauri::Wry>) -> tauri::Context<tauri::Wry> {
+    if let Ok(driver) = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
+        for window in &mut context.config_mut().app.windows {
+            window.additional_browser_args = Some(format!(
+                "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection {driver}"
+            ));
+        }
+    }
+    context
+}
+#[cfg(not(all(windows, debug_assertions, feature = "webdriver")))]
+fn webdriver_context(context: tauri::Context<tauri::Wry>) -> tauri::Context<tauri::Wry> {
+    context
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -208,7 +229,7 @@ pub fn run() {
             desktop::device_refresh,
             desktop::device_send
         ]))
-        .build(tauri::generate_context!())
+        .build(webdriver_context(tauri::generate_context!()))
         .expect("Connect could not start")
         .run(|_app, _event| {
             #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
