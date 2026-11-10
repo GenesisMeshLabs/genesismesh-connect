@@ -31,11 +31,9 @@ pub(crate) struct DisplayStatus {
 impl DesktopState {
     /// Show what the controller in a slot the caller holds says now. The status
     /// check never waits for the slot, so without this the screen would show
-    /// nothing until whatever runs next lets go of it.
-    #[cfg_attr(
-        not(all(target_os = "android", feature = "android-owner-qualification")),
-        allow(dead_code)
-    )]
+    /// nothing until whatever runs next lets go of it. A maintenance pass can
+    /// hold the slot for minutes while it tries to reach a device that just
+    /// went away, so commands that change the device list call this.
     pub(crate) fn show_held(&self, slot: &Slot) {
         if let Some(Ok(status)) = slot.controller.as_ref().map(|c| c.status())
             && let Ok(mut display) = self.display.lock()

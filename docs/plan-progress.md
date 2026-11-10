@@ -181,6 +181,14 @@ Merged since 7 November (#37 to #58), and this change:
   real-node and desktop journeys. A test now keeps the agent's Windows stack
   fix from #58: the task it runs overflows with 1, 2 or 4 MiB of stack and
   finishes with the agent's 8 MiB; the Core job runs it on Windows and Linux.
+- **A device shows in Devices as soon as it is approved** (this change). The
+  Windows journey once waited over 60 seconds for the approved device to be
+  listed. The 30-second maintenance pass holds the device controller while it
+  reaches saved devices, and the test device had already left; on Windows that
+  wait is long, and the screen only reads the controller when nobody holds it.
+  Approving and removing a device now update what Devices shows while they
+  still hold the controller, as the phone already did, so a device whose
+  screen goes off right after joining is still listed at once.
 - **A first useful action after joining** (#57). Once the owner
   approves a device, a card says it joined and that nothing is shared with it
   yet, and offers Share with it, which opens the share sheet with that device

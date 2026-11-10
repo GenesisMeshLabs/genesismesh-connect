@@ -418,6 +418,8 @@ pub async fn pair_approve(id: String, app: tauri::AppHandle) -> Result<(), Strin
         .commit_local_pairing(&target, joined)
         .await
         .map_err(error)?;
+    // Devices lists it now, even if a maintenance pass takes the slot next.
+    desktop.show_held(&slot);
     drop(slot);
     // The owner invited an agent: label the member that joined with it.
     let mut owner = workflow.slot.lock().await;
@@ -1014,6 +1016,8 @@ pub async fn remove_device(
     if let Err(problem) = tidied {
         slot.problem = Some(problem.to_string());
     }
+    // Devices drops it now, even if a maintenance pass takes the slot next.
+    desktop.show_held(&slot);
     Ok(())
 }
 /// Answer an access request: it leaves the list, whether the owner shared
