@@ -1085,6 +1085,36 @@ fn own_inbox(
         .ok_or("Choose something this device shares".into())
 }
 /// Send an invitation through the phone's share sheet.
+/// The system bars and display cutout the page lies under, in CSS pixels.
+#[derive(Default, serde::Serialize)]
+pub struct SystemInsets {
+    top: f64,
+    bottom: f64,
+    left: f64,
+    right: f64,
+}
+/// What the page keeps clear of. Android draws apps edge to edge, and older
+/// WebViews tell CSS only about the display cutout, so the page asks. Other
+/// systems report their safe area to CSS, and nothing is added here.
+#[tauri::command]
+pub async fn system_insets(app: tauri::AppHandle) -> Result<SystemInsets, String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_view::ViewExt;
+        let insets = app.view().insets().map_err(error)?;
+        Ok(SystemInsets {
+            top: insets.top,
+            bottom: insets.bottom,
+            left: insets.left,
+            right: insets.right,
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(SystemInsets::default())
+    }
+}
 #[tauri::command]
 pub async fn share_invitation(text: String, app: tauri::AppHandle) -> Result<(), String> {
     if text.is_empty() || text.len() > 8192 {

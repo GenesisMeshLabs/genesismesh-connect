@@ -291,6 +291,24 @@ Merged since 7 November (#37 to #60), and this change:
   device half joined in the same way (now reported as such to the
   approver); an owner would have to add eleven devices in a minute to meet
   it. A half-joined device still has to leave and start again.
+- **Right after joining: no false alarm, and the navigation clear of the
+  system bar** (this change). Both were seen on the emulator in #61.
+  Joining a network computer that shares nothing showed a red alert, "This
+  device isn’t sharing anything with you yet.": the app's first look at the
+  new device is answered with no file protocol at all, and that answer was
+  treated as a failure. It is the ordinary state after joining a server.
+  Shared now says it in place, under "Nothing shared yet", naming the
+  device, and shows no alert; every other answer is still a problem. And
+  the bottom navigation's labels sat under the system gesture bar. Android
+  draws apps edge to edge, and WebViews before 136 tell CSS only about the
+  display cutout, so the bottom inset the layout relied on was zero there.
+  The app now asks the system which bars the page lies under and keeps
+  clear of the larger of that and what CSS reports, so a newer WebView is
+  not padded twice. Nothing changes on iOS or desktop. The emulator journey
+  checks both right after joining, and unit tests cover the wording, which
+  answers count as "nothing shared", and that a missing or senseless inset
+  moves nothing. Emulator only (Android 15, WebView 124): not seen on a
+  physical phone, whose newer WebView may never have shown the second one.
 - **The enrollment limits #63 set are a change already made, not yet a
   decision.** Three attempts a minute for each approved device and 32 a
   minute for the network replaced three a minute for the whole network.

@@ -32,6 +32,37 @@ class ShareTextArgs { var text: String = "" }
 
 @TauriPlugin
 class ViewPlugin(private val activity: Activity) : Plugin(activity) {
+  private var page: android.webkit.WebView? = null
+  override fun load(webView: android.webkit.WebView) { page = webView }
+
+  // The system bars and display cutout the page lies under, in CSS pixels.
+  // Android draws apps edge to edge, and WebViews before 136 tell CSS only
+  // about the cutout, so the page asks for the rest. Parts of a bar the page
+  // does not reach count as nothing.
+  @Command
+  fun insets(invoke: Invoke) {
+    activity.runOnUiThread {
+      val result = JSObject().put("top", 0.0).put("bottom", 0.0).put("left", 0.0).put("right", 0.0)
+      val view = page
+      val root = activity.window.decorView
+      val insets = androidx.core.view.ViewCompat.getRootWindowInsets(root)
+      if (view != null && insets != null && view.width > 0 && view.height > 0) {
+        val bars = insets.getInsets(
+          androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+        )
+        val at = IntArray(2)
+        view.getLocationInWindow(at)
+        val density = activity.resources.displayMetrics.density
+        fun under(pixels: Int): Double = (pixels.coerceAtLeast(0) / density).toDouble()
+        result.put("top", under(bars.top - at[1]))
+          .put("bottom", under(at[1] + view.height - (root.height - bars.bottom)))
+          .put("left", under(bars.left - at[0]))
+          .put("right", under(at[0] + view.width - (root.width - bars.right)))
+      }
+      invoke.resolve(result)
+    }
+  }
+
   @Command
   fun shareText(invoke: Invoke) {
     val args = invoke.parseArgs(ShareTextArgs::class.java)

@@ -18,7 +18,11 @@
   --warning: #e8c468;
   --warning-container: #3a3220;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --tabs: calc(64px + env(safe-area-inset-bottom));
+  /* The system bars and cutout the page lies under: what CSS is told, or what
+     the app asked the system (`--system-*`) where CSS is told too little. */
+  --inset-top: max(env(safe-area-inset-top), var(--system-top, 0px));
+  --inset-bottom: max(env(safe-area-inset-bottom), var(--system-bottom, 0px));
+  --tabs: calc(64px + var(--inset-bottom));
 }
 .everyday {
   min-height: 100dvh;
@@ -67,8 +71,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: calc(56px + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 16px 0;
+  min-height: calc(56px + var(--inset-top));
+  padding: var(--inset-top) 16px 0;
   background: var(--bg);
 }
 .home-brand {
@@ -163,7 +167,7 @@
   right: 0;
   bottom: 0;
   display: flex;
-  padding: 0 8px env(safe-area-inset-bottom);
+  padding: 0 8px var(--inset-bottom);
   background: var(--surface);
   border-top: 1px solid var(--line);
 }
@@ -1377,7 +1381,7 @@
     max-width: 100%;
     max-height: 90dvh;
     margin: auto 0 0;
-    padding: 20px 16px calc(16px + env(safe-area-inset-bottom));
+    padding: 20px 16px calc(16px + var(--inset-bottom));
     border-radius: 24px 24px 0 0;
   }
   .activity-detail-actions button {
@@ -1480,7 +1484,7 @@
 /* The way back stays in reach: below a phone's status bar, above the
    advanced pages, with their navigation sticking just under it. */
 #advanced-shell {
-  --return-height: calc(46px + env(safe-area-inset-top));
+  --return-height: calc(46px + var(--inset-top));
 }
 .advanced-return {
   position: sticky;
@@ -1488,7 +1492,7 @@
   z-index: 30;
   width: 100%;
   min-height: var(--return-height);
-  padding: calc(11px + env(safe-area-inset-top)) 18px 11px;
+  padding: calc(11px + var(--inset-top)) 18px 11px;
   border-radius: 0;
   background: var(--accent);
   color: var(--on-accent);

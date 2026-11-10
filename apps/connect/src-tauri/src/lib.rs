@@ -193,6 +193,7 @@ pub fn run() {
             consumer::browse_received,
             consumer::export_received,
             consumer::share_invitation,
+            consumer::system_insets,
             consumer::receive_files,
             consumer::show_received_folder,
             sends::send_file,

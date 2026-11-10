@@ -123,6 +123,32 @@ export function sendWaits(progress: SendProgress | null | undefined) {
   return !!progress?.kept && (progress.state === "failed" || progress.state === "interrupted");
 }
 /** What the empty Files view suggests next. */
+/** A device that shares nothing answers no file protocol. After joining a
+ * network computer that is the ordinary state, not something that failed. */
+export function sharesNothing(error: unknown) {
+  return /support any known protocol/i.test(String(error));
+}
+/** What Shared says, in place of an alert, when the device shares nothing. */
+export function nothingSharedText(peer?: string | null) {
+  return `${peer || "This device"} isn’t sharing anything with you yet. What it shares with you will appear here.`;
+}
+/** System bars the page lies under, in CSS pixels, as the app reports them. */
+export interface SystemInsets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+/** The custom properties the layout keeps clear of. Anything but a sensible
+ * number of pixels counts as none: a wrong answer must not push the page away. */
+export function insetProperties(insets: Partial<SystemInsets> | null | undefined) {
+  const pixels = (value: unknown) =>
+    typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 200 ? `${Math.round(value * 100) / 100}px` : "0px";
+  return {
+    "--system-top": pixels(insets?.top),
+    "--system-bottom": pixels(insets?.bottom),
+  };
+}
 export function filesEmptyText(status: HomeStatus) {
   if (!status.can_share) return "Nothing is shared with this device yet.";
   return status.devices.length
