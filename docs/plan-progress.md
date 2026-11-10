@@ -241,7 +241,10 @@ Merged since 7 November (#37 to #60), and this change:
   39 s after the laptop joined; the phone began an 8 MB send and was
   force-stopped at 64 KB. It had kept `send.json` and its copy of the file.
   Reopened, it showed "Connect closed before it finished. journey.bin: at
-  least 64.0 KB of 8.0 MB arrived."; Continue finished in 56 s. The laptop
+  least 64.0 KB of 8.0 MB arrived."; Continue finished in 56 s. In later
+  passing runs the same 8 MB took 38 s, 76 s and 193 s, and the receiving
+  device twice reported 128 KB where the phone had recorded 64 KB; the
+  send went on from the receiving device's figure. The laptop
   held one file with the same SHA-256, and the phone's copy and record were
   gone. Stopped and opened once more, the network reopened without Welcome.
   This is emulator evidence only. The test build takes a file placed in its
@@ -252,12 +255,13 @@ Merged since 7 November (#37 to #60), and this change:
   bottom navigation labels under the system gesture bar on this image; both
   are recorded for the availability-status work, not fixed here.
 - **Pairing is sometimes cut off after approval** (found by this change,
-  open). In four of eight hosted emulator runs a pairing with the headless
-  node failed. Twice the laptop had shown "Approved. Finishing the secure
-  connection…" and the node's approval ended about three seconds later with
-  "The other device disconnected: channel closed"; once the same happened
-  to the phone's own first join; once the node closed the pairing ("pairing
-  ended") before the request was listed. A second attempt with the same
+  open). In five of the nine hosted emulator runs that reached pairing, a
+  pairing with the headless node failed. Four ended with the node's approval
+  answering "The other device disconnected: channel closed": three for the
+  laptop, which in the one run that recorded it had shown "Approved.
+  Finishing the secure connection…" about three seconds earlier, and one
+  for the phone's own first join. In the fifth the node closed the pairing
+  ("pairing ended") before the request was listed. A second attempt with the same
   half-joined profile is refused with "Review the saved enrollment before
   starting another pairing". The node discards the pairing's own error, so
   the cause is not yet known; a trust refresh on the node landing inside
@@ -285,8 +289,9 @@ Merged since 7 November (#37 to #60), and this change:
   the sender pauses two seconds or more before asking again. That is a
   likely part of the slow sends measured in debug builds, and is not yet
   measured or changed. Release throughput is still unmeasured. The first
-  hosted run with the change passed with six such interruptions; more
-  runs are needed before the failure counts as gone.
+  test failed in all four completed hosted runs on this branch before the
+  change and passed in all six after it, with such interruptions in the
+  log each time. That is evidence, not proof, that the failure is gone.
 - **A first useful action after joining** (#57). Once the owner
   approves a device, a card says it joined and that nothing is shared with it
   yet, and offers Share with it, which opens the share sheet with that device
