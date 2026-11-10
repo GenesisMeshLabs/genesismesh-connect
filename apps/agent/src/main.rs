@@ -18,8 +18,18 @@ use std::path::{Path, PathBuf};
 const USAGE: &str =
     "Usage: genesismesh-connect-agent <profile> (join <invitation link> [name] | status | mcp)";
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Windows gives the main thread 1 MiB of stack, Linux 8 MiB, and joining a
+/// network overflowed it on Windows. The program runs on a runtime worker
+/// thread with the stack Linux gives instead.
+fn main() -> Result<()> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(8 << 20)
+        .build()?
+        .block_on(async { tokio::spawn(run()).await? })
+}
+
+async fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let profile = PathBuf::from(args.first().context(USAGE)?);
     match args.get(1).map(String::as_str) {

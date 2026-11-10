@@ -86,6 +86,9 @@ try {
   await app.js(`window.__copied = null; navigator.clipboard.writeText = async (text) => { window.__copied = text; }`);
   await app.click("#add-device-button");
   await app.until(() => app.visible("#pair-card"), 60_000, "invitation");
+  // The app ignores a tap while it is still finishing the last action (here,
+  // refreshing after the invitation appeared); wait for that, as a person does.
+  await app.until(() => app.js(`return !document.querySelector('[aria-busy="true"]')`), 30_000, "invitation ready");
   await app.click("#copy-invitation");
   await app.until(() => app.js("return window.__copied"), 10_000, "invitation link");
   mkdirSync(`${WORLD}/device`, { recursive: true });

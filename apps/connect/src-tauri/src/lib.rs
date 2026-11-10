@@ -89,7 +89,6 @@ async fn send_probe(
         .map_err(|e| format!("{e:#}"))
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Desktop journey tests on Windows only: Edge WebDriver passes its debugging
 /// arguments in `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, but the WebView2
 /// options wry always sets take precedence, so the driver never finds the app.
@@ -111,6 +110,7 @@ fn webdriver_context(context: tauri::Context<tauri::Wry>) -> tauri::Context<taur
     context
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
