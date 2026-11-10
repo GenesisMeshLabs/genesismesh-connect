@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #56), and this change:
+Merged since 7 November (#37 to #57), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -167,15 +167,21 @@ Merged since 7 November (#37 to #56), and this change:
   stops the read at once; the read waits for its host instead. A starting agent
   or test device now waits as long as a running one, two minutes, so a restart
   like those measured no longer fails it.
-- **A first useful action after joining** (this change). Once the owner
+- **A first useful action after joining** (#57). Once the owner
   approves a device, a card says it joined and that nothing is shared with it
   yet, and offers Share with it, which opens the share sheet with that device
   chosen, or Later. The Devices list now keeps its last row and menu clear of
   the floating Add device button.
-- **Requests survive a restart** (this change). Requests from devices and agents
+- **Requests survive a restart** (#57). Requests from devices and agents
   waiting for the owner were kept only in the app's memory, so Android ending
   Connect in the background lost them. They are now kept in a file in the
   app's own directory until answered, declined or a day old.
+- **The desktop journey on Windows, in CI** (this change). The same journey
+  runs through the Windows app in WebView2, with the authority it bundles and
+  the owner key protected by DPAPI, driven by the Edge WebDriver that matches
+  the runner's WebView2. It runs only on the hosted runner: this computer's
+  Smart App Control blocks fresh Rust builds, and Windows keeps the app's data
+  and keys in the account itself.
 - **The desktop journey through the app, in CI** (#56). The Linux app,
   built as installed, is driven through its own screens: Welcome, create a
   network, invite, the joining device and the owner show the same code,
@@ -218,16 +224,17 @@ Merged since 7 November (#37 to #56), and this change:
 - **Several files at once** (#55). Sharing files lets the person choose
   several plain files, up to 100, not only several photos and videos. Both
   devices see the batch named after its first file, as "report.pdf and 2 more".
-- **Send several files** (this change). Sending into another device's inbox
+- **Send several files** (#57). Sending into another device's inbox
   takes up to 100 files, sent one after another with "File 2 of 5". At the end
   the screen names what the other device saved them as; if one fails or the
   person cancels, it says which arrived and that the rest were not sent, and
   shows the cause on its own. Each file is sent exactly as before.
-- **A removed device is told so** (this change). A device removed from the
+- **A removed device is told so** (#57). A device removed from the
   network hears "Certificate revoked" from the network computer within a
   second, when it checks in and when it starts again, and the app now says it
   was removed and needs a new invitation instead of an error. A new real-node
-  test checks this and that the devices that stay are unaffected.
+  test checks this and that the devices that stay are unaffected: 137 ms in
+  WSL, 112 ms on the hosted Linux runner (#57).
 
 Phone evidence (Samsung SM-A176B, Android 16, owner test build; every CPU figure
 is from a **debug** build, because the owner test feature refuses to compile in
