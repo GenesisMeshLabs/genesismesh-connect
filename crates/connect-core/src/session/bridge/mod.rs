@@ -282,6 +282,38 @@ fn own_credential(credentials: &Credentials) -> Result<()> {
     )
 }
 
+/// Enrollments in a minute: a few attempts for each approved device, and a
+/// ceiling for the network. Each device counts for itself, so devices added
+/// one after another never use up each other's, and a device repeating
+/// itself spends only its own. Only a device the owner approved gets here.
+struct EnrollmentBudget {
+    network: Budget,
+    devices: std::collections::HashMap<String, Budget>,
+}
+impl EnrollmentBudget {
+    /// A network has up to 32 devices.
+    const NETWORK: u32 = 32;
+    const DEVICE: u32 = 3;
+    fn new() -> Self {
+        Self {
+            network: Budget::new(Self::NETWORK),
+            devices: Default::default(),
+        }
+    }
+    fn allow(&mut self, node: &str) -> bool {
+        self.devices
+            .retain(|_, budget| budget.since.elapsed() < Duration::from_secs(60));
+        if !self.devices.contains_key(node) && self.devices.len() >= Self::NETWORK as usize {
+            return false;
+        }
+        self.devices
+            .entry(node.to_owned())
+            .or_insert_with(|| Budget::new(Self::DEVICE))
+            .allow()
+            && self.network.allow()
+    }
+}
+
 struct Budget {
     since: Instant,
     used: u32,

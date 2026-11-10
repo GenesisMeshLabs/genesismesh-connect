@@ -617,6 +617,14 @@ async fn handle(node: &Shared, request: Value) -> Result<Value> {
             approve(node, request["id"].as_str().context("Missing request")?).await?;
             Ok(json!(true))
         }
+        // Why the current invitation's last pairing ended, if it did.
+        "pair_failure" => {
+            let pair = node.lock().await.pairing.clone();
+            Ok(json!(match pair {
+                Some(pair) => pair.failure().await,
+                None => None,
+            }))
+        }
         "pair_reject" => {
             let node = node.lock().await;
             node.pairing
@@ -694,19 +702,31 @@ async fn approve(node: &Shared, id: &str) -> Result<()> {
         let completion = pair.approve(id, grant)?;
         (pair, request, completion)
     };
-    let joined = tokio::time::timeout(Duration::from_secs(80), completion)
+    let joined = match tokio::time::timeout(Duration::from_secs(80), completion)
         .await
         .context("The other device did not finish joining")?
-        .context("The other device disconnected")?;
+    {
+        Ok(joined) => joined,
+        // The pairing ended on this side or the device left; say which,
+        // and what became of the device's enrollment here.
+        Err(_) => {
+            let pairing = pair.failure().await;
+            let enrollment = node.lock().await.device.take_enrollment_failure();
+            match (pairing, enrollment) {
+                (pairing, Some(enrollment)) => bail!(
+                    "Pairing ended before the device joined: its enrollment was not completed ({enrollment}){}",
+                    pairing.map(|p| format!("; {p}")).unwrap_or_default()
+                ),
+                (Some(pairing), None) => bail!("Pairing ended before the device joined: {pairing}"),
+                (None, None) => bail!("The other device disconnected"),
+            }
+        }
+    };
     // The device waits briefly for confirmation, so its final proof is checked
     // without holding the node while other work runs.
     let session = node.lock().await.device.session()?;
     if let Err(error) = session
-        .round_trip_to(
-            Some(&request.node),
-            &joined.ticket,
-            "Connect pairing verification",
-        )
+        .verify_pairing_to(&request.node, &joined.ticket)
         .await
     {
         let _ = joined.confirm.send(false);

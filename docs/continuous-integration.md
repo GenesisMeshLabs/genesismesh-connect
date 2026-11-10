@@ -11,7 +11,8 @@ and `Connect qualification`. The latter can also be started manually. It checks:
 - Journeys on a real node, in their own job: the app's own command tests (waits,
   downloads, sends, sharing, lifecycle), then the headless node with the
   packaged authority while devices pair, share a folder, send into an inbox,
-  resume transfers, restart, and read through a network computer restart. They
+  resume transfers, restart, read through a network computer restart, and
+  join eight devices one after another across a trust refresh. They
   run one at a time, about 13 minutes. Then the desktop app itself, a debug
   build with the bundled pages, is driven through its screens over WebDriver
   (`tauri-driver` with WebKitWebDriver, a virtual display and a throwaway

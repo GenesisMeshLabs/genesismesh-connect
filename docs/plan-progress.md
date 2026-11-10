@@ -254,23 +254,55 @@ Merged since 7 November (#37 to #60), and this change:
   anything with you yet" notice right after joining a server, and the
   bottom navigation labels under the system gesture bar on this image; both
   are recorded for the availability-status work, not fixed here.
-- **Pairing is sometimes cut off after approval** (found by this change,
-  open). In five of the nine hosted emulator runs that reached pairing, a
-  pairing with the headless node failed. Four ended with the node's approval
-  answering "The other device disconnected: channel closed": three for the
-  laptop, which in the one run that recorded it had shown "Approved.
-  Finishing the secure connection…" about three seconds earlier, and one
-  for the phone's own first join. In the fifth the node closed the pairing
-  ("pairing ended") before the request was listed. A second attempt with the same
-  half-joined profile is refused with "Review the saved enrollment before
-  starting another pairing". The node discards the pairing's own error, so
-  the cause is not yet known; a trust refresh on the node landing inside
-  the approval is the first thing to check. The emulator journey pairs
-  again from a clean state up to three times, under a new device name, and
-  prints each cut with what both sides said, so the send evidence does not
-  depend on it and every cut stays visible. Not seen in the desktop
-  journeys, where the app runs the network. A person adding a device to a
-  server could meet it and would have to start again.
+- **Pairing was cut off after approval** (found by #61, fixed by this
+  change). In five of the nine hosted emulator runs of #61 that reached
+  pairing, a pairing with the headless node failed, usually with "The other
+  device disconnected: channel closed" seconds after approval. The serving
+  tasks discarded their own errors, so nothing said why. Both now keep the
+  reason for the owner's side: the approver on the node and in the app is
+  told why a pairing ended ("Pairing ended before the device joined: …"),
+  and the node answers it over its control socket. A local loop pairing
+  fourteen test devices back to back with the node, asking nothing twice,
+  then showed two causes. First, the network computer enrolled three
+  devices a minute for the whole network: the fourth approved device was
+  refused after it had marked its enrollment as begun, so it was left half
+  joined and "Review the saved enrollment before starting another pairing"
+  met the next try (11 of 14 cut). Each approved device now has its own
+  three attempts a minute under a ceiling of 32 for the network, a refusal
+  answers the device instead of dropping it, and only a device the owner
+  approved reaches that count, as before. Second, the 30-second trust
+  refresh failed a pairing whose final proof it landed on ("Trust changed;
+  reconnect with current credentials", then "Device verification failed"):
+  the device had enrolled and saved the connection, and the network
+  computer never listed it. The proof is now asked again under the
+  refreshed trust for up to 12 seconds, inside the 20 the device waits; a
+  refusal is final at once, so a revoked or wrong device still stays out.
+  After both, ten devices in a row joined in the loop. Regression evidence
+  that asks nothing twice: unit tests for the budget and for the proof
+  (asked again after a refresh, never after a refusal, giving up in time);
+  a real-node test, `devices_join_one_after_another`, that joins eight
+  devices in a row across a refresh and fails at "Device 4" when the old
+  limit is put back; and the emulator journey, which now asks each pairing
+  once and fails with both sides' reasons. The retry-assisted passes of #61
+  were not evidence for this fix. Whether these two causes account for
+  every hosted cut is not proven: the hosted cuts were not recorded with
+  reasons. Still open and recorded: from the eleventh device in a minute the
+  authority itself answers HTTP 429, after approval, which leaves that
+  device half joined in the same way (now reported as such to the
+  approver); an owner would have to add eleven devices in a minute to meet
+  it. A half-joined device still has to leave and start again.
+- **A wrong digest is refused without saying so** (found by this change,
+  open). The inbox test accepted any error for a file whose bytes do not
+  match its declared SHA-256. Made exact, it shows the receiving device
+  never saves the file, but ends the connection without a reason and, asked
+  again, answers "start over". The test now asserts that outcome and that
+  nothing is saved. The app computes the digest it declares, so a person
+  meets this only through corruption or a file changing under the send,
+  where the app would resend before giving up. A plain refusal is future
+  work for the transfers view.
+- **The emulator job started two adb daemons at once** (#62). On main after
+  #61 the journey job failed before the journey ran: the emulator and the
+  step's own command each started the daemon. The step starts it once now.
 - **The inbox journey on a real node no longer fails on a renewal** (this
   change). `a_device_sends_files_into_another_devices_inbox` failed
   intermittently, on main too, with "Trust snapshot stale" and then with

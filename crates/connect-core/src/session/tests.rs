@@ -732,6 +732,64 @@ async fn a_running_device_waits_out_a_restart_as_long_as_those_measured() {
     assert!(answered.is_ok());
 }
 
+/// The 30-second trust refresh used to fail a pairing whose final proof it
+/// landed on: the device had enrolled, and the owner's side gave up.
+#[tokio::test(start_paused = true)]
+async fn a_pairing_proof_a_trust_refresh_ended_is_asked_again() {
+    for ended in [
+        "Trust changed; reconnect with current credentials",
+        "connection lost: closed by peer: session ended (code 0)",
+    ] {
+        let attempts = std::cell::Cell::new(0);
+        let proved = proving_again(PAIRING_PROOF, || {
+            attempts.set(attempts.get() + 1);
+            let reply = if attempts.get() == 1 {
+                Err(anyhow::anyhow!(ended))
+            } else {
+                Ok("proved")
+            };
+            async move { reply }
+        })
+        .await;
+        assert_eq!(proved.unwrap(), "proved", "{ended}");
+        assert_eq!(attempts.get(), 2, "{ended}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refused_pairing_proof_is_final_and_a_lasting_refresh_gives_up() {
+    // A refusal is never asked again: a revoked or wrong device stays out.
+    for refusal in [
+        "Certificate revoked",
+        "Peer certificate does not match the expected node",
+        "Signature verification failed",
+    ] {
+        let attempts = std::cell::Cell::new(0);
+        let proved: Result<()> = proving_again(PAIRING_PROOF, || {
+            attempts.set(attempts.get() + 1);
+            async move { Err(anyhow::anyhow!(refusal)) }
+        })
+        .await;
+        assert_eq!(proved.unwrap_err().to_string(), refusal);
+        assert_eq!(attempts.get(), 1, "{refusal}");
+    }
+    // Trust that keeps changing ends within the time the device waits.
+    let start = tokio::time::Instant::now();
+    let attempts = std::cell::Cell::new(0);
+    let proved: Result<()> = proving_again(PAIRING_PROOF, || {
+        attempts.set(attempts.get() + 1);
+        async move {
+            Err(anyhow::anyhow!(
+                "Trust changed; reconnect with current credentials"
+            ))
+        }
+    })
+    .await;
+    assert!(proved.is_err());
+    assert_eq!(attempts.get(), 4, "at 0, 1, 3 and 7 seconds");
+    assert!(start.elapsed() < Duration::from_secs(20));
+}
+
 #[tokio::test(start_paused = true)]
 async fn asking_again_stops_after_two_minutes_with_the_last_answer() {
     // Fast failures: attempts at 0, 1, 3, 7 and every 8 s after, the last
