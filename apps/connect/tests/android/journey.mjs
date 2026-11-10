@@ -187,7 +187,24 @@ const PHONE = await paired("The phone", async (n) => {
   return name;
 });
 step(`${PHONE} joined and is listed on the node`);
+// Right after joining a network computer that shares nothing: Shared says so
+// in place, and nothing is shown as a problem.
+await pause(3_000);
+await until(() => app.idle(), 60_000, "first look finished");
+const empty = (await app.text("#files-empty-description")) ?? "";
+const alert = (await app.visible("#home-error")) ? await app.text("#home-error") : "";
+step(`Shared says: ${empty.trim()}${alert ? `; and as a problem: ${alert}` : "; no problem is shown"}`);
+// The bottom navigation stays clear of the system bar the page lies under.
+const bars = await app.js(`return window.__TAURI_INTERNALS__.invoke("system_insets")`).catch(() => null);
+const nav = await app.js(`const bar = document.querySelector(".home-navigation");
+  const labels = [...bar.querySelectorAll("button span:last-child")].map((e) => e.getBoundingClientRect().bottom);
+  return { lowest: Math.max(...labels), height: innerHeight, padding: parseFloat(getComputedStyle(bar).paddingBottom) }`);
+step(`System bar under the page: ${bars ? `${bars.bottom} px` : "not reported by the app"}; navigation labels end at ${nav.lowest.toFixed(1)} of ${nav.height} px, bar padding ${nav.padding} px`);
 await screenshot("3-joined");
+if (alert) throw new Error(`An ordinary empty state is shown as a problem: ${alert}`);
+if (!/sharing anything with you yet/.test(empty)) throw new Error(`Shared does not say that nothing is shared yet: ${empty}`);
+if (!(bars?.bottom > 0)) throw new Error("The app reports no system bar under the page on this emulator");
+if (nav.lowest > nav.height - bars.bottom + 0.5) throw new Error("The navigation labels lie under the system bar");
 
 // 2. A laptop joins too and receives files. The node takes the next
 // invitation once the phone's pairing has closed.
