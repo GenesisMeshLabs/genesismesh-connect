@@ -158,21 +158,37 @@ step("Phone joined and listed on the node");
 await screenshot("3-joined");
 
 // 2. A laptop joins too and receives files. The node takes the next
-// invitation once the phone's pairing has closed.
-invitation = await until(() => control({ op: "pair_begin", name: "Journey server" }), 60_000, "laptop's invitation");
+// invitation once the phone's pairing has closed. A pairing asked for right
+// after another device joined can be cut off, as the network's change closes
+// open connections; it is asked again, and each cut is printed.
 mkdirSync(`${WORLD}/device`, { recursive: true });
-writeFileSync(`${PROFILE}.link`, invitation.link);
-const joiner = spawn("bash", [DEVICE, PROFILE, "join", "Journey laptop"]);
-let said = "";
-joiner.stdout.on("data", (d) => (said += d));
-joiner.stderr.on("data", (d) => (said += d));
-const joined = new Promise((resolve) => joiner.on("exit", resolve));
-pending = await until(() => control({ op: "pair_pending" }), 120_000, "laptop's join request", async () => console.log(said));
-const laptopCode = await until(() => said.match(/\d{3}\s?\d{3}/)?.[0], 30_000, "laptop code");
-if (digits(pending.code) !== digits(laptopCode)) throw new Error("The laptop's comparison codes differ");
-await control({ op: "pair_approve", id: pending.id });
-const exit = await Promise.race([joined, pause(120_000).then(() => "timeout")]);
-if (exit !== 0) throw new Error(`The laptop's joining ended with ${exit}: ${said}`);
+async function joinLaptop() {
+  invitation = await until(() => control({ op: "pair_begin", name: "Journey server" }), 60_000, "laptop's invitation");
+  writeFileSync(`${PROFILE}.link`, invitation.link);
+  const joiner = spawn("bash", [DEVICE, PROFILE, "join", "Journey laptop"]);
+  let said = "";
+  joiner.stdout.on("data", (d) => (said += d));
+  joiner.stderr.on("data", (d) => (said += d));
+  const joined = new Promise((resolve) => joiner.on("exit", resolve));
+  try {
+    pending = await until(() => control({ op: "pair_pending" }), 120_000, "laptop's join request");
+    const laptopCode = await until(() => said.match(/\d{3}\s?\d{3}/)?.[0], 30_000, "laptop code");
+    if (digits(pending.code) !== digits(laptopCode)) throw new Error("The laptop's comparison codes differ");
+    await control({ op: "pair_approve", id: pending.id });
+    const exit = await Promise.race([joined, pause(120_000).then(() => "timeout")]);
+    if (exit !== 0) throw new Error(`joining ended with ${exit}`);
+  } catch (error) {
+    joiner.kill();
+    throw new Error(`${error.message}; the laptop said: ${said.trim().split("\n").slice(-3).join(" | ")}`);
+  }
+}
+for (let attempt = 1; ; attempt++) {
+  try { await joinLaptop(); break; } catch (error) {
+    step(`The laptop's pairing was cut off (attempt ${attempt}): ${error.message}`);
+    if (attempt === 3 || /codes differ/.test(error.message)) throw error;
+    await pause(5_000);
+  }
+}
 const status = await control({ op: "status" });
 step(`Laptop joined; the node lists ${JSON.stringify(status.devices)}`);
 
