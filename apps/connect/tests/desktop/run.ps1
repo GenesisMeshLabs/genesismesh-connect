@@ -33,6 +33,11 @@ if (-not $NativeDriver) {
   Expand-Archive $zip (Join-Path $world 'edgedriver')
   $NativeDriver = Join-Path $world 'edgedriver\msedgedriver.exe'
 }
+# The native driver writes a verbose log, kept with the run: a WebView2 that
+# never opens its DevTools port is otherwise reported without a cause.
+$driverLog = Join-Path $world 'msedgedriver.log'
+$wrapper = Join-Path $world 'native-driver.cmd'
+"@`"$NativeDriver`" %* --verbose `"--log-path=$driverLog`"" | Set-Content -Encoding ascii $wrapper
 
 # Preflight: the app starts on its own and shows its window. WebDriver reports
 # an app that ends at startup only as a missing DevTools port, without the
@@ -56,7 +61,7 @@ if (-not $shown) {
 }
 Write-Host 'Preflight: the app starts and shows its window.'
 
-$driver = Start-Process tauri-driver -ArgumentList '--port', '4444', '--native-driver', $NativeDriver -PassThru -NoNewWindow
+$driver = Start-Process tauri-driver -ArgumentList '--port', '4444', '--native-driver', $wrapper -PassThru -NoNewWindow
 try {
   $ready = $false
   foreach ($i in 1..60) {
@@ -68,8 +73,16 @@ try {
   $env:CONNECT_WORLD = $world
   if (-not $env:CONNECT_OUT) { $env:CONNECT_OUT = Join-Path $world 'out' }
   node (Join-Path $here 'journey.mjs')
-  if ($LASTEXITCODE -ne 0) { throw "The journey failed with exit code $LASTEXITCODE" }
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host '--- Edge WebDriver log (last 120 lines) ---'
+    Get-Content $driverLog -ErrorAction SilentlyContinue | Select-Object -Last 120
+    throw "The journey failed with exit code $LASTEXITCODE"
+  }
 } finally {
+  if (Test-Path $driverLog) {
+    New-Item -ItemType Directory -Force $env:CONNECT_OUT | Out-Null
+    Copy-Item $driverLog $env:CONNECT_OUT
+  }
   # Stop the driver, the app, the authority it started and the test device.
   $driver | Stop-Process -Force -ErrorAction SilentlyContinue
   Get-Process msedgedriver, genesismesh-connect, second_device -ErrorAction SilentlyContinue | Stop-Process -Force
