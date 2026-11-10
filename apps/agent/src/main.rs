@@ -21,12 +21,17 @@ const USAGE: &str =
 /// Windows gives the main thread 1 MiB of stack, Linux 8 MiB, and joining a
 /// network overflowed it on Windows. The program runs on a runtime worker
 /// thread with the stack Linux gives instead.
-fn main() -> Result<()> {
+const STACK: usize = 8 << 20;
+
+fn runtime() -> std::io::Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .thread_stack_size(8 << 20)
-        .build()?
-        .block_on(async { tokio::spawn(run()).await? })
+        .thread_stack_size(STACK)
+        .build()
+}
+
+fn main() -> Result<()> {
+    runtime()?.block_on(async { tokio::spawn(run()).await? })
 }
 
 async fn run() -> Result<()> {
@@ -194,5 +199,29 @@ impl mcp::Shared for Agent {
             "sent": true,
             "next": "The owner answers on their device. Anything they share with this agent appears in list_shared.",
         }))
+    }
+}
+
+#[cfg(test)]
+mod stack {
+    /// Joining a network overflowed the 1 MiB main-thread stack on Windows.
+    /// The program's tasks run with 8 MiB. This task needs more than 4 MiB in
+    /// the debug builds tests use (32 frames, each holding 64 KiB twice): it
+    /// overflows with 1, 2 or 4 MiB, as the main thread on Windows or a default
+    /// runtime worker would give it, and finishes with the program's 8 MiB.
+    #[test]
+    fn the_agent_has_room_to_join_from_windows() {
+        fn deep(depth: u8) -> u64 {
+            let frame = std::hint::black_box([depth; 64 * 1024]);
+            if depth == 0 {
+                0
+            } else {
+                deep(depth - 1) + u64::from(frame[1])
+            }
+        }
+        let reached = super::runtime()
+            .unwrap()
+            .block_on(async { tokio::spawn(async { deep(32) }).await.unwrap() });
+        assert_eq!(reached, (1..=32).sum::<u64>());
     }
 }

@@ -178,7 +178,9 @@ Merged since 7 November (#37 to #58), and this change:
   until the agent is removed; a restored network does not carry it. Checked in
   the browser with the native layer stubbed (A17 viewport) and by unit tests;
   the pairing itself is the same as for devices, already covered by the
-  real-node and desktop journeys.
+  real-node and desktop journeys. A test now keeps the agent's Windows stack
+  fix from #58: the task it runs overflows with 1, 2 or 4 MiB of stack and
+  finishes with the agent's 8 MiB; the Core job runs it on Windows and Linux.
 - **A first useful action after joining** (#57). Once the owner
   approves a device, a card says it joined and that nothing is shared with it
   yet, and offers Share with it, which opens the share sheet with that device
