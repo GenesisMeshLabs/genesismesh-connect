@@ -1,5 +1,6 @@
 //! Owner-computer orchestration. Only a local inherited pipe reaches the sidecar.
 //! No operator credentials or generic administrative requests cross device links.
+pub mod agents;
 pub mod asks;
 pub mod foreground;
 pub mod inspection;

@@ -19,7 +19,7 @@ manual/assisted/platform acceptance gate; no parity percentage is claimed.
 | CONNECT-06 lifecycle | Existing disconnect/reconnect/leave; administrative native-store refusal and cleanup | Physical lock/suspend/force-quit/reboot/network switching and user-presence handling |
 | CONNECT-07 distribution/hosting | Existing Tauri packaging and headless Linux server; CI builds the full Android owner app with the embedded authority (#25) | Signed fresh-machine installer/update/service/uninstall acceptance and guided host setup |
 | CONNECT-08 continuity | Existing encrypted recovery and server restore; recovery file for a phone-run network, exported after root authentication and restored onto another phone with the same identity (#27) | Physical save/restore on the phone, checkpoints, missing-history reconciliation, restricted restore, and old-host fencing (key succession after a lost phone) |
-| CONNECT-09 agents | `genesismesh-connect-agent`: own identity through pairing, MCP read tools and `ask_for_access`; real-core fixture of two agents on one machine with separate Spaces and independent revocation (#28, #29) | Approving each read on the phone, write/service tools, descriptors and an agent label in the owner's view |
+| CONNECT-09 agents | `genesismesh-connect-agent`: own identity through pairing, MCP read tools and `ask_for_access`; real-core fixture of two agents on one machine with separate Spaces and independent revocation (#28, #29) | Approving each read on the phone, write/service tools and descriptors; the agent label (this change) is known only on the network computer |
 | CONNECT-10 general policies | Resource recipients/expiry/size/duration and extra gates; plain end choices and a review naming who gains and loses access (#30) | Visual general policy templates/selectors/gates, impact preview and semantic round-trip |
 | CONNECT-11 Activity/evidence | Ordinary local access history, attention filtering, status readback and unsigned record export | Core signed evidence timeline/audit packs/independent verification and execution attribution |
 | CONNECT-12 assistance | Shared typed operation boundary; no model configured or enabled | Opt-in constrained assistance using the exact manual review/authorization/dispatch path and privacy controls |
@@ -88,7 +88,7 @@ prompt. Public Create in the normal app stays off.
 
 ## State on 8 November 2026
 
-Merged since 7 November (#37 to #57), and this change:
+Merged since 7 November (#37 to #58), and this change:
 
 - **Phone results recorded** and "while Connect is open" wording (#37).
 - **Share invitation** through the Android share sheet (#38); the invitation
@@ -167,6 +167,28 @@ Merged since 7 November (#37 to #57), and this change:
   stops the read at once; the read waits for its host instead. A starting agent
   or test device now waits as long as a running one, two minutes, so a restart
   like those measured no longer fails it.
+- **Add an agent safely: labelled as one** (this change). Devices has Add an
+  AI agent beside Add device. The owner's choice marks the invitation, so the
+  label is the owner's own record, not a claim the joining program makes, and
+  the pairing protocol is unchanged. The invitation explains that the agent
+  joins with its own identity; the approval card says an agent wants to join,
+  to compare the code its setup shows, and that it sees nothing until
+  something is shared and can be removed on its own. Devices lists it as an AI
+  agent and Requests names it as one. The label is kept beside the network
+  until the agent is removed; a restored network does not carry it. Checked in
+  the browser with the native layer stubbed (A17 viewport) and by unit tests;
+  the pairing itself is the same as for devices, already covered by the
+  real-node and desktop journeys. A test now keeps the agent's Windows stack
+  fix from #58: the task it runs overflows with 1, 2 or 4 MiB of stack and
+  finishes with the agent's 8 MiB; the Core job runs it on Windows and Linux.
+- **A device shows in Devices as soon as it is approved** (this change). The
+  Windows journey once waited over 60 seconds for the approved device to be
+  listed. The 30-second maintenance pass holds the device controller while it
+  reaches saved devices, and the test device had already left; on Windows that
+  wait is long, and the screen only reads the controller when nobody holds it.
+  Approving and removing a device now update what Devices shows while they
+  still hold the controller, as the phone already did, so a device whose
+  screen goes off right after joining is still listed at once.
 - **A first useful action after joining** (#57). Once the owner
   approves a device, a card says it joined and that nothing is shared with it
   yet, and offers Share with it, which opens the share sheet with that device
@@ -176,7 +198,7 @@ Merged since 7 November (#37 to #57), and this change:
   waiting for the owner were kept only in the app's memory, so Android ending
   Connect in the background lost them. They are now kept in a file in the
   app's own directory until answered, declined or a day old.
-- **The desktop journey on Windows, in CI** (this change). The same journey
+- **The desktop journey on Windows, in CI** (#58). The same journey
   runs through the Windows app in WebView2, with the authority it bundles and
   the owner key protected by DPAPI, driven by the Edge WebDriver that matches
   the runner's WebView2. It runs only on the hosted runner: this computer's

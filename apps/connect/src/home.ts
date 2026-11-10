@@ -29,6 +29,8 @@ import {
   type SendState,
   filesEmptyText,
   newAsks,
+  invitationText,
+  deviceDetail,
   type HomeSpace,
   type HomeStatus,
   type FilePage,
@@ -180,7 +182,7 @@ function renderAsks(status: HomeStatus) {
     const item = document.createElement("div");
     item.className = "ask";
     const who = document.createElement("strong");
-    who.textContent = `${ask.name} asks for access`;
+    who.textContent = `${ask.name}${ask.agent ? " (AI agent)" : ""} asks for access`;
     const words = document.createElement("blockquote");
     words.textContent = ask.text;
     const share = document.createElement("button");
@@ -266,6 +268,7 @@ function render(status: HomeStatus) {
   visible("recovery-reminder", recoveryReminder(status.owner, status.configured, saved));
   text("recovery-detail", recoveryStatus(saved));
   visible("add-device-button", status.owner && status.devices.length < 32);
+  visible("add-agent-button", status.owner && status.devices.length < 32);
   // Hidden until this build can confirm administrator changes on the device.
   visible("host-admin-card",status.owner&&status.administration===true);
   visible("client-admin-card",!status.owner&&status.configured&&status.administration===true);
@@ -304,6 +307,12 @@ function render(status: HomeStatus) {
   text("files-empty-description", legacy ? "Refresh to see your shared files." : filesEmptyText(status));
   visible("approval-card", !!status.request);
   approval = status.request?.id || "";
+  const wording = invitationText(!!status.inviting_agent);
+  text("pair-title", wording.title);
+  text("pair-description", wording.description);
+  text("approval-eyebrow", wording.eyebrow);
+  text("approval-compare", wording.compare);
+  text("approval-note", wording.note);
   if (status.request) {
     text("approval-name", status.request.name);
     text("approval-code", status.request.code);
@@ -369,13 +378,9 @@ function renderDevices(status: HomeStatus) {
     const name = document.createElement("strong");
     name.textContent = device.name;
     const detail = document.createElement("span");
-    detail.textContent = device.authority_connection
-      ? "Runs your network"
-      : device.member
-        ? "On your network"
-        : "On your network";
+    detail.textContent = deviceDetail(device);
     words.append(name, detail);
-    main.append(tile(device.authority_connection ? "house" : "monitor-smartphone"), words);
+    main.append(tile(device.authority_connection ? "house" : device.agent ? "bot" : "monitor-smartphone"), words);
     main.setAttribute("aria-description", "View shared items");
     const view = async () => {
       if (!device.selected) await invoke("select_device", { id: device.id });
@@ -577,12 +582,15 @@ el("join-form").addEventListener("submit", (event) => {
     },
   );
 });
-async function addDevice(button: HTMLButtonElement) {
+async function addDevice(button: HTMLButtonElement, agent = false) {
   await run(button, async () => {
     const result = await invoke<{ link: string; expires_at: number }>(
       "pair_begin",
-      { name: localName() },
+      { name: localName(), agent },
     );
+    const wording = invitationText(agent);
+    text("pair-title", wording.title);
+    text("pair-description", wording.description);
     invitation = result.link;
     expiresAt = result.expires_at;
     el<HTMLImageElement>("pair-qr").src = await QRCode.toDataURL(invitation, {
@@ -601,6 +609,10 @@ for (const id of ["add-device-button", "files-add-device"])
     "click",
     () => void addDevice(el<HTMLButtonElement>(id)),
   );
+el("add-agent-button").addEventListener(
+  "click",
+  () => void addDevice(el<HTMLButtonElement>("add-agent-button"), true),
+);
 el("share-invitation").addEventListener(
   "click",
   () =>
@@ -634,13 +646,14 @@ el("approve-device").addEventListener(
   () =>
     void run(el<HTMLButtonElement>("approve-device"), async () => {
       const name = el("approval-name").textContent ?? "";
+      const agent = !!current?.inviting_agent;
       const done = explainWait(null, finishingTitle(name), finishingDetail);
       try {
         await invoke("pair_approve", { id: approval });
       } finally {
         done();
       }
-      message("Device approved and securely paired.");
+      message(agent ? `${name} joined as an AI agent, with its own identity.` : "Device approved and securely paired.");
       // The first useful action: share something with the new device.
       await refresh();
       const joined = current?.devices.filter((device) => device.name === name).slice(-1)[0];

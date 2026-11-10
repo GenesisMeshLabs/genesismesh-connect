@@ -16,6 +16,8 @@ export interface HomeStatus {
     selected: boolean;
     authority_connection: boolean;
     member: boolean;
+    /** Added by the owner as an AI agent; known only on the network computer. */
+    agent?: boolean;
   }[];
   selected_device: string | null;
   ready: boolean;
@@ -27,6 +29,8 @@ export interface HomeStatus {
   asks?: HomeAsk[];
   joining: string | null;
   request: { id: string; name: string; node: string; code: string } | null;
+  /** The open invitation is for an AI agent, as the owner chose. */
+  inviting_agent?: boolean;
   problem: string | null;
   legacy: boolean;
   connection: ConnectionStatus | null;
@@ -140,7 +144,31 @@ export function formatBytes(bytes: number) {
   return `${(bytes / 1024 ** power).toFixed(1)} ${units[power - 1]}`;
 }
 /** A device's or agent's request for access, waiting for the owner. */
-export type HomeAsk = { id: string; node: string; name: string; text: string; at: string };
+export type HomeAsk = { id: string; node: string; name: string; text: string; at: string; agent?: boolean };
+
+/** What the invitation and approval cards say, for a device or an AI agent. */
+export function invitationText(agent: boolean) {
+  return agent
+    ? {
+        title: "Add an AI agent",
+        description: "Give this invitation to the agent's setup, on the computer where it runs. It joins with its own identity, separate from yours and your devices.",
+        eyebrow: "AN AI AGENT WANTS TO JOIN",
+        compare: "Compare this code with the one the agent's setup shows.",
+        note: "Allow it only if you just set it up. It sees nothing until you share something with it, and you can remove it on its own at any time.",
+      }
+    : {
+        title: "Add a device",
+        description: "On the other device, scan this code with its camera, or send it the invitation.",
+        eyebrow: "A DEVICE WANTS TO JOIN",
+        compare: "Compare this code with the one on the other device.",
+        note: "Allow only a device you recognize. This adds it to your network; nothing is shared with it until you choose to.",
+      };
+}
+/** The line under a device's name in Devices. */
+export function deviceDetail(device: { authority_connection: boolean; agent?: boolean }) {
+  if (device.authority_connection) return "Runs your network";
+  return device.agent ? "AI agent" : "On your network";
+}
 
 /** New requests since the last status, to mention once. */
 export function newAsks(before: HomeAsk[] | undefined, now: HomeAsk[] | undefined) {

@@ -17,6 +17,10 @@ pub(crate) struct OwnerSlot {
     pub(crate) joining: Option<String>,
     /// Access requests from devices and agents, waiting for the owner.
     pub(crate) asks: connect_core::owner::asks::Asks,
+    /// The open invitation is for an AI agent, as the owner chose.
+    pub(crate) inviting_agent: bool,
+    /// Members the owner added as AI agents.
+    pub(crate) agents: connect_core::owner::agents::Agents,
     /// Held while this phone runs its own network; another setup must not overlap.
     #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
     pub(crate) lease: Option<connect_core::owner::foreground::ForegroundLease>,
@@ -98,6 +102,8 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // a restore, and a phone network keeps no files there.
     let asks =
         connect_core::owner::asks::Asks::open(&directory.with_file_name("owner-requests.json"));
+    let agents =
+        connect_core::owner::agents::Agents::open(&directory.with_file_name("owner-agents.json"));
     app.manage(WorkflowState {
         directory,
         slot: Mutex::new(OwnerSlot {
@@ -107,6 +113,8 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             pairing: None,
             joining: None,
             asks,
+            inviting_agent: false,
+            agents,
             #[cfg(all(target_os = "android", feature = "android-owner-qualification"))]
             lease: None,
         }),
