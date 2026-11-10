@@ -231,6 +231,46 @@ Merged since 7 November (#37 to #60), and this change:
   90 seconds for a laptop's inbox while the app's own status already listed
   it. The pass now updates the screen while it holds the device, as approving
   and removing devices do since #59.
+- **Survive interruption on Android, on an emulator** (this change). A new
+  CI job runs the app on an API 35 x86_64 emulator (Android 15, WebView 124)
+  against a network the headless node runs on the same runner, with the test
+  device as a laptop whose inbox names the phone. The app is driven through
+  its WebView's DevTools protocol, which debug builds allow
+  (`apps/connect/tests/android`). First passing hosted run: the phone joined
+  with matching codes at 23 s; the laptop's inbox was listed on the phone
+  39 s after the laptop joined; the phone began an 8 MB send and was
+  force-stopped at 64 KB. It had kept `send.json` and its copy of the file.
+  Reopened, it showed "Connect closed before it finished. journey.bin: at
+  least 64.0 KB of 8.0 MB arrived."; Continue finished in 56 s. The laptop
+  held one file with the same SHA-256, and the phone's copy and record were
+  gone. Stopped and opened once more, the network reopened without Welcome.
+  This is emulator evidence only. The test build takes a file placed in its
+  cache instead of the system picker (under the debug-only `webdriver`
+  feature), so the picker, a physical phone, screen lock and a network change
+  are not covered. The run also showed the red "This device isn't sharing
+  anything with you yet" notice right after joining a server, and the
+  bottom navigation labels under the system gesture bar on this image; both
+  are recorded for the availability-status work, not fixed here.
+- **The inbox journey on a real node no longer fails on a renewal** (this
+  change). `a_device_sends_files_into_another_devices_inbox` failed
+  intermittently, on main too, with "Trust snapshot stale" and then with
+  "connection lost … authority credentials changed". Neither was a transfer
+  fault. The test drove its devices without the 30-second trust refresh a
+  running app makes, so on a slow runner a snapshot passed its 60-second
+  limit; and its sender gave up on the first error, where the app's sender
+  asks a window again up to six times and goes on from where the receiving
+  device says the file stands. The test's devices now refresh between and
+  during the sends, and its sender follows the app's rule: any error but a
+  refusal is asked again, per window. The freshness limit is unchanged, and
+  refusals and a wrong digest still fail. With the refresh running the log
+  shows what a real send lives with: every 30-second refresh on either
+  device closes the open connection ("session ended", "Trust changed while
+  sending", briefly "the server refused to accept a new connection"), and
+  the sender pauses two seconds or more before asking again. That is a
+  likely part of the slow sends measured in debug builds, and is not yet
+  measured or changed. Release throughput is still unmeasured. The first
+  hosted run with the change passed with six such interruptions; more
+  runs are needed before the failure counts as gone.
 - **A first useful action after joining** (#57). Once the owner
   approves a device, a card says it joined and that nothing is shared with it
   yet, and offers Share with it, which opens the share sheet with that device
