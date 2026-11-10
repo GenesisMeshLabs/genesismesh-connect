@@ -11,6 +11,8 @@ import {
   spaceSummary,
   sendSummary,
   sendPartial,
+  sendWaits,
+  unfinishedSendText,
   filesEmptyText,
   invitationText,
   deviceDetail,
@@ -185,4 +187,37 @@ test("an agent the owner invited is named as one, and a device is not", () => {
   assert.equal(deviceDetail({ authority_connection: false }), "On your network");
   // The network computer is never shown as an agent.
   assert.equal(deviceDetail({ authority_connection: true, agent: true }), "Runs your network");
+});
+test("a send that stopped says what arrived and never asks to send an arrived file again", () => {
+  const stopped = {
+    id: "s", space: "inbox", name: "b.mov", problem: null, state: "interrupted" as const,
+    sent: 1024 * 1024, total: 4 * 1024 * 1024, saved_as: null, index: 2, count: 3, saved: ["a.jpg"],
+    unsure: [], maybe_arrived: false, kept: true,
+  };
+  assert.ok(sendWaits(stopped), "It waits for Continue or Discard");
+  assert.ok(sendWaits({ ...stopped, state: "failed" }));
+  assert.ok(!sendWaits({ ...stopped, state: "sending", kept: false }), "Not while it runs");
+  assert.ok(!sendWaits({ ...stopped, state: "complete", kept: false }));
+  assert.ok(!sendWaits(null));
+  assert.deepEqual(unfinishedSendText(stopped, "Laptop"), {
+    title: "Unfinished send to Laptop",
+    detail: "Connect closed before it finished. 1 of 3 files arrived, saved as a.jpg. b.mov: at least 1.0 MB of 4.0 MB arrived.",
+    note: "Continue sends only what is missing.",
+  });
+  assert.equal(sendSummary(stopped), "File 2 of 3 · Stopped when Connect closed");
+  // Its last window may have reached the other device.
+  assert.match(unfinishedSendText({ ...stopped, maybe_arrived: true }, "Laptop").detail,
+    /b\.mov may have arrived\. Continue does not send it twice\.$/);
+  const failed = { ...stopped, state: "failed" as const, problem: "The other device did not respond", saved: [], sent: 0 };
+  assert.equal(unfinishedSendText(failed, "Laptop").detail,
+    "It stopped: The other device did not respond. None of the 3 files had arrived. b.mov had not started.");
+  // One the other device no longer remembers is named, not counted as sent or missing.
+  const unsure = { ...stopped, saved: [], unsure: ["note.txt"] };
+  assert.equal(unfinishedSendText(unsure, "Laptop").detail,
+    "Connect closed before it finished. note.txt may already be on Laptop: it no longer says. Check there before sending it again. b.mov: at least 1.0 MB of 4.0 MB arrived.");
+  const done = { ...stopped, state: "complete" as const, index: 3, kept: false, saved: ["a.jpg", "c.pdf"], unsure: ["b.mov"] };
+  assert.equal(sendSummary(done),
+    "2 of 3 files arrived · saved as a.jpg, c.pdf · b.mov may already be there: the other device no longer says. Check before sending it again.");
+  assert.equal(sendSummary({ ...done, count: 1, saved: [], unsure: ["b.mov"] }),
+    "b.mov may already be there: the other device no longer says. Check before sending it again.");
 });

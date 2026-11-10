@@ -62,7 +62,9 @@ if (-not $shown) {
 }
 Write-Host 'Preflight: the app starts and shows its window.'
 
-
+# The file the app sends: its debug test build takes it instead of a picker.
+# The journey writes it; the app, started by the drivers, inherits the name.
+$env:CONNECT_TEST_PICK = Join-Path $world 'send\journey.bin'
 $driver = Start-Process tauri-driver -ArgumentList '--port', '4444', '--native-driver', $wrapper -PassThru -NoNewWindow
 try {
   $ready = $false

@@ -87,12 +87,15 @@ pub struct HomeStatus {
     connection: Option<ConnectivityStatus>,
     /// Downloads that stopped before they finished, to continue.
     unfinished: Vec<crate::downloads::Unfinished>,
+    /// The send running, finished, or stopped and able to continue.
+    send: Option<crate::sends::Progress>,
 }
 #[tauri::command]
 pub async fn home_status(
     state: tauri::State<'_, WorkflowState>,
     desktop: tauri::State<'_, DesktopState>,
     downloads: tauri::State<'_, crate::downloads::Downloads>,
+    sends: tauri::State<'_, crate::sends::Sends>,
 ) -> Result<HomeStatus, String> {
     let mut owner = state.slot.lock().await;
     let display = desktop.display_status()?;
@@ -202,6 +205,7 @@ pub async fn home_status(
             guided: d.connectivity.guided,
         }),
         unfinished: crate::downloads::unfinished(&downloads),
+        send: crate::sends::current(&sends),
     })
 }
 /// This device's Spaces first, then those other devices share with it, with

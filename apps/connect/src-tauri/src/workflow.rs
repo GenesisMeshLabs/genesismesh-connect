@@ -1129,6 +1129,10 @@ async fn spaces_once(
     for collection in device.apply_spaces(views)?.ended {
         device.drop_space(&collection).await?;
     }
+    // The screen reads the device only when nobody holds it, so a Space
+    // another device just shared could stay unlisted for minutes: show the
+    // new list now, as approving and removing a device do.
+    desktop.show_held(&slot);
     if problem.is_some() {
         slot.problem = problem;
     }

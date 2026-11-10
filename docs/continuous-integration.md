@@ -12,20 +12,25 @@ and `Connect qualification`. The latter can also be started manually. It checks:
   downloads, sends, sharing, lifecycle), then the headless node with the
   packaged authority while devices pair, share a folder, send into an inbox,
   resume transfers, restart, and read through a network computer restart. They
-  run one at a time, about 13 minutes. Then the desktop app itself, built as
-  installed, is driven through its screens over WebDriver (`tauri-driver` with
-  WebKitWebDriver, a virtual display and a throwaway keyring): create a
-  network, invite the headless test device, compare codes and approve, remove
-  it, restart and reopen (`apps/connect/tests/desktop`). Screenshots of each
-  step are kept with the run.
+  run one at a time, about 13 minutes. Then the desktop app itself, a debug
+  build with the bundled pages, is driven through its screens over WebDriver
+  (`tauri-driver` with WebKitWebDriver, a virtual display and a throwaway
+  keyring): create a network, invite the headless test device, compare codes
+  and approve; the device receives files, the app sends it a 64 MB file and
+  is closed partway, then restarts, shows the unfinished send and continues it,
+  and the received file's SHA-256 is compared; then remove the device, restart
+  and reopen (`apps/connect/tests/desktop`). Screenshots of each step are kept
+  with the run.
 - The same desktop journey on Windows, in its own job: the Windows app in
   WebView2 with the authority it bundles and the owner key protected by DPAPI,
   driven by `tauri-driver` with the Microsoft Edge WebDriver that matches the
   runner's WebView2. Windows keeps app data and keys in the account's own
   folders and Credential Manager, so `run.ps1` refuses to run outside CI
-  unless given `-OnThisAccount`. The app is built with the debug-only
-  `webdriver` feature, which passes Edge WebDriver's debugging arguments on to
-  WebView2; release builds cannot contain it. A preflight first checks that
+  unless given `-OnThisAccount`. Both journeys build the app with the
+  debug-only `webdriver` feature: on Windows it passes Edge WebDriver's
+  debugging arguments on to WebView2, and on both it takes the file to send
+  from `CONNECT_TEST_PICK` instead of the native picker, which WebDriver cannot
+  reach. Release builds cannot contain it. A preflight first checks that
   the app starts on its own, and Edge WebDriver's verbose log is kept with the
   screenshots.
 - An arm64 Android debug APK built with the existing initialization/branding/

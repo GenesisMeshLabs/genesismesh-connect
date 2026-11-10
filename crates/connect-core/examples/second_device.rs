@@ -1,6 +1,7 @@
 //! A headless member device for acceptance tests against a real network. It
 //! joins with an invitation link and the comparison code, then lists and reads
-//! what other devices share with it, through the same controller as the app.
+//! what other devices share with it, or receives files, through the same
+//! controller as the app.
 //!
 //! Its key lives in the OS credential store. On Linux, run it inside a Secret
 //! Service session, for example:
@@ -12,11 +13,14 @@
 use anyhow::{Context, Result, bail};
 use connect_core::{
     device::{DeviceController, PairedDevice},
-    session::{pairing::PairCard, sharing::ReadRequest},
+    session::{
+        pairing::PairCard,
+        sharing::{ReadRequest, SpaceKind},
+    },
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-const USAGE: &str = "Usage: second_device <profile> (join <link> [name] | status | browse [space] [folder/...] | read <space> <name> [sha256] | watch <space> <name> <reads>)";
+const USAGE: &str = "Usage: second_device <profile> (join <link> [name] | status | browse [space] [folder/...] | read <space> <name> [sha256] | watch <space> <name> <reads> | receive <folder>)";
 
 /// Windows gives the main thread 1 MiB of stack, Linux 8 MiB, and joining a
 /// network overflowed it on Windows. The program runs on a runtime worker
@@ -137,6 +141,36 @@ async fn run() -> Result<()> {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
             Ok(())
+        }
+        // Receive files from the network computer into `folder` until stopped,
+        // as a laptop that shares its inbox does.
+        Some("receive") => {
+            let folder = PathBuf::from(args.get(2).context(USAGE)?);
+            std::fs::create_dir_all(&folder)?;
+            let mut device = connected(profile).await?;
+            let recipients = device.status()?.bridge_host_node.into_iter().collect();
+            let config = device
+                .share_space(
+                    None,
+                    std::path::absolute(&folder)?,
+                    "Received files".into(),
+                    recipients,
+                    SpaceKind::Inbox,
+                )
+                .await?;
+            println!(
+                "Receiving in {} as {}",
+                config.directory.display(),
+                config.collection_id
+            );
+            let mut refresh = tokio::time::interval(std::time::Duration::from_secs(30));
+            refresh.tick().await;
+            loop {
+                refresh.tick().await;
+                if let Err(error) = device.refresh().await {
+                    println!("refresh: {error:#}");
+                }
+            }
         }
         _ => bail!(USAGE),
     }

@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {elapsed,waitTitle,waitDetail,stoppedWaiting,finishingTitle,finishingDetail,STOPPED,WAIT_LIMIT_MS,EXPLAIN_AFTER_MS} from "../src/waiting.ts";
+import {elapsed,waitTitle,waitDetail,sendWaitDetail,stoppedWaiting,finishingTitle,finishingDetail,STOPPED,WAIT_LIMIT_MS,EXPLAIN_AFTER_MS} from "../src/waiting.ts";
 
 test("a wait shows minutes and seconds since it began",()=>{
   assert.equal(elapsed(0),"0:00");
@@ -20,6 +20,11 @@ test("a wait explains itself and says when it is nearly over",()=>{
   assert.equal(waitDetail(75_000),"1:15 · Still trying. Keep Connect open on that device.");
   assert.equal(waitDetail(WAIT_LIMIT_MS+3_000),"2:03 · Finishing the last try.");
   assert.ok(EXPLAIN_AFTER_MS<5_000,"Quick answers show nothing; a real wait is explained early");
+});
+
+test("a send that waits to start says nothing has gone yet",()=>{
+  assert.equal(sendWaitDetail(4_000),"0:04 · Nothing has been sent yet. Connect may still be opening your network, or that device may be restarting.");
+  assert.equal(sendWaitDetail(WAIT_LIMIT_MS+1_000),"2:01 · Nothing has been sent yet. Finishing the last try.");
 });
 
 test("after approval the owner sees who is finishing and how long it has taken",()=>{
