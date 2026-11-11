@@ -107,6 +107,23 @@ struct Confirmation {
     saved_as: Option<String>,
 }
 
+/// The whole file did not match the SHA-256 its sender declared. The
+/// receiving device saved nothing and keeps nothing of it, and says so in
+/// place of a confirmation. It is final: sending the same bytes again cannot
+/// match either, so a sender does not ask again or start over.
+#[derive(Debug)]
+pub struct NotIntact;
+impl std::fmt::Display for NotIntact {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The file did not match its digest and was not saved")
+    }
+}
+impl std::error::Error for NotIntact {}
+/// What the receiving device answers in place of a confirmation.
+fn not_intact() -> Value {
+    json!({"refused":"not_intact"})
+}
+
 /// What a receiving device keeps of an unfinished file beside its bytes, so
 /// it can be continued after either device restarts.
 #[derive(Clone, Deserialize, Serialize)]
@@ -159,10 +176,9 @@ impl Finished {
                 storage::hex(&hash.finalize())
             }
         };
-        ensure!(
-            digest == self.record.sha256 && file.metadata()?.len() == self.record.size,
-            "The file did not match its digest and was not saved"
-        );
+        if digest != self.record.sha256 || file.metadata()?.len() != self.record.size {
+            return Err(NotIntact.into());
+        }
         directory.commit(&self.record.file_name, &mut file)
     }
 }
@@ -975,10 +991,20 @@ pub(in crate::session) async fn serve(
         if let Some(finished) = finished {
             let incoming = share.incoming.clone();
             let directory = share.directory.clone();
-            saved_as = Some(
-                tokio::task::spawn_blocking(move || incoming.finish(finished, &directory))
-                    .await??,
-            );
+            let saved =
+                tokio::task::spawn_blocking(move || incoming.finish(finished, &directory)).await?;
+            match saved {
+                Ok(name) => saved_as = Some(name),
+                // Not saved and already forgotten here. The sender is told
+                // why, and the connection stays until it has heard.
+                Err(error) if error.is::<NotIntact>() => {
+                    write_frame(&mut send, &not_intact()).await?;
+                    send.finish()?;
+                    connection.closed().await;
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            }
         }
         let confirmation = super::receipt(
             &credentials.identity,
@@ -1133,11 +1159,18 @@ pub(in crate::session) async fn transmit(
     };
     write_frame(&mut send, &sent).await?;
     send.finish()?;
-    let confirmation: Confirmation = read_frame(&mut recv).await?;
+    let answer: Value = read_frame(&mut recv).await?;
     ensure!(
         recv.read_to_end(0).await?.is_empty(),
         "Unexpected send data"
     );
+    // Only the last window can be answered this way: the whole file is
+    // checked when it is complete.
+    if answer == not_intact() {
+        ensure!(phase(request) == "received", "Wrong send confirmation");
+        return Err(NotIntact.into());
+    }
+    let confirmation: Confirmation = serde_json::from_value(answer)?;
     super::verify_receipt(
         &confirmation.receipt,
         &credentials.expected_node,

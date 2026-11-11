@@ -1029,7 +1029,10 @@ fn send_with(
     // in the app, a window is asked again up to six times after any error but
     // a refusal, and goes on from where the receiving device says the file
     // stands.
-    let passes = |error: &anyhow::Error| !format!("{error:#}").contains("isn't accepting files");
+    let passes = |error: &anyhow::Error| {
+        !format!("{error:#}").contains("isn't accepting files")
+            && !error.is::<connect_core::session::sharing::send::NotIntact>()
+    };
     loop {
         let sent = runtime.block_on(session.send_window_to(
             &host.node,
@@ -1221,13 +1224,17 @@ fn a_device_sends_files_into_another_devices_inbox() -> Result<()> {
             &photo,
             Some("0".repeat(64)),
         );
-        // The PC does not save it and keeps nothing of it: it ends the
-        // connection, and asked again it says to start over. Asking again
-        // never turns that into a saved file.
+        // The PC checks the whole file, saves nothing and keeps nothing of
+        // it, and says why in place of a confirmation. The phone hears that
+        // once: it is not asked again and nothing is sent a second time.
         let wrong = wrong.expect_err("A file with a wrong digest is refused");
         assert!(
-            format!("{wrong:#}").contains("StartOver"),
-            "The PC discarded the file: {wrong:#}"
+            wrong.is::<connect_core::session::sharing::send::NotIntact>(),
+            "The PC said the file did not match: {wrong:#}"
+        );
+        assert_eq!(
+            wrong.root_cause().to_string(),
+            "The file did not match its digest and was not saved"
         );
         assert!(!received.join("tampered.bin").exists());
 

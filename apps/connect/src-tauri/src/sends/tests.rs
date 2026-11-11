@@ -24,6 +24,9 @@ struct Stand {
     close_at: Option<usize>,
     closed: Option<oneshot::Sender<()>>,
     refuse: bool,
+    /// The file changes under the send: what arrives does not match the
+    /// SHA-256 the sender declared.
+    spoiled: bool,
 }
 impl Inbox for Stand {
     async fn window(&mut self, request: &mut Request, file: &mut std::fs::File) -> Result<Outcome> {
@@ -76,6 +79,12 @@ impl Inbox for Stand {
         staged.2.extend_from_slice(&bytes);
         let done = staged.2.len() as u64 == request.size;
         let mut saved_as = None;
+        if done && self.spoiled {
+            // As the receiving device does: nothing saved, nothing kept.
+            self.staged.remove(&token);
+            self.windows += 1;
+            return Err(connect_core::session::sharing::send::NotIntact.into());
+        }
         if done {
             let (name, _, bytes) = self.staged.remove(&token).expect("staged");
             let digest: String = Sha256::digest(&bytes)
@@ -430,6 +439,47 @@ async fn a_failed_send_stays_to_continue_and_a_canceled_one_goes() -> Result<()>
     assert!(!canceled.kept && left.is_none() && !device.path.exists());
     assert!(!copy.path.exists(), "Its copy goes with it");
     assert!(stand.names.is_empty());
+    Ok(())
+}
+
+/// A file whose bytes do not match what was declared used to be asked again,
+/// sent a second time from the start, and then reported as "The other device
+/// lost this file".
+#[tokio::test]
+async fn a_file_that_did_not_arrive_intact_is_refused_once_and_says_what_to_do() -> Result<()> {
+    let device = device()?;
+    let content = bytes(200_000, 21);
+    let file = entry(&device.folder, "report.pdf", &content, false)?;
+    let mut stand = Stand {
+        spoiled: true,
+        ..Default::default()
+    };
+    let (failed, kept) = send(&device, &mut stand, record(vec![file]), false).await?;
+    let failed = failed.expect("Finished");
+    assert_eq!(failed.state, "failed");
+    assert_eq!(
+        failed.problem.as_deref(),
+        Some(
+            "report.pdf did not arrive intact, so the other device did not save it. It may have changed while it was being sent. Discard this send and choose the file again."
+        )
+    );
+    let once = content
+        .len()
+        .div_ceil(connect_core::session::sharing::send::MIN_WINDOW_BYTES as usize);
+    assert!(
+        stand.windows <= once,
+        "Sent once, never again: {} windows for a file of at most {once}",
+        stand.windows
+    );
+    assert!(
+        stand.names.is_empty() && stand.staged.is_empty(),
+        "Nothing saved or kept there"
+    );
+    let kept = kept.expect("Kept, for the person to discard");
+    assert!(
+        failed.kept && !kept.progress("failed", None).maybe_arrived,
+        "It did not arrive: nothing says it may be there"
+    );
     Ok(())
 }
 

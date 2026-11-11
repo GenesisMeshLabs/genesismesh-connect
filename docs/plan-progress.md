@@ -352,14 +352,38 @@ Merged since 7 November (#37 to #60), and this change:
   causes of cuts are fixed; the state itself and a plain way out of it are
   not. One known way in remains: from the eleventh device in a minute the
   authority answers HTTP 429 after approval.
-- **A wrong digest is refused without saying so** (found by #63, open). The inbox test accepted any error for a file whose bytes do not
-  match its declared SHA-256. Made exact, it shows the receiving device
-  never saves the file, but ends the connection without a reason and, asked
-  again, answers "start over". The test now asserts that outcome and that
-  nothing is saved. The app computes the digest it declares, so a person
-  meets this only through corruption or a file changing under the send,
-  where the app would resend before giving up. A plain refusal is future
-  work for the transfers view.
+- **A file that does not arrive intact is refused with a reason** (found by
+  #63, fixed by this change). The receiving device checks a whole file
+  against the SHA-256 its sender declared before saving it. When they
+  differed it saved nothing, which is right, but ended the connection
+  without a word and, asked again, answered "start over". The app then
+  sent the whole file a second time and finished with "The other device
+  lost this file. Send it again." Each window is hashed and signed on its
+  own, so this is not damage on the way: it happens when the file changes
+  while it is being sent, or with a sender that declares a wrong digest.
+  The receiving device now answers the last window with a refusal in place
+  of a confirmation, after it has discarded the file and before it lets go
+  of the connection. The sender treats it as final: it asks nothing again
+  and sends nothing a second time. The app says "<name> did not arrive
+  intact, so the other device did not save it. It may have changed while it
+  was being sent. Discard this send and choose the file again.", keeps the
+  send for the person to discard, and never marks the file as possibly
+  there. Nothing about what is saved changed: only a file that matches is
+  ever written to the inbox. An older app on either side behaves as before.
+  Regression evidence: on a real node, the inbox test sends a file with a
+  wrong digest and requires that exact refusal, heard once, with nothing
+  saved; in the app's tests a file spoiled under the send is sent once,
+  fails with that sentence, and leaves nothing on the stand-in receiving
+  device. Each fails when its half of the change is taken out.
+- **A phone is attached again** (11 November 2026). Read only: adb lists
+  one authorized device, the Samsung SM-A176B on Android 16 with WebView
+  156. The ordinary app (last updated 26 October) and the test package
+  (5 November) are installed, with whatever network each still holds.
+  Nothing was installed, started or changed. Everything since #59 is
+  unchecked on it: the agent label, a send continued after Connect is
+  closed, pairing with a server, the screen right after joining, and this
+  refusal. Installing a current test build over the 5 November one, and
+  anything that leaves or resets its network, waits for the owner.
 - **The emulator job started two adb daemons at once** (#62). On main after
   #61 the journey job failed before the journey ran: the emulator and the
   step's own command each started the daemon. The step starts it once now.
