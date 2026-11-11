@@ -1,2 +1,2 @@
 # The single authority release pin, consumed by packaging and Renovate.
-genesis-mesh==1.9.1
+genesis-mesh==1.10.1

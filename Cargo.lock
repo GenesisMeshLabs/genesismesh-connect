@@ -1880,8 +1880,8 @@ dependencies = [
 
 [[package]]
 name = "genesis-mesh-sdk"
-version = "1.9.1"
-source = "git+https://github.com/GenesisMeshLabs/sdk-rust?tag=v1.9.1#b67c248717d5d99aca6f4dad320692f3f6c07c69"
+version = "1.10.1"
+source = "git+https://github.com/GenesisMeshLabs/sdk-rust?tag=v1.10.1#e4efc2f0419c0012e44cea2d280ec9908204ef72"
 dependencies = [
  "base64 0.23.1",
  "chrono",
