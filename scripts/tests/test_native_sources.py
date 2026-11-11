@@ -68,9 +68,9 @@ class SourceTests(unittest.TestCase):
             root = Path(folder)
             pin = root / "apps/connect/authority/core-requirements.txt"
             pin.parent.mkdir(parents=True)
-            pin.write_text("genesis-mesh==1.0.1\n")
+            pin.write_text("genesis-mesh==1.10.1\n")
             lock = root / "lock.json"
-            lock.write_text(json.dumps({"schema": 1, "authority_pin_sha256": hashlib.sha256(b"genesis-mesh==1.0.0").hexdigest(), "packages": {}}))
+            lock.write_text(json.dumps({"schema": 1, "authority_pin_sha256": hashlib.sha256(b"genesis-mesh==1.10.1").hexdigest(), "packages": {}}))
             with patch.object(sources, "ROOT", root), patch.object(sources, "LOCK", lock), patch.object(sources, "versions", return_value={}), patch.object(sources, "fetch") as fetch:
                 with self.assertRaisesRegex(ValueError, "Authority release changed"):
                     sources.verified_source("pydantic-core")
@@ -105,10 +105,10 @@ class SourceTests(unittest.TestCase):
     def test_changed_source_hash_and_changed_authority_are_refused(self):
         with tempfile.TemporaryDirectory() as folder:
             lock = Path(folder) / "lock.json"
-            document = {"schema": 1, "authority_pin_sha256": hashlib.sha256(b"genesis-mesh==1.0.0").hexdigest(),
+            document = {"schema": 1, "authority_pin_sha256": hashlib.sha256(b"genesis-mesh==1.10.1").hexdigest(),
                         "packages": {"pydantic-core": {"version": "1.0.0", "url": "https://files.pythonhosted.org/pkg.tar.gz", "sha256": "0"*64}}}
             lock.write_text(json.dumps(document))
-            with patch.object(sources, "LOCK", lock), patch.object(sources, "versions", return_value={"pydantic-core": "1.0.0"}), patch.object(sources, "pin", return_value=Requirement("genesis-mesh==1.0.0")), patch.object(sources, "fetch", return_value=b"changed"):
+            with patch.object(sources, "LOCK", lock), patch.object(sources, "versions", return_value={"pydantic-core": "1.0.0"}), patch.object(sources, "pin", return_value=Requirement("genesis-mesh==1.10.1")), patch.object(sources, "fetch", return_value=b"changed"):
                 with self.assertRaisesRegex(ValueError, "hash mismatch"):
                     sources.verified_source("pydantic-core")
                 document["authority_pin_sha256"] = "0"*64

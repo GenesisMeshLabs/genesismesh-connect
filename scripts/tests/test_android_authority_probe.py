@@ -13,20 +13,20 @@ class ProbeTests(unittest.TestCase):
     def test_only_single_exact_core_pin_is_accepted(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "pin.txt"
-            for value in ("genesis-mesh>=1.0", "genesis-mesh==1.0.0\ncryptography==1", "--extra-index-url https://example.com"):
+            for value in ("genesis-mesh>=1.0", "genesis-mesh==1.10.1\ncryptography==1", "--extra-index-url https://example.com"):
                 path.write_text(value, encoding="utf-8")
                 with self.assertRaises(ValueError):
                     probe.core_pin(path)
-            path.write_text("# single source\ngenesis-mesh==1.0.0\n", encoding="utf-8")
-            self.assertEqual(probe.core_pin(path), "genesis-mesh==1.0.0")
+            path.write_text("# single source\ngenesis-mesh==1.10.1\n", encoding="utf-8")
+            self.assertEqual(probe.core_pin(path), "genesis-mesh==1.10.1")
 
     def test_resolver_never_builds_sources_installs_or_changes_pins(self):
-        args = probe.command("genesis-mesh==1.0.0", Path("wheels"))
+        args = probe.command("genesis-mesh==1.10.1", Path("wheels"))
         self.assertIn("download", args)
         self.assertIn("--only-binary=:all:", args)
         self.assertNotIn("--no-deps", args)
         self.assertNotIn("install", args)
-        self.assertEqual(args[-1], "genesis-mesh==1.0.0")
+        self.assertEqual(args[-1], "genesis-mesh==1.10.1")
         self.assertIn("android_24_arm64_v8a", args)
         self.assertNotIn("manylinux", " ".join(args))
 
