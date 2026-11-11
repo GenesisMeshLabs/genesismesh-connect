@@ -10,7 +10,7 @@
 //! check.
 use anyhow::{Context, Result, bail, ensure};
 use connect_core::session::sharing::send::{
-    MAX_FILE_BYTES, MAX_WINDOW_BYTES, MIN_WINDOW_BYTES, Outcome, Request,
+    MAX_FILE_BYTES, MAX_WINDOW_BYTES, MIN_WINDOW_BYTES, NotIntact, Outcome, Request,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -841,6 +841,15 @@ async fn send_one(
                 Err(error) if waits < 30 && error.to_string().contains("receiving other files") => {
                     waits += 1;
                     tokio::time::sleep(inbox.pause(2)).await;
+                }
+                // The other device checked the whole file and did not save
+                // it. The same bytes cannot match again: nothing is asked or
+                // sent a second time, and nothing of it may be there.
+                Err(error) if error.is::<NotIntact>() => {
+                    keep(Step::Refused);
+                    bail!(
+                        "{name} did not arrive intact, so the other device did not save it. It may have changed while it was being sent. Discard this send and choose the file again."
+                    );
                 }
                 Err(error)
                     if attempts < 6 && !error.to_string().contains("isn't accepting files") =>
